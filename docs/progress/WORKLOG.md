@@ -1389,7 +1389,7 @@ WORKLOG entry with Implementation references before creating any file.
 **Status:** started
 **Actor/session:** Claude Opus 5 implementer subagent (m1-t2), delegated by the
 Claude Fable 5.1 orchestrator
-**Commit:** not committed
+**Commit:** 4748a36
 
 ### Goal
 Scaffold the neutral vendor-triage example agent as a real `eve` project under
@@ -1468,7 +1468,7 @@ scaffold `apps/example-agent`.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent)
-**Commit:** not committed
+**Commit:** 4748a36
 
 ### Goal
 Define, in `@internal/core`, the typed `ExecutionContext` (M1-T7) and the
@@ -1530,7 +1530,7 @@ unit tests, then the contract documents.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent)
-**Commit:** not committed (orchestrator reviews and commits)
+**Commit:** 4748a36
 
 This is the result entry for the `started` entry above. Where the two differ,
 this one is authoritative. M1-T7 and M1-T8 were done together because M1-T7's
@@ -1752,7 +1752,7 @@ to build `Job` and `DomainDefinition` against.
 **Status:** completed
 **Actor/session:** Claude Opus 5 implementer subagent (m1-t2), delegated by the
 Claude Fable 5.1 orchestrator
-**Commit:** not committed (orchestrator reviews and commits)
+**Commit:** 4748a36
 
 ### Goal
 As the 17:20 `started` entry. Scaffold the neutral vendor-triage example agent

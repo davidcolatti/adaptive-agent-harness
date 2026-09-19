@@ -7,7 +7,7 @@
 **Last updated:** 2026-09-19 (M1-T2, M1-T7, M1-T8 complete)
 **Current milestone:** M1, Local Agent + Public Harness Boundary (in progress)
 **Current task:** M1-T3, `defineDomain()` (not started)
-**Last commit SHA:** PENDING_SHA (M1-T2/T7/T8). M1-T1 is `bdb4a23`. Run
+**Last commit SHA:** `4748a36` (M1-T2/T7/T8). M1-T1 is `bdb4a23`. Run
 `git log --oneline` for the full history.
 
 ## Completed milestones / tasks

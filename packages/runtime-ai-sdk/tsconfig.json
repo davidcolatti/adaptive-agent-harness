@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Typecheck configuration: covers src and any co-located tests, emits
+  // nothing, and resolves workspace dependencies to their TypeScript sources
+  // through the project-owned "@internal/source" export condition so that
+  // typechecking never requires a prior build.
+  "extends": "@internal/config/tsconfig.package.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@internal/source"]
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -49,3 +49,6 @@ excuses skipping verification against the actual installed code.
 
 - `tooling/2026-09-19-m0-toolchain-verification.md`: Milestone 0 toolchain verification (Node,
   pnpm, TypeScript, Biome, Vitest, Turborepo, Husky, secretlint, GitHub Actions).
+- `vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`: M1-T1 install survey for `eve` 0.63.0 and
+  the AI SDK (`ai`) 7.0.107 (installed versions, peer dependencies, the eve/ai compatibility
+  finding, the shipped `eve` docs inventory, both public export maps, and what is harness-owned).

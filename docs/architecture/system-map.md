@@ -5,10 +5,13 @@ last_verified: 2026-09-19
 related:
   - docs/milestones/build-plan.md
   - docs/decisions/README.md
+  - docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md
 implementation:
   - packages/core
   - packages/testing
   - packages/config
+  - packages/runtime-eve
+  - packages/runtime-ai-sdk
   - tests/architecture/boundaries.ts
 ---
 
@@ -141,9 +144,9 @@ Rules, as the plan states them:
 - Compiler output targets the workflow IR, not arbitrary runtime internals.
 - No domain package may mutate harness registry tables directly.
 
-## Current state (Milestone 0)
+## Current state (Milestone 1, in progress)
 
-Only three packages exist. Everything else in the repository layout is planned.
+Five packages exist. Everything else in the repository layout is planned.
 
 - `packages/config` (`@internal/config`) holds the shared TypeScript config bases
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
@@ -153,6 +156,22 @@ Only three packages exist. Everything else in the repository layout is planned.
 - `packages/core` (`@internal/core`) is an intentionally empty boundary: a comment explaining why,
   and `export {}`. The contracts in build plan section 5 land in Milestone 1. The package exists
   now only to prove that the build, typecheck and packaging pipeline works end to end.
+- `packages/runtime-eve` (`@internal/runtime-eve`) and `packages/runtime-ai-sdk`
+  (`@internal/runtime-ai-sdk`) were created by M1-T1 to hold the framework dependencies it
+  installed: `eve@0.63.0`, `ai@7.0.107` and `zod@4.6.5` for the first,
+  `ai@7.0.107` and `zod@4.6.5` for the second. Both are exact pins under ADR-0024, and both are
+  already listed in `BOUNDARY_RULES.adapterPackages`, so they are the only packages permitted to
+  declare those dependencies.
+
+  **Neither contains an adapter yet.** Each `src/index.ts` re-exports exactly one documented
+  public type from the framework it adapts (`AgentDefinition` from `eve`, `LanguageModel` from
+  `ai`), which proves the public entrypoint resolves under typecheck and nothing more. The
+  `AgentRuntime` contract is M1-T5 and `EveAgentRuntime` is M1-T6. Each package's unit test
+  asserts that the installed version matches its own pin and that it declares no `^`/`~` range,
+  which is ADR-0024's enforcement mechanism.
+
+  What the installed packages actually document is recorded in
+  [`../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`](../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md).
 
 ### Package status
 
@@ -164,8 +183,8 @@ plan's milestone sections.
 | `packages/config` | exists (Milestone 0) |
 | `packages/core` | exists (Milestone 0, empty boundary) |
 | `packages/testing` | exists (Milestone 0) |
-| `packages/runtime-ai-sdk` | planned (M1) |
-| `packages/runtime-eve` | planned (M1) |
+| `packages/runtime-ai-sdk` | exists (M1-T1, dependency boundary only; `AgentRuntime` is M1-T5) |
+| `packages/runtime-eve` | exists (M1-T1, dependency boundary only; `EveAgentRuntime` is M1-T6) |
 | `packages/registry` | planned (M1), capability registry, per M1-T9 |
 | `apps/example-agent` | planned (M1) |
 | `packages/trace` | planned (M2) |
@@ -185,18 +204,21 @@ it, so it has no scheduled milestone.
 
 ### No AI runtime code exists yet
 
-This is a Milestone 0 acceptance criterion, and it holds. The only source files in the workspace
-packages are:
+`eve` and the AI SDK are now installed, but no code calls either. The source files in the
+workspace packages are:
 
 - `packages/core/src/index.ts` (the empty boundary described above)
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
+- `packages/runtime-eve/src/index.ts` and `index.test.ts`
+- `packages/runtime-ai-sdk/src/index.ts` and `index.test.ts`
 
-There is no agent runtime, no model call, no `eve` dependency, no AI SDK dependency and no
-Supabase dependency anywhere in the workspace. The supporting TypeScript outside the packages is
-tooling only: `scripts/verify-handoff.ts` (and its test), `tests/architecture/`, and
-`tests/toolchain/`.
+The four files in the two adapter packages contain one type re-export and one dependency-pin test
+each. There is no agent runtime, no model call and no Supabase dependency anywhere in the
+workspace, and `@internal/core` still declares no dependency at all. The supporting TypeScript
+outside the packages is tooling only: `scripts/verify-handoff.ts` (and its test),
+`tests/architecture/`, and `tests/toolchain/`.
 
 ## How the boundary is enforced today
 
@@ -226,9 +248,11 @@ The dependency rule is not documentation-only. It is a test that runs against th
   against them. It executes on every `pnpm test` and therefore on every `pnpm check`, on the
   pre-push hook, and in CI.
 
-The practical consequence for Milestone 1: the moment `eve` or `ai` is installed, any package that
-declares a dependency on them without being in `adapterPackages` fails the test. Adapter status is
-a deliberate, reviewable edit to `BOUNDARY_RULES`, not an accident.
+This is live as of M1-T1: `eve` and `ai` are installed, so any package that declares a dependency
+on them without being in `adapterPackages` fails the test. It was proven by adding `eve` to
+`@internal/core` and watching the test fail naming the adapter-only rule (M1-T1 WORKLOG entry).
+Adapter status is a deliberate, reviewable edit to `BOUNDARY_RULES`, not an accident. Version
+policy is separate and lives in ADR-0024.
 
 ## Per-topic architecture documents
 

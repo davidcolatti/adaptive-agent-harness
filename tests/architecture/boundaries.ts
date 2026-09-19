@@ -66,10 +66,12 @@ export interface BoundaryRules {
 export const BOUNDARY_RULES: BoundaryRules = {
   // Third-party surfaces that must stay behind an adapter package.
   adapterOnlyDependencies: ["eve", "@supabase/*", "ai", "@ai-sdk/*", "@vercel/*", "workflow"],
-  // Adapter packages. None of these exist in Milestone 0: the first four are
-  // planned by the build plan for Milestones 1-3, and the two Vercel ones for
-  // Milestone 11. All are listed now so an adapter milestone edits this table
-  // deliberately rather than in a hurry.
+  // Adapter packages. `@internal/runtime-eve` and `@internal/runtime-ai-sdk`
+  // exist as of M1-T1, which installed `eve` and `ai` behind them. The
+  // remaining four are still planned: `@internal/decision-jev` (M3),
+  // `@internal/storage-supabase` (M2), and the two Vercel ones (M11). All were
+  // listed ahead of time so an adapter milestone edits this table deliberately
+  // rather than in a hurry.
   adapterPackages: [
     "@internal/runtime-eve",
     "@internal/decision-jev",

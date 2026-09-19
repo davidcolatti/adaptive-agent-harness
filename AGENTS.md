@@ -92,6 +92,8 @@ adaptive-agent-harness/
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; empty until M1
+│   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; AgentRuntime lands in M1-T5
+│   ├── runtime-eve/             # `eve` adapter; EveAgentRuntime lands in M1-T6
 │   └── testing/                 # shared test helpers
 ├── docs/
 │   ├── README.md
@@ -103,7 +105,7 @@ adaptive-agent-harness/
 │   ├── architecture/system-map.md
 │   ├── contracts/README.md
 │   ├── concepts/README.md
-│   ├── decisions/               # 0000-template.md plus ADRs 0001-0023
+│   ├── decisions/               # 0000-template.md plus ADRs 0001-0024
 │   ├── development/
 │   │   ├── local-setup.md
 │   │   ├── commands.md
@@ -133,8 +135,8 @@ yet built (**planned**):
 
 ```
 apps/playground/, apps/example-agent/                        (planned, M1)
-packages/runtime-ai-sdk/, runtime-eve/, decision-jev/         (planned, M1/M3)
 packages/trace/, storage-supabase/                            (planned, M2)
+packages/decision-jev/                                        (planned, M3)
 packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)
 packages/observability/                                       (planned)
@@ -328,7 +330,11 @@ authors to the docs shipped inside `node_modules/eve/docs/`. Once `eve` is
 installed (Milestone 1), that directory is authoritative for any `eve` task,
 read before the relevant installed topic guide, before inspecting the
 matching public export/type definition, and before using authored filesystem
-slots. `eve` is not installed as of Milestone 0.
+slots. `eve` is installed as of M1-T1, at the version pinned by
+`packages/runtime-eve/package.json`; `ai` is pinned by the same file and by
+`packages/runtime-ai-sdk/package.json`. Version changes follow ADR-0024. Note
+that `eve` 0.63.0 ships no `eve check` command; `eve info` is the equivalent
+diagnostic, and it requires an authored `agent/` directory to run.
 
 ## Progress and handoff protocol
 
@@ -499,8 +505,10 @@ is the template. Full process (statuses, how to supersede, reading order) is
 in `docs/decisions/README.md`. ADRs 0001-0017 record the build plan's
 decisions and owner constraints; ADRs 0018-0023 record the Milestone 0
 toolchain decisions, grounded in the toolchain research note
-(`docs/research/tooling/2026-09-19-m0-toolchain-verification.md`). The next
-free number is 0024.
+(`docs/research/tooling/2026-09-19-m0-toolchain-verification.md`). ADR-0024
+records the framework dependency versioning policy adopted in M1-T1, grounded
+in `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`. The next
+free number is 0025.
 
 ## Scope discipline
 

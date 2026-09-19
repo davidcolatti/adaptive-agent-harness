@@ -1,0 +1,33 @@
+{
+  "name": "@internal/runtime-eve",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Adapter boundary for the eve agent framework. EveAgentRuntime lands in M1-T6.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@internal/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "ai": "7.0.107",
+    "eve": "0.63.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

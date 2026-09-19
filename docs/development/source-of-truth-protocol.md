@@ -81,8 +81,10 @@ For any `eve` task:
 2. read the relevant installed topic guide;
 3. inspect the matching public export / type definition;
 4. use authored filesystem slots exactly as documented;
-5. run `pnpm exec eve info` after structural integration changes when the command applies;
-6. run the documented build/check command before completion;
+5. run `pnpm exec eve info` after structural integration changes when the command applies (it
+   requires an authored `agent/` directory and fails without one);
+6. run the documented build command (`eve build`) before completion; note that `eve` 0.63.0 ships
+   no `eve check` command, verified 2026-09-19 against `node_modules/eve/docs/reference/cli.md`;
 7. never import from an unexported `eve` internal path.
 
 Reuse rule (AD-012): use the public authored surfaces such as `eve/hooks`, `eve/client`,
@@ -127,44 +129,79 @@ Before implementing hosted compilation / execution:
 
 ## 10. Inspection checklists
 
-> **`eve`, the AI SDK (`ai`), the Workflow SDK and `@vercel/sandbox` are NOT installed in this
-> repository yet.** They arrive in Milestone 1 and later. Everything in this section is the
-> procedure to run *once each dependency is installed*, not something to run today. Running these
-> commands against the current tree will simply report that the path does not exist, and that is
-> the expected result for Milestone 0.
+> **`eve` and the AI SDK (`ai`) are installed as of M1-T1**, behind the adapter packages
+> `packages/runtime-eve` (`eve`, `ai`, `zod`) and `packages/runtime-ai-sdk` (`ai`, `zod`). Their
+> checklists below run for real; the survey they produced on 2026-09-19 is
+> [`../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`](../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md),
+> and version changes follow [ADR-0024](../decisions/0024-framework-dependency-versioning-policy.md).
+> **The Workflow SDK and `@vercel/sandbox` are still NOT installed.** Their checklists are the
+> procedure to run once those dependencies arrive in a later milestone; running them against the
+> current tree will report that the path does not exist, and that is the expected result today.
+>
+> Because pnpm isolates packages in a virtual store, `node_modules/<pkg>` is not a real directory
+> for an installed dependency. Start from "Resolving an installed package's real directory" below;
+> the `node_modules/<pkg>/...` paths in the not-yet-installed checklists are shorthand for the
+> directory that resolution step produces.
 
-### `node_modules/eve/docs/`
+### Resolving an installed package's real directory
+
+pnpm keeps dependencies in an isolated virtual store, so `node_modules/eve` is not a directory a
+`cat` can reach. Resolve the real path once, from the workspace package that declares the
+dependency, and use it for everything below:
 
 ```sh
-# List the docs eve ships, then read its entrypoint; `eve info` reports the
-# integration state once the command applies to the current project.
-ls node_modules/eve/docs
-cat node_modules/eve/docs/README.md
-pnpm exec eve info
+# The adapter package that declares each dependency: runtime-eve for `eve`,
+# runtime-ai-sdk for `ai` (both declare `ai`).
+EVE=$(dirname "$(node -e "console.log(require.resolve('eve/package.json', { paths: ['packages/runtime-eve'] }))")")
+AI=$(dirname "$(node -e "console.log(require.resolve('ai/package.json', { paths: ['packages/runtime-ai-sdk'] }))")")
+```
+
+### `eve` shipped docs
+
+```sh
+# List the docs eve ships, read its entrypoint, then the page for the task.
+find "$EVE/docs" -type f | sed "s|$EVE/docs/||" | sort
+cat "$EVE/docs/README.md"
+cat "$EVE/docs/reference/typescript-api.md"   # the public define* surface
+cat "$EVE/docs/reference/cli.md"              # every CLI command
+
+# `eve info` needs an authored agent/ directory; it fails without one.
+pnpm --filter <package-with-an-agent-dir> exec eve info
 ```
 
 ### `eve` public exports and types
 
 ```sh
-# Print the subpath export map without needing jq, then the same with jq if it
-# is available, then the shipped declaration files that define those surfaces.
-node -e "console.log(JSON.stringify(require('./node_modules/eve/package.json').exports, null, 2))"
-cat node_modules/eve/package.json | jq .exports
-ls node_modules/eve/dist/*.d.ts
+# The subpath export map is the full public contract: anything not reachable
+# through it is a framework internal and must not be imported.
+node -e "console.log(Object.keys(require('$EVE/package.json').exports).join('\n'))"
+node -e "console.log(JSON.stringify(require('$EVE/package.json').exports, null, 2))"
+
+# The root entrypoint re-exports through eve's own `imports` map, so the
+# concrete declarations live under dist/src/public/, not dist/*.d.ts.
+cat "$EVE/dist/src/index.d.ts"
+cat "$EVE/dist/src/public/index.d.ts"
 ```
 
 ### Installed AI SDK (`ai`) docs and types
 
 ```sh
 # Confirm the installed version matches pnpm-lock.yaml, then read the shipped
-# types and the package's own doc entrypoint.
-cat node_modules/ai/package.json | grep '"version"'
-ls node_modules/ai/dist/index.d.ts
-cat node_modules/ai/README.md
+# types and the package's own docs.
+node -e "console.log(require('$AI/package.json').version)"
+node -e "console.log(JSON.stringify(require('$AI/package.json').exports, null, 2))"
+cat "$AI/README.md"
+find "$AI/docs" -type f | sed "s|$AI/docs/||" | sort
+
+# The whole non-test public surface is one declaration file. Its final
+# `export { ... }` statement is the authoritative list of exported names.
+grep -n "^export " "$AI/dist/index.d.ts"
 ```
 
-If `README.md` is absent, read whichever doc entrypoint the package actually ships (`ls
-node_modules/ai` first) rather than substituting a web page.
+The shipped `.mdx` files contain unresolved `__PROVIDER_IMPORT__` and `__MODEL__` placeholders
+where the published site injects a provider (verified 2026-09-19, 82 files). Their prose and API
+names are authoritative; their model arguments are not literals. Read shapes from
+`dist/index.d.ts`, not from the examples.
 
 ### Installed Workflow SDK docs, skills and types
 

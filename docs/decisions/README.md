@@ -74,6 +74,7 @@ and related ADRs that motivated it.
 | [0021](0021-biome-for-formatting-and-linting-architecture-rules-in-tests.md) | Biome for formatting and linting; architecture rules live in tests | accepted |
 | [0022](0022-vitest-projects-and-test-file-taxonomy.md) | Vitest projects and test-file taxonomy | accepted |
 | [0023](0023-git-hooks-secret-scanning-and-ci-gates.md) | Git hooks, secret scanning, and CI gates | accepted |
+| [0024](0024-framework-dependency-versioning-policy.md) | Framework dependency versioning policy | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -84,3 +85,7 @@ Entries 0018-0023 record the Milestone 0 toolchain (pnpm/Turborepo/Node, TypeScr
 scanning/CI), grounded in `docs/research/tooling/2026-09-19-m0-toolchain-verification.md`, dated
 2026-09-19 with deciders "orchestrator (Claude Fable 5.1) with repository owner constraints;
 recorded during M0".
+
+Entry 0024 records the framework dependency versioning policy adopted when Milestone 1 installed
+the first framework dependencies (`eve`, `ai`), grounded in
+`docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`.

@@ -76,6 +76,8 @@ describe("workspace dependency boundaries", () => {
     expect(packages.map((pkg) => pkg.name).sort()).toEqual([
       "@internal/config",
       "@internal/core",
+      "@internal/runtime-ai-sdk",
+      "@internal/runtime-eve",
       "@internal/testing",
     ]);
   });

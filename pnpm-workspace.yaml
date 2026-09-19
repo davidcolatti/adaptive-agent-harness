@@ -23,3 +23,7 @@ minimumReleaseAgeExclude:
   - '@turbo/windows-arm64@2.11.2'
   - '@types/node@24.13.6'
   - turbo@2.11.2
+  - '@ai-sdk/gateway@4.0.87'
+  - '@ai-sdk/provider-utils@5.0.45'
+  - ai@7.0.107
+  - eve@0.63.0

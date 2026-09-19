@@ -47,6 +47,8 @@ Each workspace package declares its own scripts, and any of them can be run in i
 | Package | Scripts it declares |
 | --- | --- |
 | `@internal/core` | `build`, `dev`, `typecheck` |
+| `@internal/runtime-ai-sdk` | `build`, `dev`, `typecheck` |
+| `@internal/runtime-eve` | `build`, `dev`, `typecheck` |
 | `@internal/testing` | `build`, `dev`, `typecheck` |
 | `@internal/config` | none (it ships only shared tsconfig bases, no runtime code) |
 

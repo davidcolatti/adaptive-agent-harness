@@ -1107,3 +1107,277 @@ Fresh `git clone` of 7c09f10 with the handoff files copied in:
 M1-T1, Install AI SDK and `eve`: append a `started` entry with
 Implementation references, then follow
 `docs/development/source-of-truth-protocol.md`.
+
+---
+
+## 2026-09-19 16:53 — M1-T1 — Install AI SDK and `eve`
+
+**Status:** started
+**Actor/session:** implementer subagent (opus) — orchestrated by Claude Fable 5.1
+**Commit:** not committed
+
+### Goal
+Install current, mutually compatible versions of the AI SDK (`ai`) and `eve`
+into two new adapter packages (`@internal/runtime-eve`,
+`@internal/runtime-ai-sdk`), record what the installed packages actually
+document, and write the dependency-versioning ADR (ADR-0024). This task is
+install + research + policy only: it does not implement `AgentRuntime`
+(M1-T5) or `EveAgentRuntime` (M1-T6), and does not scaffold the example agent
+(M1-T2).
+
+### Implementation references
+- package/version (to be installed, from the registry on 2026-09-19 via
+  `pnpm view`):
+  - `eve@0.63.0` — `engines.node: ">=24"`, `type: module`,
+    `bin: { eve: "./bin/eve.js" }`; runtime dependencies `nitro@3.0.260903-beta`
+    and `undici@8.9.0`.
+  - `eve` peer dependencies: `ai: "^7.0.105"` (**required**, no
+    `peerDependenciesMeta` entry) plus five optional peers
+    (`dd-trace`, `just-bash`, `braintrust`, `microsandbox`,
+    `@opentelemetry/api`), each marked `"optional": true` in
+    `peerDependenciesMeta`.
+  - `ai@7.0.107` — peer dependency `zod: "^3.25.76 || ^4.1.8"` (**required**,
+    the package declares no `peerDependenciesMeta`); runtime dependencies
+    `@ai-sdk/gateway@4.0.87`, `@ai-sdk/provider@4.0.17`,
+    `@ai-sdk/provider-utils@5.0.45`, which arrive transitively and are
+    therefore not declared by any workspace package.
+  - Compatibility finding: `ai@7.0.107` satisfies `eve@0.63.0`'s
+    `ai: "^7.0.105"` peer range, so there is **no** eve-vs-ai version
+    discrepancy to resolve; the latest `ai` is also the eve-compatible `ai`.
+  - `zod@4.6.5` is the current release and satisfies `^4.1.8`.
+- installed docs read: none yet. `node_modules/eve/docs/` and the shipped `ai`
+  types do not exist until the install runs. This section is updated with the
+  actual files read after `pnpm install`, per
+  `docs/development/source-of-truth-protocol.md` §3 and §6.
+- official docs/repos/examples read: none yet; the installed packages are the
+  primary source under the protocol's precedence order and are inspected
+  first.
+- public types/exports inspected: `eve`'s published `exports` map was printed
+  from the registry (`pnpm view eve exports`) and lists `.`, `./ai`,
+  `./hooks`, `./client`, `./evals`, `./tools`, `./skills`, `./sandbox`,
+  `./channels`, `./models`, `./memory`, `./context`, `./connections`,
+  `./instructions`, `./setup`, `./vercel` and others, plus two
+  `./internal/*` subpaths that are off limits under AGENTS.md rule 6. The
+  installed copy is re-inspected after install and recorded in the research
+  note.
+- selected documented pattern: none — this task installs and documents; no
+  framework API is called yet. `src/index.ts` in each adapter stays a minimal
+  typed smoke surface proving the public entrypoint resolves under typecheck.
+- anything not documented that must be harness-owned: to be recorded in
+  `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md` after the
+  installed-docs inspection.
+
+### Next exact step
+Create `packages/runtime-eve` and `packages/runtime-ai-sdk` mirroring
+`packages/core`, declare the pinned dependencies, run `pnpm install`, then
+inspect `node_modules/eve/docs/` and the installed `ai` types.
+
+---
+
+## 2026-09-19 17:04 — M1-T1 — Install AI SDK and `eve` (result)
+
+**Status:** completed
+**Actor/session:** implementer subagent (opus) — orchestrated by Claude Fable 5.1
+**Commit:** not committed (orchestrator commits after review)
+
+Result entry for the `started` entry above. Appended rather than rewritten, per
+`docs/progress/README.md`. The `Implementation references` section below is the
+post-install version the started entry promised; where the two differ, this one
+is authoritative.
+
+### Goal
+Install current, mutually compatible versions of `eve` and the AI SDK (`ai`)
+into two new adapter packages, record what the installed packages document, and
+write the dependency-versioning ADR. Explicitly out of scope: `AgentRuntime`
+(M1-T5), `EveAgentRuntime` (M1-T6) and the example agent (M1-T2).
+
+### Implementation references
+- package/version (installed, verified against the resolved
+  `node_modules` path and the lockfile):
+  - `eve@0.63.0` — `engines.node: ">=24"`, `bin: { eve: "./bin/eve.js" }`,
+    runtime deps `nitro@3.0.260903-beta` and `undici@8.9.0`.
+  - `ai@7.0.107` — `engines.node: ">=22"`, runtime deps
+    `@ai-sdk/gateway@4.0.87`, `@ai-sdk/provider@4.0.17`,
+    `@ai-sdk/provider-utils@5.0.45` (all transitive, declared by no workspace
+    package).
+  - `zod@4.6.5` — required peer of `ai` (`^3.25.76 || ^4.1.8`, no
+    `peerDependenciesMeta`, therefore not optional).
+  - Compatibility: `ai@7.0.107` satisfies eve's required peer `ai: "^7.0.105"`.
+    No discrepancy to resolve; the newest `ai` is also the eve-compatible `ai`.
+    Eve's five other peers (`dd-trace`, `just-bash`, `braintrust`,
+    `microsandbox`, `@opentelemetry/api`) all carry `"optional": true` and were
+    deliberately not installed.
+- installed docs read:
+  - `eve/docs/README.md` (the framework's own entrypoint; declares eve preview
+    status and the authored filesystem model).
+  - `eve/docs/reference/typescript-api.md` (the `define*` surface and the import
+    path for each; the rule that the export map is the full public contract).
+  - `eve/docs/reference/cli.md` (every CLI command).
+  - Full file inventory of `eve/docs` (110 files) and `ai/docs` (291 files),
+    both recorded in the research note.
+  - `ai/README.md`, `ai/docs/02-getting-started/00-choosing-a-provider.mdx`,
+    `ai/docs/03-agents/02-building-agents.mdx`.
+- official docs/repos/examples read: none. The installed packages settled every
+  question asked, so precedence levels 3-5 were not needed.
+- public types/exports inspected:
+  - `eve/package.json` `exports` (79 entries) and `imports`;
+    `eve/dist/src/index.d.ts`; `eve/dist/src/public/index.d.ts`;
+    `eve/dist/src/public/definitions/agent.d.ts`;
+    `eve/dist/src/public/models/openai/index.d.ts`;
+    `eve/dist/src/shared/agent-definition.d.ts`.
+  - `ai/package.json` `exports` (4 entries); `ai/dist/index.d.ts` (the final
+    `export { ... }` statement and the three re-export statements).
+- selected documented pattern: none called yet. The two `src/index.ts` files
+  each re-export one documented public type (`AgentDefinition` from `eve`,
+  `LanguageModel` from `ai`) purely so that `pnpm typecheck` fails if the public
+  entrypoint stops resolving. Neither imports a package-internal path.
+- anything not documented that must be harness-owned: recorded in
+  `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md` §8. In
+  short: `Job`, `defineDomain()`, `createHarness()`, `ExecutionContext`,
+  `CapabilityRegistry`, the trace schema and the `AgentRuntime` boundary itself
+  are harness-owned; neither package offers an equivalent.
+
+### Work completed
+- Created `packages/runtime-eve` (`@internal/runtime-eve`) and
+  `packages/runtime-ai-sdk` (`@internal/runtime-ai-sdk`), mirroring
+  `packages/core`: same `exports` map with the `@internal/source` condition
+  (ADR-0020), same `build`/`dev`/`typecheck` scripts, `private: true`,
+  `type: module`, both tsconfigs.
+- Pinned exactly: `runtime-eve` declares `eve@0.63.0`, `ai@7.0.107`,
+  `zod@4.6.5`; `runtime-ai-sdk` declares `ai@7.0.107`, `zod@4.6.5`. Both add
+  `vitest@5.0.1` as a devDependency, matching `@internal/testing`.
+- Added a co-located unit test to each package asserting (a) that each declared
+  dependency's installed `version` equals this package's own pin, with both
+  values read from disk and neither hard-coded, and (b) that the package
+  declares no `^`/`~` range.
+- Wrote `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md` and
+  `docs/decisions/0024-framework-dependency-versioning-policy.md`.
+- Updated the docs the install made stale: AGENTS.md, the system map, the
+  source-of-truth protocol, the ADR index, the research indexes, the commands
+  reference, and both milestone files.
+- Corrected the source-of-truth protocol's `eve`/`ai` inspection checklists.
+  They used literal `node_modules/<pkg>/...` paths, which do not exist under
+  pnpm's isolated store, and pointed at `eve/dist/*.d.ts`, where eve's
+  declarations are not. The replacements resolve the real directory first and
+  were each executed before being written down.
+
+### Files changed
+New:
+- `packages/runtime-eve/{package.json,tsconfig.json,tsconfig.build.json}`
+- `packages/runtime-eve/src/{index.ts,index.test.ts}`
+- `packages/runtime-ai-sdk/{package.json,tsconfig.json,tsconfig.build.json}`
+- `packages/runtime-ai-sdk/src/{index.ts,index.test.ts}`
+- `docs/decisions/0024-framework-dependency-versioning-policy.md`
+- `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`
+
+Modified:
+- `pnpm-lock.yaml`, `pnpm-workspace.yaml` (pnpm appended four entries to
+  `minimumReleaseAgeExclude`; not hand-edited)
+- `tests/architecture/boundaries.ts` (the `adapterPackages` comment; the data is
+  unchanged)
+- `tests/architecture/package-boundaries.test.ts` (the expected workspace
+  package inventory grew from three names to five)
+- `AGENTS.md`, `docs/architecture/system-map.md`,
+  `docs/development/source-of-truth-protocol.md`,
+  `docs/development/commands.md`, `docs/decisions/README.md`,
+  `docs/research/README.md`, `docs/research/vercel/README.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
+  `docs/milestones/README.md`, `docs/context/current-state.md`,
+  `docs/progress/WORKLOG.md`
+
+### Verification
+- `pnpm install` — PASS (33 packages added; pnpm appended
+  `@ai-sdk/gateway@4.0.87`, `@ai-sdk/provider-utils@5.0.45`, `ai@7.0.107`,
+  `eve@0.63.0` to `minimumReleaseAgeExclude`)
+- `pnpm install --frozen-lockfile` — PASS ("Lockfile is up to date")
+- `pnpm test:unit` — PASS (6 files, 51 tests; was 4 files, 42 tests)
+- `pnpm format` — PASS (36 files, no fixes applied)
+- `pnpm check` — PASS, all six stages:
+  - `format:check` — PASS
+  - `lint` — PASS
+  - `typecheck` — PASS (5 packages plus the root project)
+  - `test` — PASS (6 files, 51 tests across the four projects)
+  - `build` — PASS (5 packages; both new packages emit `dist/`)
+  - `check:handoff` — PASS
+- Gate bites, architecture boundary: added `"eve": "0.63.0"` to
+  `packages/core/package.json` devDependencies, ran
+  `pnpm exec vitest run --project unit tests/architecture` — FAIL as intended,
+  `eve matches the adapter-only pattern "eve"; only an adapter package
+  (@internal/runtime-eve, ...) may depend on it`. Reverted with
+  `git checkout -- packages/core/package.json`; `git diff packages/core` and
+  `git status --porcelain packages/core` both empty, test back to 11 passed.
+- Gate bites, version pin: loosened `runtime-eve`'s `eve` pin to `^0.63.0`, ran
+  `pnpm exec vitest run --project unit packages/runtime-eve` — FAIL as intended,
+  on both assertions (`expected '0.63.0' to be '^0.63.0'` and
+  `Ranged dependencies must be exact pins: [["eve","^0.63.0"]]`). Restored the
+  pin; 9 tests pass across both new packages.
+- `pnpm --filter @internal/runtime-eve exec eve info` — did not run, as
+  expected: `Invalid eve project ...: found no agent files`. It needs the
+  authored `agent/` directory that M1-T2 creates. It did confirm the installed
+  binary runs and self-reports v0.63.0. Not forced.
+- Every inspection command written into
+  `docs/development/source-of-truth-protocol.md` §10 was executed against this
+  tree before being recorded — PASS.
+
+### Decisions / deviations
+- **ADR-0024** records the versioning policy: exact pins for every framework
+  dependency and its required peers, optional peers not installed, upgrades as
+  their own task with a fresh source-of-truth inspection, the eve-compatible
+  `ai` winning for the eve adapter when the two disagree, and the per-package
+  assertion tests as the enforcement mechanism.
+- **`ai` is a direct dependency of `@internal/runtime-eve`, not transitive.**
+  The installed `eve` makes it a required peer *and* exposes AI SDK types on its
+  public surface: 109 of eve's shipped `.d.ts` files import from `"ai"`, and
+  `eve/models/openai`'s `chatgpt()`/`openai()` are declared to return `ai`'s
+  `LanguageModel`. This was an open question in the task brief; the installed
+  types answered it.
+- **No `@ai-sdk/*` provider package installed.** `@ai-sdk/gateway` is already a
+  dependency of `ai`, and `ai/README.md` documents the Gateway as the default
+  path needing no extra install. Choosing a direct provider is M1-T5's call.
+- **`zod` is declared explicitly** in both adapters rather than left to pnpm's
+  automatic peer installation, so the version is visible in a manifest and
+  covered by the assertion tests. `zod` is not an adapter-only dependency under
+  `BOUNDARY_RULES`, so this does not widen any boundary.
+- **`vitest` added as a devDependency to both new packages**, matching
+  `@internal/testing`, because they now contain co-located tests.
+- **`tests/architecture/package-boundaries.test.ts` was modified**, which the
+  task brief did not anticipate. Its first assertion hard-codes the expected
+  workspace package inventory; adding two packages necessarily fails it. Only
+  the inventory list changed. No rule was weakened and `adapterPackages` was not
+  touched.
+- **The source-of-truth protocol's inspection commands were wrong and were
+  fixed**, not merely re-labelled. This is slightly beyond the literal brief,
+  but the brief required §10 to stop saying eve/ai are uninstalled, and leaving
+  commands that cannot run under pnpm would have made the section actively
+  misleading for M1-T2.
+- **The two assertion tests share their shape by duplication.** Extracting a
+  helper into `@internal/testing` was considered and deferred until a third
+  package needs it; ADR-0024 records that.
+
+### Known issues / blockers
+- None blocking M1-T2.
+- **Discrepancy recorded, resolved in favour of the installed package:**
+  `eve@0.63.0` ships **no `eve check` command**
+  (`eve/docs/reference/cli.md`; a grep for it across all 110 shipped doc files
+  returns only prose). AGENTS.md and `current-state.md` referenced it. `eve info`
+  is the 0.63.0 equivalent, and both files now say so.
+- **The AI SDK's shipped `.mdx` docs contain unresolved `__PROVIDER_IMPORT__`
+  and `__MODEL__` placeholders** in 82 of 291 files, where the published site
+  injects a provider. Their prose and API names are authoritative; their model
+  arguments are not literals. Read shapes from `ai/dist/index.d.ts`.
+- **`ai`'s agent class is `ToolLoopAgent`, not `Agent`.** In 7.0.107, `Agent` is
+  a *type*; `Experimental_Agent` is an alias for `ToolLoopAgent`. M1-T5 must use
+  the non-experimental name, per the source-of-truth protocol §8.
+- **Open for M1-T6:** how to drive `eve` programmatically rather than through
+  the CLI is not yet established. `eve/client` (`Client`, `ClientSession`) is
+  the documented programmatic surface and
+  `eve/docs/guides/client/overview.mdx` is the page to read. M1-T1 did not
+  guess, per the no-assumption stop condition.
+- CI still has not executed; no remote is configured. Unchanged from M0.
+
+### Next exact step
+M1-T2, Scaffold example agent. Read
+`eve/docs/concepts/project-structure.mdx`, `eve/docs/reference/agent-files.md`
+and `eve/docs/tools/overview.mdx` (resolve the real path first, per
+`docs/development/source-of-truth-protocol.md` §10), then append a `started`
+WORKLOG entry with Implementation references before creating any file.

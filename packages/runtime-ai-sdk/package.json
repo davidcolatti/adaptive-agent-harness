@@ -1,0 +1,32 @@
+{
+  "name": "@internal/runtime-ai-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Adapter boundary for the Vercel AI SDK. The AgentRuntime contract lands in M1-T5.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@internal/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "ai": "7.0.107",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

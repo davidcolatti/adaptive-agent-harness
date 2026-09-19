@@ -1977,7 +1977,7 @@ shape a `defineDomain` input/output schema will have to describe.
 
 **Status:** started
 **Actor/session:** coding agent (research subagent)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2026,7 +2026,7 @@ Read the installed `eve` docs and `.d.ts` surface, then write the research note.
 
 **Status:** started
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2104,7 +2104,7 @@ Implement `packages/core/src/schema.ts`, `job.ts`, `domain.ts` and
 
 **Status:** completed
 **Actor/session:** coding agent (research subagent)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2262,7 +2262,7 @@ settles the eight open questions, in particular who owns the eve server process
 
 **Status:** completed
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2427,7 +2427,7 @@ independent of it and of each other.
 
 **Status:** completed
 **Actor/session:** coding agent (research subagent)
-**Commit:** not committed by this task (see Decisions / deviations)
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2575,7 +2575,7 @@ with the §13 `Implementation references` block plus the §15.7 corrections.
 
 **Status:** started
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -2672,7 +2672,7 @@ capabilities, handler and policy.
 
 **Status:** started
 **Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 Implement `EveAgentRuntime` in `packages/runtime-eve`, the first real
@@ -2782,7 +2782,7 @@ Write `packages/runtime-eve/src/eve-agent-runtime.ts` and its unit test.
 
 **Status:** completed
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed (the orchestrator reviews and commits)
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -3084,7 +3084,7 @@ workspace inventory in `tests/architecture/package-boundaries.test.ts`.
 
 **Status:** completed
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed (the orchestrator reviews and commits)
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -3172,7 +3172,7 @@ Milestone 1 task open.
 
 **Status:** completed
 **Actor/session:** coding agent (implementation subagent)
-**Commit:** not committed (the orchestrator reviews and commits)
+**Commit:** 3d3d941
 
 ### Goal
 
@@ -3291,7 +3291,7 @@ Milestone 1 task open.
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 As the `started` entry above (2026-09-19 18:22). The Implementation references
@@ -3545,7 +3545,7 @@ the SHA here. Then archive the milestone snapshot under
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
-**Commit:** not committed
+**Commit:** 3d3d941
 
 ### Goal
 Fix `pnpm example:run:mock` failing on a second consecutive run with

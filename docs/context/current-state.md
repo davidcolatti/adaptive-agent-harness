@@ -8,7 +8,7 @@
 **Current milestone:** M2, Job, Trace, Supabase, and Run Ledger (not started)
 **Current task:** M2-T1, Stable identifiers (not started). First, create the M2
 status file (see "Exact next task").
-**Last commit SHA:** PENDING_SHA (M1-T4, T6, T9 and the M1 snapshot). Earlier
+**Last commit SHA:** `3d3d941` (M1-T4, T6, T9 and the M1 snapshot). Earlier
 M1 commits: `bdb4a23`, `4748a36`, `16e10e8`. Run `git log --oneline`.
 
 ## Completed milestones / tasks

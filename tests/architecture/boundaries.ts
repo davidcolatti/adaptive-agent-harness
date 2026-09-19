@@ -51,6 +51,21 @@ export interface BoundaryRules {
    */
   readonly adapterPackages: readonly string[];
   /**
+   * Adapter-only surfaces that an application package (`apps/*`) may
+   * nevertheless depend on, as an explicit allowlist.
+   *
+   * ADR-0025: an `apps/*` package is a domain consumer, not a harness library.
+   * The build plan's dependency diagram puts `apps/* / consuming domains` above
+   * `core`, and a real domain repository is an `eve` project, so an example
+   * domain must be able to author agents with `eve`'s public surface. Anything
+   * in {@link BoundaryRules.adapterOnlyDependencies} that is NOT listed here
+   * stays adapter-only for app packages too: storage and hosted workflow are
+   * reached through harness adapters by everyone.
+   *
+   * This does not relax the rule for any `packages/*` package.
+   */
+  readonly appPackagesMayDependOn: readonly DependencyPattern[];
+  /**
    * Extra per-package bans, keyed by workspace package name. Used for rules
    * that are narrower than the adapter rule, such as `core` not depending on
    * any adapter-facing package at all.
@@ -80,6 +95,12 @@ export const BOUNDARY_RULES: BoundaryRules = {
     "@internal/workflow-vercel",
     "@internal/sandbox-vercel",
   ],
+  // ADR-0025: application packages author eve agents directly, so `eve` and the
+  // AI SDK authoring surface it exposes are allowed under `apps/*`. `@supabase/*`,
+  // `@vercel/*` and `workflow` are deliberately absent: they remain adapter-only
+  // for apps as well. Execution still goes through the harness API rather than
+  // the `eve` runtime, which M1-T4 enforces once `createHarness()` exists.
+  appPackagesMayDependOn: ["eve", "ai", "@ai-sdk/*"],
   forbiddenByPackage: {
     // "core cannot import domain code / eve / Supabase" (build plan section 4).
     // The adapter rule already bans these for every non-adapter package; the
@@ -130,11 +151,17 @@ export function findBoundaryViolations(
         continue;
       }
 
-      // Rule 2: adapter-only third-party surfaces.
+      // Rule 2: adapter-only third-party surfaces. A declared adapter may
+      // depend on all of them; an application package may depend on the
+      // explicitly allowlisted subset (ADR-0025); every other package may
+      // depend on none of them.
       const adapterOnly = rules.adapterOnlyDependencies.find((pattern) =>
         matchesPattern(dependency, pattern),
       );
-      if (adapterOnly !== undefined && !adapterPackages.has(pkg.name)) {
+      const allowedForApp =
+        isAppPackage(pkg) &&
+        rules.appPackagesMayDependOn.some((pattern) => matchesPattern(dependency, pattern));
+      if (adapterOnly !== undefined && !allowedForApp && !adapterPackages.has(pkg.name)) {
         violations.push({
           packageName: pkg.name,
           dependencyName: dependency,

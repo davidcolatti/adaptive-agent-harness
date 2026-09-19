@@ -5,8 +5,11 @@ last_verified: 2026-09-19
 related:
   - docs/milestones/build-plan.md
   - docs/decisions/README.md
+  - docs/decisions/0025-application-packages-may-author-eve-agents-directly.md
   - docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md
+  - docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md
 implementation:
+  - apps/example-agent
   - packages/core
   - packages/testing
   - packages/config
@@ -146,16 +149,31 @@ Rules, as the plan states them:
 
 ## Current state (Milestone 1, in progress)
 
-Five packages exist. Everything else in the repository layout is planned.
+Five packages and one application exist. Everything else in the repository layout is planned.
 
 - `packages/config` (`@internal/config`) holds the shared TypeScript config bases
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
   directory.
 - `packages/testing` (`@internal/testing`) is the test-helpers package required by M0-T4. It
   contains exactly one real helper, `createFakeClock`, plus its test.
-- `packages/core` (`@internal/core`) is an intentionally empty boundary: a comment explaining why,
-  and `export {}`. The contracts in build plan section 5 land in Milestone 1. The package exists
-  now only to prove that the build, typecheck and packaging pipeline works end to end.
+- `packages/core` (`@internal/core`) holds the first two harness contracts, added by M1-T7 and
+  M1-T8. It is no longer the empty boundary Milestone 0 left behind.
+
+  - The **execution context** (M1-T7): `ExecutionContext` plus `DomainRef`, `Budget`, `ToolGrant`
+    and `RuntimeInfo`, with a `createExecutionContext()` factory that applies the documented
+    defaults. Documented in [`../contracts/execution-context.md`](../contracts/execution-context.md).
+  - The **error taxonomy** (M1-T8): the nine classes the build plan names, under one abstract
+    `HarnessError` with a stable `code` discriminant, plus `serializeError()` and the whitelisted,
+    stack-free `SerializedHarnessError` shape that [ADR-0026](../decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md)
+    records. Documented in [`../contracts/errors.md`](../contracts/errors.md).
+  - A **JSON value model** (`JsonValue`, `JsonObject`) that every serializable field is typed
+    with, and a minimal `TraceEvent`/`TraceWriter` pair. `TraceWriter` is stated verbatim by
+    M2-T4 and lives here only because the execution context has to hold one; **M2-T3 owns the
+    full trace event schema and replaces `TraceEvent`**.
+
+  The rest of build plan section 5 is still to come: `Job` and `DomainDefinition` in M1-T3,
+  `AgentRuntime` in M1-T5, `CapabilityRegistry` in M1-T9. The package still declares no runtime
+  dependency and must keep none.
 - `packages/runtime-eve` (`@internal/runtime-eve`) and `packages/runtime-ai-sdk`
   (`@internal/runtime-ai-sdk`) were created by M1-T1 to hold the framework dependencies it
   installed: `eve@0.63.0`, `ai@7.0.107` and `zod@4.6.5` for the first,
@@ -172,6 +190,22 @@ Five packages exist. Everything else in the repository layout is planned.
 
   What the installed packages actually document is recorded in
   [`../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`](../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md).
+- `apps/example-agent` (`@internal/example-agent`) was created by M1-T2. It is the neutral
+  vendor-triage fixture domain, authored as a real `eve` project: `agent/agent.ts`,
+  `agent/instructions.md`, one Markdown skill under `agent/skills/`, one read-only fixture tool
+  under `agent/tools/`, and the frozen fixture data plus its pure lookup under `agent/lib/`. It
+  declares `eve`, `ai` and `zod` at the same exact pins the adapters use.
+
+  It is **not** an adapter and **not** a harness package. It is a domain consumer, which is the
+  distinction [ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md)
+  records: an `apps/*` package may author agents with `eve`, while `@supabase/*`, `@vercel/*` and
+  `workflow` stay adapter-only for it too. **Nothing executes it yet.** `eve info` discovers it
+  with zero diagnostics and `eve build` bundles it, but no harness call exists until
+  `createHarness()` lands in M1-T4, and Milestone 1's acceptance criterion is that the example
+  calls the harness API rather than the `eve` runtime directly.
+
+  What the installed `eve` required of the scaffold is recorded in
+  [`../research/vercel/2026-09-19-m1-eve-project-scaffold.md`](../research/vercel/2026-09-19-m1-eve-project-scaffold.md).
 
 ### Package status
 
@@ -181,12 +215,12 @@ plan's milestone sections.
 | Package | Status |
 | --- | --- |
 | `packages/config` | exists (Milestone 0) |
-| `packages/core` | exists (Milestone 0, empty boundary) |
+| `packages/core` | exists (Milestone 0; contracts land from M1-T7/M1-T8 onward) |
 | `packages/testing` | exists (Milestone 0) |
 | `packages/runtime-ai-sdk` | exists (M1-T1, dependency boundary only; `AgentRuntime` is M1-T5) |
 | `packages/runtime-eve` | exists (M1-T1, dependency boundary only; `EveAgentRuntime` is M1-T6) |
 | `packages/registry` | planned (M1), capability registry, per M1-T9 |
-| `apps/example-agent` | planned (M1) |
+| `apps/example-agent` | exists (M1-T2, authored eve project; no harness call until M1-T4) |
 | `packages/trace` | planned (M2) |
 | `packages/storage-supabase` | planned (M2) |
 | `packages/observability` | planned (M2) |
@@ -207,16 +241,24 @@ it, so it has no scheduled milestone.
 `eve` and the AI SDK are now installed, but no code calls either. The source files in the
 workspace packages are:
 
-- `packages/core/src/index.ts` (the empty boundary described above)
+- `packages/core/src/index.ts` (the named re-export barrel)
+- `packages/core/src/json.ts`, `context.ts`, `trace.ts`, `errors.ts` and their four co-located
+  `*.test.ts` files (the M1-T7 and M1-T8 contracts described above)
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
 - `packages/runtime-eve/src/index.ts` and `index.test.ts`
 - `packages/runtime-ai-sdk/src/index.ts` and `index.test.ts`
+- `apps/example-agent/agent/agent.ts`, `agent/tools/lookup_vendor_evidence.ts`,
+  `agent/tools/web_search.ts` and `agent/tools/web_fetch.ts` (the last two disable eve's live web
+  defaults), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test, and
+  `src/dependency-pins.test.ts`
 
 The four files in the two adapter packages contain one type re-export and one dependency-pin test
-each. There is no agent runtime, no model call and no Supabase dependency anywhere in the
-workspace, and `@internal/core` still declares no dependency at all. The supporting TypeScript
+each. The example agent's files are authored `eve` definitions plus frozen fixture data: they are
+compiled by `eve`, not by anything in this workspace, and none of them calls a model. There is no
+agent runtime, no model call and no Supabase dependency anywhere in the workspace. `@internal/core` still declares no runtime dependency; its only devDependencies are
+`@internal/config` for the tsconfig bases and `vitest` for its co-located tests. The supporting TypeScript
 outside the packages is tooling only: `scripts/verify-handoff.ts` (and its test),
 `tests/architecture/`, and `tests/toolchain/`.
 
@@ -225,7 +267,7 @@ outside the packages is tooling only: `scripts/verify-handoff.ts` (and its test)
 The dependency rule is not documentation-only. It is a test that runs against the real workspace.
 
 - [`tests/architecture/boundaries.ts`](../../tests/architecture/boundaries.ts) is the rule engine.
-  It defines a data table, `BOUNDARY_RULES`, and pure functions over it. The table has three
+  It defines a data table, `BOUNDARY_RULES`, and pure functions over it. The table has four
   parts:
   - `adapterOnlyDependencies`: third-party package name patterns that only a declared adapter may
     depend on. Today that is `eve`, `@supabase/*`, `ai`, `@ai-sdk/*`, `@vercel/*` and `workflow`.
@@ -235,6 +277,12 @@ The dependency rule is not documentation-only. It is a test that runs against th
     `@internal/storage-supabase`, `@internal/runtime-ai-sdk`, `@internal/workflow-vercel`,
     `@internal/sandbox-vercel`), so a milestone that adds an adapter does not have to redesign the
     table under time pressure.
+  - `appPackagesMayDependOn`: the subset of `adapterOnlyDependencies` that a package under
+    `apps/*` may depend on anyway, today `eve`, `ai` and `@ai-sdk/*`. This is
+    [ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md): an
+    application is a domain consumer, and a real consuming domain repository is an `eve` project,
+    so it must be able to author agents. `@supabase/*`, `@vercel/*` and `workflow` are
+    deliberately absent, and the allowance reaches no `packages/*` package.
   - `forbiddenByPackage`: narrower per-package bans. `@internal/core` is listed explicitly,
     because it is the boundary the plan names by hand.
 
@@ -248,11 +296,13 @@ The dependency rule is not documentation-only. It is a test that runs against th
   against them. It executes on every `pnpm test` and therefore on every `pnpm check`, on the
   pre-push hook, and in CI.
 
-This is live as of M1-T1: `eve` and `ai` are installed, so any package that declares a dependency
-on them without being in `adapterPackages` fails the test. It was proven by adding `eve` to
-`@internal/core` and watching the test fail naming the adapter-only rule (M1-T1 WORKLOG entry).
-Adapter status is a deliberate, reviewable edit to `BOUNDARY_RULES`, not an accident. Version
-policy is separate and lives in ADR-0024.
+This is live as of M1-T1: `eve` and `ai` are installed, so any library package that declares a
+dependency on them without being in `adapterPackages` fails the test. It was proven by adding `eve`
+to `@internal/core` and watching the test fail naming the adapter-only rule (M1-T1 WORKLOG entry),
+and re-proven in M1-T2 by adding `@supabase/supabase-js` to `apps/example-agent` and watching the
+same rule bite an application package that is otherwise allowed `eve`. Adapter status is a
+deliberate, reviewable edit to `BOUNDARY_RULES`, not an accident. Version policy is separate and
+lives in ADR-0024.
 
 ## Per-topic architecture documents
 

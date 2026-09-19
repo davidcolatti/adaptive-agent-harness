@@ -2,6 +2,7 @@
 # Docs: https://pnpm.io/settings/cli
 packages:
   - "packages/*"
+  - "apps/*"
 
 # Refuse to install a dependency that declares it is incompatible with the
 # running Node version. Note: pnpm 12.4.2 does NOT fail on THIS project's own

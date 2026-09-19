@@ -76,6 +76,7 @@ describe("workspace dependency boundaries", () => {
     expect(packages.map((pkg) => pkg.name).sort()).toEqual([
       "@internal/config",
       "@internal/core",
+      "@internal/example-agent",
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",
       "@internal/testing",
@@ -108,6 +109,7 @@ describe("findBoundaryViolations", () => {
   const RULES: BoundaryRules = {
     adapterOnlyDependencies: ["eve", "@supabase/*"],
     adapterPackages: ["@internal/runtime-eve"],
+    appPackagesMayDependOn: ["eve"],
     forbiddenByPackage: {
       "@internal/core": ["eve"],
     },
@@ -184,6 +186,59 @@ describe("findBoundaryViolations", () => {
     };
 
     expect(findBoundaryViolations([app, clean], RULES)).toEqual([]);
+  });
+
+  // ADR-0025: `apps/*` packages are domain consumers and author eve agents
+  // directly. The allowance is an explicit allowlist, not a blanket exemption,
+  // and it does not reach `packages/*`.
+  it("allows an application package to depend on an allowlisted adapter-only surface", () => {
+    const app: WorkspacePackage = {
+      name: "@internal/example-agent",
+      directory: "apps/example-agent",
+      dependencies: ["eve"],
+    };
+
+    expect(findBoundaryViolations([app], RULES)).toEqual([]);
+  });
+
+  it("still flags an application package that depends on a non-allowlisted surface", () => {
+    const app: WorkspacePackage = {
+      name: "@internal/example-agent",
+      directory: "apps/example-agent",
+      dependencies: ["@supabase/supabase-js"],
+    };
+
+    const violations = findBoundaryViolations([app], RULES);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.dependencyName).toBe("@supabase/supabase-js");
+    expect(violations[0]?.reason).toContain("adapter-only");
+  });
+
+  it("does not extend the app allowance to a library package", () => {
+    const library: WorkspacePackage = {
+      name: "@internal/trace",
+      directory: "packages/trace",
+      dependencies: ["eve"],
+    };
+
+    const violations = findBoundaryViolations([library], RULES);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.reason).toContain("adapter-only");
+  });
+
+  it("does not extend the app allowance to core", () => {
+    const offender: WorkspacePackage = {
+      name: "@internal/core",
+      directory: "packages/core",
+      dependencies: ["eve"],
+    };
+
+    const violations = findBoundaryViolations([offender], RULES);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.packageName).toBe("@internal/core");
   });
 
   it("reports every violating dependency, not only the first", () => {

@@ -10,7 +10,7 @@ Listed in the order they appear in `package.json`.
 
 | Command | What it runs | When to use it |
 | --- | --- | --- |
-| `pnpm build` | `turbo run build` | Compile every workspace package to `dist` via each package's own `build` script. Needed before anything consumes built output, and part of `pnpm check`. |
+| `pnpm build` | `turbo run build` | Run every workspace package's own `build` script: `tsc` to `dist` for the libraries, `eve build` for the example agent. Needed before anything consumes built output, and part of `pnpm check`. |
 | `pnpm check` | `pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run check:handoff` | The single local quality gate. Run it before declaring a task complete. |
 | `pnpm check:handoff` | `node scripts/verify-handoff.ts` | Verify `docs/context/current-state.md` and `docs/progress/WORKLOG.md` are present and internally consistent (completed entries have verification results; referenced ADRs exist). Runs as the last stage of `pnpm check`. |
 | `pnpm dev` | `turbo run dev` | Start every package's watch build (`tsc --watch`). Persistent and uncached. |
@@ -51,9 +51,17 @@ Each workspace package declares its own scripts, and any of them can be run in i
 | `@internal/runtime-eve` | `build`, `dev`, `typecheck` |
 | `@internal/testing` | `build`, `dev`, `typecheck` |
 | `@internal/config` | none (it ships only shared tsconfig bases, no runtime code) |
+| `@internal/example-agent` | `build`, `dev`, `info`, `typecheck` |
 
-In all cases `build` is `tsc -p tsconfig.build.json`, `dev` is the same with
+For every package, `build` is `tsc -p tsconfig.build.json`, `dev` is the same with
 `--watch --preserveWatchOutput`, and `typecheck` is `tsc --noEmit -p tsconfig.json`.
+
+`@internal/example-agent` is the exception, because it is an `eve` application rather than a
+TypeScript library: nothing imports it, so it emits no declarations and has no
+`tsconfig.build.json`. Its `build` is `eve build` and its `dev` is `eve dev`; only `typecheck` is
+the usual `tsc --noEmit`. It carries its own `turbo.json` (extending the root) so that Turborepo
+watches `agent/**` and caches `.output/**` instead of the `src/**` and `dist/**` the root task
+definitions assume.
 
 ```sh
 pnpm --filter @internal/testing build
@@ -63,6 +71,27 @@ pnpm --filter @internal/core dev
 
 Running the root `pnpm build` or `pnpm typecheck` instead fans the same scripts out across the
 workspace through Turborepo, honouring the `build` task's `dependsOn: ["^build"]` ordering.
+
+## `eve` commands for the example agent
+
+The example agent is a real `eve` project, so eve's own CLI is how you inspect it. There is no
+root-level wrapper script; run the commands through the package filter.
+
+| Command | What it does |
+| --- | --- |
+| `pnpm --filter @internal/example-agent run info` | `eve info`. Confirms eve discovered every authored file and prints its diagnostics, the resolved model, the artifact paths and the HTTP routes. Needs no model credential. |
+| `pnpm --filter @internal/example-agent exec eve info --json` | The machine-readable form. Use it to check that a specific tool or skill was discovered; the plain-text form does not print their names. |
+| `pnpm --filter @internal/example-agent run build` | `eve build`. Compiles `.eve/` artifacts and bundles the host output to `.output/`. Runs offline and needs no model credential. Part of `pnpm build` and therefore of `pnpm check`. |
+| `pnpm --filter @internal/example-agent run dev` | `eve dev`. Starts the local dev server and opens eve's terminal UI. Interactive, and it *does* reach a model, so it needs a credential. Not part of any gate. |
+
+`eve` 0.63.0 ships **no `eve check` command**; `eve info` is the equivalent diagnostic, and it
+requires an authored `agent/` directory to run at all. Both commands write `.eve/` and `.output/`
+inside the app; both directories are git-ignored build artifacts.
+
+There is no `pnpm example:run` yet. That acceptance criterion belongs to M1-T4, once
+`createHarness()` exists: the example is required to execute through the harness API, not through
+the `eve` runtime directly.
+
 
 ## Test-file taxonomy
 

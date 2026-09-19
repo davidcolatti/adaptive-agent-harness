@@ -1,6 +1,7 @@
 # Milestone 1, Local Agent + Public Harness Boundary
 
-**Status:** in progress. M1-T1 is `completed`; M1-T2 through M1-T9 are `not started`.
+**Status:** in progress. M1-T1, M1-T2, M1-T7 and M1-T8 are `completed`; M1-T3 through M1-T6 and
+M1-T9 are `not started`.
 
 **Goal (from the build plan):** run one neutral `eve` agent locally through the harness API. Do
 not add compilation yet.
@@ -80,10 +81,16 @@ in the repository. Read them before opening any M1 task.
   declares a dependency on them fails the test today; M1-T1 proved it by adding `eve` to
   `@internal/core` and watching the assertion name the adapter-only rule. Non-adapter packages,
   `@internal/core` above all, must reach those libraries only through an adapter.
+- **Application packages are the one exception, and it is narrow.** M1-T2 added
+  `BOUNDARY_RULES.appPackagesMayDependOn`, an allowlist letting a package under `apps/*` depend on
+  `eve`, `ai` and `@ai-sdk/*` so it can author an agent at all, per
+  [ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md).
+  `@supabase/*`, `@vercel/*` and `workflow` stay adapter-only for applications too, and the
+  allowance reaches no `packages/*` package. Widening it is itself an architecture change.
 
 ## Tasks
 
-M1-T1 is `completed`. M1-T2 through M1-T9 are `not started`.
+M1-T1, M1-T2, M1-T7 and M1-T8 are `completed`. M1-T3 through M1-T6 and M1-T9 are `not started`.
 
 ### M1-T1, Install AI SDK and `eve`
 
@@ -112,11 +119,52 @@ the equivalent diagnostic. `pnpm check` passes.
 
 ### M1-T2, Scaffold example agent
 
-**Status:** not started.
+**Status:** completed (2026-09-19).
 
 Scaffold the example agent using the normal `eve` structure (`agent/agent.ts`,
 `agent/instructions.md`, `agent/skills/`, `agent/tools/`, `agent/lib/`), and create one read-only
 fixture tool for it.
+
+**Result.** `apps/example-agent` (`@internal/example-agent`) is a real `eve` project, and the
+structure the build plan assumed turned out to be exactly what the installed `eve` 0.63.0
+documents, so there was no layout deviation: `agent/agent.ts` (`defineAgent` with an AI Gateway
+model id), `agent/instructions.md`, one flat Markdown skill `agent/skills/triage-vendor.md`,
+the read-only fixture tool `agent/tools/lookup_vendor_evidence.ts`, and `agent/lib/` holding the
+frozen fixture data for three fictional vendors plus the pure lookup the tool calls. `eve info`
+reports `Compile ready`, `Diagnostics 0 errors, 0 warnings`, the skill, and the tool; `eve build`
+bundles the app offline with no model credential. The task made no model call, and neither does
+any test.
+
+Three things the installed package settled that the task had to decide rather than assume, all
+recorded in [`../research/vercel/2026-09-19-m1-eve-project-scaffold.md`](../research/vercel/2026-09-19-m1-eve-project-scaffold.md):
+
+- **`eve` has no read-only or side-effect flag on a tool definition.** The complete authored tool
+  shape in `eve/dist/src/tools/definition.d.ts` offers `approval` and nothing else in that
+  direction. "Read-only" is therefore harness-owned here: the tool declares `approval: never()`,
+  documents what it does not touch, and keeps its implementation in a pure `agent/lib/` module
+  whose unit test is what actually holds the guarantee. A machine-readable version of this
+  property is work for M1-T9's `CapabilityManifest`.
+- **eve's optional default tools include `web_search` and `web_fetch`**, which would have given
+  this fixture domain live web research by default, against the milestone's own instruction to use
+  deterministic local fixture tools first. Both are disabled with `disableTool()` at their own
+  slots, which is the documented per-tool mechanism; `defaultTools: false` was rejected because it
+  would also remove `load_skill` and break the skill.
+- **Relative imports need the `.js` extension** to satisfy this repository's `module: nodenext`
+  baseline, and eve's compiler resolves them to the TypeScript source, so no
+  `moduleResolution: bundler` override was needed.
+
+The task also forced one architecture change, because the boundary rule applied the adapter-only
+ban to `apps/*` as well and an `eve` project must import `eve`:
+[ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md) records that
+application packages are domain consumers and may author agents with `eve`, `ai` and `@ai-sdk/*`,
+while `@supabase/*`, `@vercel/*` and `workflow` stay adapter-only for them too. It is implemented
+as a new `appPackagesMayDependOn` allowlist in `BOUNDARY_RULES`, not as a special case in the rule
+engine, and the engine's unit tests cover both directions.
+
+**Not done here, by design.** Nothing executes the agent. There is no `defineDomain()`
+registration (M1-T3), no `createHarness()` call (M1-T4) and therefore no `pnpm example:run`. How
+to drive `eve` programmatically is still unestablished and remains M1-T6's question. `pnpm check`
+passes.
 
 ### M1-T3, `defineDomain()`
 
@@ -168,14 +216,30 @@ Implement `EveAgentRuntime`. Do not leak `eve` session details into the core con
 
 ### M1-T7, Runtime context
 
-**Status:** not started.
+**Status:** completed (2026-09-19).
 
 Create a typed `ExecutionContext` containing the run ID, job ID, domain, attempt, budget,
 permissions, trace writer, abort signal and runtime metadata.
 
+**Result.** `packages/core` now exports `ExecutionContext` with all nine fields, every one
+readonly, plus the supporting types the build plan names but does not define: `DomainRef`
+(`{ id, version }`, the shape section 5 uses for both `Job.domain` and `CapabilityRef`), `Budget`
+(exactly `Job.budget`), `ToolGrant`/`ToolGrantMode`, `RuntimeInfo`, and a recursive `JsonValue`/
+`JsonObject` model so `Job.metadata`-style fields have a type with no `any` in it. `ToolGrant`
+(`{ toolId, mode: "read" | "write", scope? }`) is a harness-owned M1 shape, recorded as a project
+decision in the WORKLOG rather than an ADR, and documented as extensible by M2 and M5.
+`createExecutionContext()` applies the defaults in one place, all of them the conservative
+reading: no budget is unlimited rather than zero, no permissions is the empty list because
+permission is explicit, and no signal is one that never aborts rather than one already aborted.
+It validates only that `attempt` is an integer of at least 1, because an off-by-one there would
+mislabel every retry in the trace. `TraceWriter` is declared verbatim as M2-T4 states it, because
+the context has to hold one; `TraceEvent` is a deliberately minimal five-field placeholder that
+**M2-T3 replaces**, with `createNoopTraceWriter()` as the default. Contract:
+[`../contracts/execution-context.md`](../contracts/execution-context.md). `pnpm check` passes.
+
 ### M1-T8, Error taxonomy
 
-**Status:** not started.
+**Status:** completed (2026-09-19).
 
 Define the error taxonomy early:
 
@@ -192,6 +256,28 @@ ReplayMismatchError
 ```
 
 Every error must be serializable into a trace-safe representation.
+
+**Result.** All nine classes exist in `packages/core/src/errors.ts` under one abstract
+`HarnessError extends Error`, each with a stable `SCREAMING_SNAKE_CASE` `code` discriminant, the
+class name in `name`, standard `ErrorOptions` `cause` support, and an optional `details: JsonObject`
+the thrower controls. Classes carry only the fields their domain needs: `ValidationError.issues`,
+`BudgetExceededError`'s `dimension` (typed `keyof Budget`, so it cannot drift from the budget
+contract), `limit` and `actual`, `PermissionDeniedError`'s `toolId`/`requested`,
+`ToolExecutionError.toolId`, and `ReplayMismatchError`'s `nodeId` plus the two fingerprints as
+opaque strings. Each of those merges its own fields into `details` so a serialized error does not
+lose them.
+
+"Trace-safe" was undefined by the build plan, so it was defined and recorded in
+[ADR-0026](../decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md):
+`serializeError(error: unknown)` is a **whitelist** of `name`, `code`, `message`, `details` and a
+`cause` chain bounded at depth 5 with an explicit truncation marker; it never enumerates an
+error's own properties, and it omits `stack` unless asked. It is total, accepting `unknown`
+because `catch` binds `unknown` here, and it handles a `HarnessError`, any other `Error`, a thrown
+string or object, and a value that cannot even be stringified. `HarnessError.prototype.toJSON()`
+returns the same value, so `JSON.stringify(error)` is safe by default rather than by convention,
+and `SerializedHarnessError` is assignable to `JsonObject` so it embeds directly in a trace
+payload. Redaction of what a caller deliberately published stays M2-T9's job. Contract:
+[`../contracts/errors.md`](../contracts/errors.md). `pnpm check` passes.
 
 ### M1-T9, Domain capability registry
 

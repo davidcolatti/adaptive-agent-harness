@@ -1381,3 +1381,594 @@ M1-T2, Scaffold example agent. Read
 and `eve/docs/tools/overview.mdx` (resolve the real path first, per
 `docs/development/source-of-truth-protocol.md` §10), then append a `started`
 WORKLOG entry with Implementation references before creating any file.
+
+---
+
+## 2026-09-19 17:20 — M1-T2 — Scaffold example agent (+ ADR-0025)
+
+**Status:** started
+**Actor/session:** Claude Opus 5 implementer subagent (m1-t2), delegated by the
+Claude Fable 5.1 orchestrator
+**Commit:** not committed
+
+### Goal
+Scaffold the neutral vendor-triage example agent as a real `eve` project under
+`apps/example-agent`, using eve's documented authored filesystem structure, with
+one read-only fixture tool backed by deterministic local fixture data, so that
+`eve info` discovers it and it typechecks and builds inside the workspace.
+
+This task does **not** implement `defineDomain()`, `createHarness()` or any
+runtime adapter (M1-T3…T6), and makes no live model call.
+
+It carries one architecture change with it, recorded as **ADR-0025**:
+`tests/architecture/boundaries.ts` Rule 2 currently applies the adapter-only
+dependency rule to every workspace package including `apps/*`, so an eve project
+under `apps/` cannot exist without changing the rule. Per AGENTS.md rule 13 that
+is a deliberate architecture change with an ADR, not a quiet edit.
+
+### Implementation references
+- **package/version:** `eve@0.63.0`, `ai@7.0.107`, `zod@4.6.5`, all resolved from
+  `packages/runtime-eve` and confirmed against `pnpm-lock.yaml`. Real store path
+  resolved per `docs/development/source-of-truth-protocol.md` §10:
+  `node_modules/.pnpm/eve@0.63.0_ai@7.0.107_zod@4.6.5_/node_modules/eve`.
+- **installed docs read** (all under that resolved `eve` directory, `docs/`):
+  - `docs/README.md` — the public mental model and the authored filesystem slots.
+  - `docs/getting-started.mdx` — project creation, the manual-install path
+    (`npm install eve@latest ai zod`), and `eve init .` into an existing package.
+  - `docs/concepts/project-structure.mdx` — one root agent in `agent/` beside
+    `package.json`; `agent/lib/` for agent-only helpers; evals beside `agent/`.
+  - `docs/reference/agent-files.md` — the agent directory slot table, path-derived
+    naming (`agent/tools/get_weather.ts` → tool `get_weather`), `lib/` as
+    import-only, and `eve info` as the discovery debugger.
+  - `docs/reference/cli.md` — every command; `eve info [--json]`, `eve build`,
+    `eve set`. Confirms again that no `eve check` exists.
+  - `docs/reference/typescript-api.md` — the `define*` surface and its import
+    paths; `defineAgent` from `eve`, `defineTool` from `eve/tools`, `defineSkill`
+    from `eve/skills`; the authored module lifecycle (compile-only vs runtime).
+  - `docs/agent-config.md` — `model` is required when `agent.ts` is present;
+    `model` accepts an AI Gateway model id string or a provider `LanguageModel`.
+  - `docs/instructions.mdx` — `agent/instructions.md` is the system prompt; keep
+    it to stable identity and standing rules; situational procedures go in skills.
+  - `docs/skills.mdx` — a flat Markdown file under `agent/skills/` is a complete
+    skill; `description` frontmatter is the routing hint.
+  - `docs/tools/overview.mdx` — `defineTool`, required `description` and
+    `inputSchema`, optional `outputSchema`, `execute(input, ctx)`, the approval
+    helpers from `eve/tools/approval`, and the rule that tool output must be
+    JSON-serializable.
+  - `docs/tutorial/first-agent.mdx` — the end-to-end authoring order.
+- **official docs/repos/examples read:** none. The installed package settled every
+  question, which is the source order the protocol requires (§1).
+- **public types/exports inspected:**
+  - `dist/src/public/index.d.ts` — `defineAgent`, `AgentDefinition`, `DefinedAgent`.
+  - `dist/src/public/tools/index.d.ts` — `defineTool`, `ToolContext`,
+    `ToolDefinition`, `toolOutput`.
+  - `dist/src/tools/definition.d.ts` — the two `defineTool` overloads, the
+    `ToolDefinition` fields (`description`, `inputSchema`, `outputSchema?`,
+    `approval?`, `toModelOutput?`, `availableInSubagents?`) and `ToolContext`.
+  - `dist/src/public/tools/approval/index.d.ts` — `always`, `auto`, `never`, `once`.
+  - `dist/src/shared/agent-definition.d.ts` — `PublicAgentStaticModelDefinition`
+    is `string | LanguageModel`, so a Gateway model id string is the documented
+    minimal configuration.
+- **selected documented pattern:** a single root agent at `apps/example-agent/agent/`
+  with `agent.ts` (`defineAgent` + a Gateway model id string), `instructions.md`,
+  one flat Markdown skill under `agent/skills/`, one `defineTool` module under
+  `agent/tools/` whose implementation lives in a pure module under `agent/lib/`,
+  and the fixture data as a typed module in `agent/lib/`.
+- **anything not documented that must be harness-owned:** eve has no "read-only"
+  or side-effect permission flag on a tool definition; the closest documented
+  mechanism is the per-tool `approval` policy. The fixture tool therefore states
+  its read-only nature through `approval: never()` plus a doc comment, and the
+  no-side-effects guarantee is enforced by testing the pure `lib/` function.
+
+### Next exact step
+Write ADR-0025, extend `BOUNDARY_RULES` with an app-package allowlist, then
+scaffold `apps/example-agent`.
+
+## 2026-09-19 17:20 — M1-T7, M1-T8 — Runtime context and error taxonomy
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent)
+**Commit:** not committed
+
+### Goal
+Define, in `@internal/core`, the typed `ExecutionContext` (M1-T7) and the
+harness error taxonomy with a trace-safe serialization (M1-T8), with unit tests
+and contract documentation. These are contracts, not behaviour: no runtime, no
+model call, no I/O. The target is the smallest honest set that M1-T3 through
+M1-T6 can build on, leaving the full trace schema to M2-T3 and the decision
+contracts to M3.
+
+### Implementation references
+- package/version: none. **This task is not Vercel-framework-facing**, so the
+  source-of-truth protocol's eve/AI-SDK research checkpoint does not apply: no
+  code here imports `eve`, `ai` or any third-party package, and `@internal/core`
+  stays at zero dependencies by the dependency rule (AGENTS.md, build plan §4).
+  The authoritative sources are the build plan and the repository's own configs.
+- installed docs read: not applicable (see above). The toolchain versions the
+  types are written against are `typescript@6.0.3` and `vitest@5.0.1`, both
+  read from the root `package.json`.
+- official docs/repos/examples read: none required.
+- public types/exports inspected:
+  - `packages/config/tsconfig.base.json` and `tsconfig.package.json`, for the
+    strictness the contracts must survive: `strict`, `noUncheckedIndexedAccess`,
+    `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables`,
+    `isolatedModules`, `verbatimModuleSyntax`, `target: es2024`.
+  - `vitest@5.0.1` public exports `expectTypeOf` and `assertType`, confirmed by
+    importing the installed package. Type-level assertions are checked by
+    `tsc --noEmit` because `packages/core/tsconfig.json` includes
+    `src/**/*.ts`, which covers co-located tests.
+  - `packages/testing/src/clock.ts` and `packages/runtime-ai-sdk/src/index.test.ts`,
+    for the existing documentation and test style.
+- selected documented pattern: build plan §5 (Core Contracts) for `Job.budget`,
+  `Job.permissions`, `Job.metadata` and the `{ id, version }` reference shape;
+  build plan Milestone 1 M1-T7 for the `ExecutionContext` field list and M1-T8
+  for the nine error classes; build plan Milestone 2 M2-T4 for the exact
+  `TraceWriter` interface and M2-T3 for the trace-event fields this task
+  deliberately does **not** define yet.
+
+### Work completed
+- (in progress)
+
+### Files changed
+- (in progress)
+
+### Verification
+- (pending)
+
+### Decisions / deviations
+- (pending)
+
+### Known issues / blockers
+- Another implementer is working in the same tree on M1-T2. File ownership was
+  split in advance; shared documents are edited surgically after a re-read.
+
+### Next exact step
+Implement `packages/core/src/{json,context,trace,errors}.ts` with co-located
+unit tests, then the contract documents.
+
+## 2026-09-19 17:26 — M1-T7, M1-T8 — Runtime context and error taxonomy
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent)
+**Commit:** not committed (orchestrator reviews and commits)
+
+This is the result entry for the `started` entry above. Where the two differ,
+this one is authoritative. M1-T7 and M1-T8 were done together because M1-T7's
+`createExecutionContext()` validates its input by throwing M1-T8's
+`ValidationError`, and M1-T8's `BudgetDimension` is `keyof Budget` from M1-T7;
+splitting them would have meant one task importing the other's unwritten types.
+
+### Goal
+Define the typed `ExecutionContext` (M1-T7) and the harness error taxonomy with
+a trace-safe serialization (M1-T8) in `@internal/core`, with unit tests and
+contract documentation. Contracts only: no runtime, no model call, no I/O, and
+no pre-building of M2's trace schema or M3's decision types.
+
+### Implementation references
+- package/version: none. **Not a Vercel-framework-facing task.** Nothing here
+  imports `eve`, `ai` or any third-party package; `@internal/core` still
+  declares no runtime dependency, which the dependency rule requires. The
+  source-of-truth protocol's eve/AI-SDK research checkpoint therefore does not
+  apply, and no installed framework docs were needed.
+- toolchain the types are written against: `typescript@6.0.3`, `vitest@5.0.1`.
+- installed docs read: not applicable (see above).
+- official docs/repos/examples read: none required.
+- public types/exports inspected:
+  - `packages/config/tsconfig.base.json` and `tsconfig.package.json`, for the
+    strictness the contracts have to survive: `strict`,
+    `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+    `noImplicitOverride`, `useUnknownInCatchVariables`, `isolatedModules`,
+    `verbatimModuleSyntax`, `target: es2024`. Three of these shaped the code
+    directly and are called out under "Decisions" below.
+  - `vitest@5.0.1`'s `expectTypeOf`, confirmed present by importing the
+    installed package. Type-level assertions are enforced by `tsc --noEmit`,
+    because `packages/core/tsconfig.json` includes `src/**/*.ts` and so covers
+    co-located tests; Vitest itself runs them as no-ops.
+  - `packages/testing/src/clock.ts` and
+    `packages/runtime-ai-sdk/src/index.test.ts`, for the existing
+    documentation and test style.
+- selected documented pattern: build plan §5 for `Job.budget`,
+  `Job.permissions`, `Job.metadata` and the `{ id, version }` reference shape;
+  M1-T7 for the `ExecutionContext` field list; M1-T8 for the nine error
+  classes; M2-T4 for the verbatim `TraceWriter` interface; M2-T3 for the trace
+  event fields this task deliberately does **not** define.
+
+### Work completed
+- `packages/core/src/json.ts`: recursive `JsonValue`/`JsonObject`/`JsonArray`/
+  `JsonPrimitive` with no `any`, the type `Job.metadata` and every serializable
+  field is written against.
+- `packages/core/src/context.ts`: `ExecutionContext` (nine readonly fields),
+  `DomainRef`, `Budget`, `ToolGrant`/`ToolGrantMode`, `RuntimeInfo`, and
+  `createExecutionContext()` applying the documented defaults and validating
+  that `attempt` is an integer of at least 1.
+- `packages/core/src/trace.ts`: the verbatim M2-T4 `TraceWriter`, a minimal
+  five-field `TraceEvent` carrying a doc comment that names M2-T3 as the owner
+  of the real schema, and `createNoopTraceWriter()`.
+- `packages/core/src/errors.ts`: abstract `HarnessError` plus the nine classes,
+  the `HarnessErrorCode` union, `SerializedHarnessError`, `serializeError()`,
+  `isHarnessError()`, `MAX_SERIALIZED_CAUSE_DEPTH` and
+  `HarnessError.prototype.toJSON()`.
+- `packages/core/src/index.ts`: replaced the `export {}` placeholder with a
+  named re-export barrel (40 symbols).
+- Four co-located test files, 86 tests.
+- `docs/contracts/execution-context.md` and `docs/contracts/errors.md`, both
+  with the required frontmatter, and both stating explicitly which shapes are
+  M1 shapes that a later milestone replaces.
+- `docs/decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md`.
+- Updated `docs/contracts/README.md` (two rows, and the "none of them exist
+  yet" framing), `docs/architecture/system-map.md` (the `packages/core` bullet,
+  its status row, and the source-file inventory),
+  `docs/decisions/README.md` (the 0026 row and its paragraph), `AGENTS.md`
+  (two layout-tree comments, the ADR paragraph, and the scope-discipline
+  paragraph that still claimed core was empty), and the M1 milestone file.
+
+### Files changed
+New:
+- `packages/core/src/{json,context,trace,errors}.ts`
+- `packages/core/src/{json,context,trace,errors}.test.ts`
+- `docs/contracts/execution-context.md`
+- `docs/contracts/errors.md`
+- `docs/decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md`
+
+Modified:
+- `packages/core/src/index.ts` (the barrel; was `export {}`)
+- `packages/core/package.json` (added `vitest@5.0.1` as a devDependency for the
+  co-located tests, matching `@internal/testing`; updated the now-false
+  "Intentionally empty until Milestone 1" description). Still **no**
+  `dependencies` block.
+- `pnpm-lock.yaml` (one importer entry for that devDependency; see "Decisions")
+- `AGENTS.md`, `docs/architecture/system-map.md`, `docs/contracts/README.md`,
+  `docs/decisions/README.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
+  `docs/progress/WORKLOG.md`
+
+Deliberately not touched: `apps/**`, `pnpm-workspace.yaml`,
+`tests/architecture/**`, `docs/decisions/0025-*` and
+`docs/context/current-state.md`, all of which belong to the concurrent M1-T2
+work or to the orchestrator.
+
+### Verification
+- `pnpm --filter @internal/core typecheck` — PASS
+- `pnpm --filter @internal/core build` — PASS (emits `dist/`)
+- `pnpm exec vitest run --project unit packages/core` — PASS (4 files, 86 tests)
+- `pnpm test:unit` — PASS (12 files, 156 tests; was 6 files, 51 tests before
+  M1-T2 and this task)
+- `pnpm install --frozen-lockfile` — PASS ("Lockfile is up to date"), confirming
+  the one importer entry this task added is committed state, not drift.
+- `pnpm check` — PASS, all six stages:
+  - `format:check` — PASS (55 files)
+  - `lint` — PASS (55 files)
+  - `typecheck` — PASS (5 turbo tasks plus the root project)
+  - `test` — PASS (12 files, 156 tests across the four projects)
+  - `build` — PASS (5 tasks)
+  - `check:handoff` — PASS
+- Zero-dependency boundary, checked by hand: `packages/core/package.json` has
+  no `dependencies` key at all, and its `devDependencies` are exactly
+  `@internal/config` and `vitest`. The architecture boundary test passes.
+- `grep -rn "any" packages/core/src` — 11 hits, **all in prose comments**
+  (phrases like "any throwable", "no `any`"). No `any` type is declared.
+- Gate bites, trace safety: widened `serializeError` to spread the error's own
+  enumerable properties (`...Object.fromEntries(Object.entries(error))`) and
+  ran `pnpm exec vitest run --project unit packages/core/src/errors.test.ts` —
+  FAIL as intended, 4 of 62 tests, including
+  `expected '{"token":"secret-token","name":"Error…' not to contain
+  'secret-token'` and `expected { details: undefined, …(5) } to not have
+  property "apiKey"`. Reverted; 62 tests pass again.
+
+### Decisions / deviations
+Project decisions, recorded here per ADR-0016 because each is small and easily
+reversed. The one material decision got its own ADR.
+
+- **ADR-0026, the only ADR written.** "Trace-safe" is undefined by the build
+  plan, binds every future package that writes a trace, and a future engineer
+  would need the *why* before relaxing it, which is ADR-0016's own test. It
+  records: serialization is a whitelist of `name`, `code`, `message`,
+  `details` and a depth-bounded `cause`; stacks are excluded by default;
+  `code` rather than `name` or `instanceof` is the discriminant consumers
+  branch on; `serializeError` is total; and `SerializedHarnessError` is
+  assignable to `JsonObject`.
+- **`ToolGrant` is `{ toolId, mode: "read" | "write", scope? }`.** The plan
+  names the type in `Job.permissions` and never defines it. This is the
+  smallest shape that answers M1's only question of it ("may this job call this
+  tool this way?"). Documented as an M1 shape that M2 (approvals) and M5
+  (enforcement) extend. Not ADR-worthy: it is additive to change.
+- **Error code scheme: `SCREAMING_SNAKE_CASE` of the class name with the
+  trailing `Error` dropped**, so `BudgetExceededError` is `BUDGET_EXCEEDED`.
+  Mechanical, so a tenth class does not need a naming discussion.
+- **Each concrete error class merges its own typed fields into `details`.** The
+  whitelist alone would drop `dimension`, `toolId` and the replay fingerprints
+  on serialization, which would make the trace materially less useful. Class
+  fields are merged last and win over a caller's key of the same name.
+- **No `retryable` flag on the base class.** Whether a failure is worth
+  retrying is a policy decision about a situation, not a property of an error
+  instance, and nothing in M1-M6 needs one. Recorded as a rejected alternative
+  in ADR-0026 so it is not silently re-litigated.
+- **`createExecutionContext()` was kept**, not dropped as ceremony. It puts the
+  six defaults in one place and gives the `attempt >= 1` check somewhere to
+  live. It validates nothing else: `runId`/`jobId` format is M2-T1's decision.
+- **No recording trace writer was added to `@internal/testing`.** Nothing in
+  M1-T7 or M1-T8 needs to assert on emitted events, so adding one would have
+  been speculative and would have created a new `@internal/testing` ->
+  `@internal/core` dependency edge for no current benefit. Left open for
+  whichever of M1-T3..T6 first needs it.
+- **Three tsconfig settings shaped the code and are worth knowing before
+  editing it:**
+  - `exactOptionalPropertyTypes` is why `serializeError` builds its result with
+    conditional spreads (`...(x === undefined ? {} : { x })`) instead of
+    assigning `undefined`.
+  - `JsonObject`'s index signature admits `undefined` so a type with optional
+    properties is assignable to it. That is faithful to `JSON.stringify`, and
+    it is what makes `SerializedHarnessError` embeddable in a trace payload.
+    `noUncheckedIndexedAccess` means reads were already `| undefined` anyway.
+  - `ValidationIssue` is declared as a `type` alias, not an `interface`, on
+    purpose: TypeScript gives an implicit index signature to object type
+    aliases but not to interfaces, so only the alias is assignable to
+    `JsonObject` and therefore storable in `details`.
+- **Deviation from the task brief: the barrel uses named re-exports, not
+  `export *`.** It matches `packages/testing/src/index.ts`, and it makes the
+  package's public surface a reviewable list rather than an implicit one.
+- **Deviation, small: two extra AGENTS.md edits.** The brief scoped me to the
+  `core/` layout comment and the ADR number. I also corrected the tree's
+  "ADRs 0001-0024" count and the scope-discipline paragraph, which still said
+  `packages/core` "is intentionally empty (`export {}`)". Leaving a
+  now-false statement would have violated rule 8 (docs stale = not done).
+- **One `pnpm install` was run**, as the brief permitted, after adding
+  `vitest@5.0.1` to `packages/core`. It added one importer entry to
+  `pnpm-lock.yaml`. No package version changed and `pnpm-workspace.yaml` was
+  not touched by it.
+
+### Known issues / blockers
+- None blocking. `pnpm check` passes on the combined tree.
+- **Open for M1-T3:** `ValidationError.issues` is a schema-agnostic shape.
+  M1-T3 chooses the schema library (`zod@4.6.5` is already installed in both
+  adapter packages, but `@internal/core` must not depend on it) and writes the
+  adapter that normalizes its errors into `ValidationIssue[]`. Core must keep
+  zero dependencies, so that adapter cannot live in core.
+- **Open for M1-T4:** `createHarness()` is what will actually construct an
+  `ExecutionContext` per attempt and decide where `runId` comes from. M2-T1
+  chooses the sortable identifier scheme; M1 treats both IDs as opaque strings.
+- **Open for M1-T5/T6:** the runtime adapters must propagate
+  `ExecutionContext.signal` into the work they start, which is a Milestone 1
+  acceptance criterion ("cancellation/abort signal reaches the runtime"). The
+  context provides the signal; nothing enforces propagation yet.
+- **Open for M2-T3:** `TraceEvent` is a five-field placeholder and will be
+  replaced wholesale. Both the type's doc comment and
+  `docs/contracts/execution-context.md` say so.
+- **Open for M2-T9:** `details` is not a redaction boundary. The whitelist
+  stops the harness from leaking values nobody chose to publish; it cannot stop
+  a caller from publishing one deliberately.
+
+### Next exact step
+The orchestrator reviews and commits, then rewrites
+`docs/context/current-state.md` for both this task and M1-T2. The next
+implementation task is **M1-T3, `defineDomain()`**, which now has
+`ExecutionContext`, `Budget`, `ToolGrant`, `JsonValue` and `ValidationError`
+to build `Job` and `DomainDefinition` against.
+
+---
+
+## 2026-09-19 17:28 — M1-T2 — Scaffold example agent (+ ADR-0025)
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 implementer subagent (m1-t2), delegated by the
+Claude Fable 5.1 orchestrator
+**Commit:** not committed (orchestrator reviews and commits)
+
+### Goal
+As the 17:20 `started` entry. Scaffold the neutral vendor-triage example agent
+as a real `eve` project under `apps/example-agent`, with one read-only fixture
+tool over deterministic local data, discoverable by `eve info` and buildable and
+typecheckable inside the workspace. No `defineDomain()`, no `createHarness()`,
+no runtime adapter, no live model call.
+
+### Implementation references
+Recorded in full in the 17:20 `started` entry above and expanded into
+`docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`. Summary:
+`eve@0.63.0` / `ai@7.0.107` / `zod@4.6.5`, resolved from `packages/runtime-eve`;
+eleven shipped `eve` doc pages read, five shipped `.d.ts` files inspected;
+selected pattern is `defineAgent` + `defineTool` + a flat Markdown skill, with
+the tool's implementation in a pure `agent/lib/` module.
+
+### Work completed
+
+**Part A — ADR-0025 and the boundary engine.**
+- `tests/architecture/boundaries.ts` gained a required `BoundaryRules` field,
+  `appPackagesMayDependOn: readonly DependencyPattern[]`, set to
+  `["eve", "ai", "@ai-sdk/*"]`. Rule 2 now skips an adapter-only dependency for a
+  package under `apps/**` when it matches that allowlist. The engine stays pure
+  and knows no package name; the field is required, not optional, so a future
+  rules table has to take a position. `@supabase/*`, `@vercel/*` and `workflow`
+  are deliberately absent, and Rule 3 (`forbiddenByPackage`) still applies to
+  application packages.
+- Four engine unit tests added covering both directions: app + `eve` allowed,
+  app + `@supabase/*` still rejected, library + `eve` still rejected, core +
+  `eve` still rejected.
+- `docs/decisions/0025-application-packages-may-author-eve-agents-directly.md`
+  records the decision with context, consequences and six rejected alternatives.
+
+**Part B — `apps/example-agent`.**
+- `pnpm-workspace.yaml` `packages:` now includes `apps/*`.
+- `@internal/example-agent`, `private`, `type: module`, pinning `eve@0.63.0`,
+  `ai@7.0.107` and `zod@4.6.5` exactly, with `@internal/config` and
+  `vitest@5.0.1` as devDependencies. It declares no `@internal/*` runtime
+  dependency; M1-T3/T4 wire that.
+- Authored `eve` project at `agent/`: `agent.ts` (`defineAgent`, AI Gateway model
+  id from `EXAMPLE_AGENT_MODEL` with eve's own default as fallback),
+  `instructions.md`, `skills/triage-vendor.md`, `tools/lookup_vendor_evidence.ts`,
+  `tools/web_search.ts` and `tools/web_fetch.ts` (both `disableTool()`), and
+  `lib/vendor-fixtures.ts` + `lib/vendor-evidence.ts`.
+- Three fictional vendors of deliberately different evidence quality, every
+  website on a reserved `.example` domain. Unknown vendors return a documented
+  `status: "unknown"` result naming the vendors that are on file, so the agent
+  reports missing information instead of inventing a vendor.
+- Tests: `agent/lib/vendor-evidence.test.ts` (9 cases: known vendor,
+  determinism, case/whitespace normalization, unknown vendor, no fuzzy
+  matching, JSON-serializability, fixture invariants) and
+  `src/dependency-pins.test.ts` (ADR-0024's assertion, plus an assertion that
+  the app declares none of the surfaces ADR-0025 keeps adapter-only). No model
+  is called by either.
+- `apps/example-agent/turbo.json` extends the root config so Turborepo watches
+  `agent/**` and caches `.output/**`; the root task definitions assume `src/**`
+  and `dist/**`, which would have served stale cache hits here.
+- `.gitignore` now excludes `.eve/` and `.output/`, the artifacts `eve info` and
+  `eve build` write into the app.
+
+**Documentation.** ADR-0025 and its index entry; the new research note and its
+index entry; `AGENTS.md` (layout tree, enforcement prose, the model-call
+prohibition, next free ADR number); `docs/architecture/system-map.md`
+(frontmatter, current state, package status, the four-part rules table, the
+enforcement proof); `docs/examples/README.md` rewritten; `docs/development/commands.md`
+(per-package scripts and a new `eve` commands section); the M1 milestone file
+(T2 result, status lines, the app-allowlist prerequisite); `.env.example`.
+
+### Files changed
+New:
+- `apps/example-agent/{package.json,tsconfig.json,turbo.json}`
+- `apps/example-agent/agent/{agent.ts,instructions.md}`
+- `apps/example-agent/agent/skills/triage-vendor.md`
+- `apps/example-agent/agent/tools/{lookup_vendor_evidence.ts,web_search.ts,web_fetch.ts}`
+- `apps/example-agent/agent/lib/{vendor-fixtures.ts,vendor-evidence.ts,vendor-evidence.test.ts}`
+- `apps/example-agent/src/dependency-pins.test.ts`
+- `docs/decisions/0025-application-packages-may-author-eve-agents-directly.md`
+- `docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`
+
+Modified:
+- `tests/architecture/boundaries.ts`, `tests/architecture/package-boundaries.test.ts`
+- `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `.gitignore`, `.env.example`
+- `AGENTS.md`, `docs/architecture/system-map.md`, `docs/decisions/README.md`,
+  `docs/development/commands.md`, `docs/examples/README.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
+  `docs/research/vercel/README.md`
+
+Not touched: `packages/core/**`, `docs/decisions/0026-*`,
+`docs/context/current-state.md`, root `package.json`.
+
+### Verification
+- `pnpm install` then `pnpm install --frozen-lockfile` — PASS (7 workspace
+  projects; the lockfile gained 19 lines for the new package).
+- `pnpm run format:check` — PASS
+- `pnpm run lint` — PASS
+- `pnpm run typecheck` — PASS
+- `pnpm run test` — PASS (12 files, 156 tests; 4 of those files and their tests
+  belong to the concurrent M1-T7/M1-T8 core work)
+- `pnpm run build` — PASS (5 packages, including `eve build`)
+- `pnpm run check:handoff` — PASS
+- `pnpm check` — PASS end to end.
+- `pnpm --filter @internal/example-agent exec eve info` — PASS. `Compile ready`,
+  `Diagnostics 0 errors, 0 warnings`, `Layout nested`, `Instructions
+  instructions.md (system)`, `Skills 1 skill`, `Tools 9 tools`. The full output
+  is quoted verbatim in
+  `docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md` §7.
+- `eve info --json` — PASS. `status: "ready"`, `model:
+  "openai/gpt-5.6-luna-fast"`, `skills: ["triage-vendor"]`, tools
+  `["bash","read_file","write_file","todo","load_skill","ask_question","task_cancel","agent","lookup_vendor_evidence"]`.
+- `pnpm --filter @internal/example-agent exec eve build` — PASS, exit 0, offline,
+  no model credential configured. Nitro server bundle at `.output`, 10.1 MB
+  (2.31 MB gzip).
+- **Gate-bites proof, three ways, each reverted:**
+  1. `@supabase/supabase-js: "2.0.0"` added to `apps/example-agent` →
+     architecture test FAILS: `@supabase/supabase-js matches the adapter-only
+     pattern "@supabase/*"; only an adapter package (...) may depend on it`.
+     So the app allowance really is an allowlist, not an exemption.
+  2. `eve` added to `@internal/testing` (a library package) → FAILS on the
+     adapter-only rule. The allowance does not leak to `packages/*`.
+  3. `eve` added to `@internal/core` → FAILS: `eve matches the adapter-only
+     pattern "eve"`.
+  All three manifests restored; `packages/core/package.json` was checksummed
+  before and after and is byte-identical to the concurrent agent's version.
+  `git diff` shows no trace of any of the three edits, and the architecture
+  suite is back to 15 passed.
+
+### Decisions / deviations
+- **No layout deviation.** The build plan's assumed structure
+  (`agent/{agent.ts,instructions.md,skills/,tools/,lib/}`) is exactly what
+  `eve/docs/reference/agent-files.md` and
+  `eve/docs/concepts/project-structure.mdx` document for a single-agent project.
+  eve also supports a flat layout with the agent files at the package root; the
+  nested one was chosen because eve's own docs recommend it and the build plan
+  specifies it. `eve info` confirms `Layout nested`.
+- **`eve` has no read-only / side-effect flag on a tool.** The authored tool
+  shape in `eve/dist/src/tools/definition.d.ts` is `description`, `inputSchema`,
+  `outputSchema?`, `execute`, `label?`, `approval?`, `approvalKey?`,
+  `toModelOutput?`, `availableInSubagents?`, `execution?`. The task brief
+  assumed permission metadata might exist; it does not. Read-only is expressed
+  as `approval: never()` plus a doc comment, and *enforced* by keeping the
+  implementation in a pure `lib/` module with a direct unit test. A
+  machine-readable form of this property is M1-T9's problem, not eve's.
+- **Two of eve's optional default tools were disabled.** A first `eve info`
+  reported 11 tools, including `web_search` and `web_fetch`, which would give
+  this fixture domain live web research by default. That contradicts the
+  milestone's own instruction ("Use deterministic local fixture tools before
+  adding live web research"), so both are disabled with `disableTool()` at their
+  own slots, the documented per-tool mechanism. `defaultTools: false` was
+  rejected: it also removes `load_skill`, which this agent's skill needs. This
+  is slightly beyond the literal brief, which asked only for one fixture tool;
+  it is recorded here rather than done quietly. Reversing it is two file
+  deletions.
+- **`ai` is declared directly by the app.** eve's own manual-install instruction
+  is `npm install eve@latest ai zod`, `ai` is eve's only required peer, and
+  ADR-0024 requires a required peer to be declared and pinned rather than
+  auto-installed. `zod` is needed by the tool's input schema. All three at the
+  same pins the adapters use.
+- **The tool is a wrapper over a pure function**, rather than self-contained.
+  `defineTool` stamps a brand only eve's lifecycle code executes, and identity
+  is path-derived, so a tool module exports nothing a test can call. Splitting
+  the logic into `agent/lib/` is what makes the behaviour testable at all.
+- **Relative imports use the `.js` extension.** eve's examples show extensionless
+  ones, but this repository typechecks with `module: nodenext`, which requires
+  the extension. Verified that eve's compiler resolves `./vendor-evidence.js` to
+  the TypeScript source: `eve info` reports zero diagnostics. No
+  `moduleResolution` override was needed, so the app shares the repository's
+  language baseline.
+- **The app has no `tsconfig.build.json` and emits no `dist/`.** It is an
+  application: nothing imports it. Its `build` is `eve build`. Because the root
+  turbo task definitions describe `src/**` and `dist/**`, the app carries its own
+  `turbo.json` (`extends: ["//"]`, the only permitted value in the turbo 2.11
+  schema) declaring `agent/**` as an input and `.output/**` as an output.
+  Without it, turbo would have served a stale cache hit after any agent edit.
+- **No root `example:info` script was added.** `eve info` needs no wrapper;
+  `pnpm --filter @internal/example-agent run info` works, and it is documented in
+  `docs/development/commands.md`. Root `package.json` is untouched.
+- **AGENTS.md's "next free number" is now 0027.** ADR-0025 is this task's;
+  ADR-0026 was created by the concurrent M1-T7/M1-T8 core work while this task
+  ran.
+- **Shared docs were edited surgically**, re-read immediately before each change,
+  per the concurrency rules. `docs/context/current-state.md` was deliberately not
+  touched; the orchestrator rewrites it after both tasks land.
+
+### Known issues / blockers
+- None blocking M1-T3.
+- **`pnpm build` now runs a full `eve build`** as part of `pnpm check`. It is
+  cached by turbo and took about 2.5 s warm, but it is a heavier build stage than
+  the repository had before, and it produces a 10.1 MB bundle on a cold run.
+- **eve's remaining default tools are not deterministic either.** After the two
+  web tools are disabled, the agent still has `bash`, `read_file`, `write_file`,
+  `todo`, `load_skill`, `ask_question`, `task_cancel` and `agent`. None reaches
+  the network, but whether a harness-run domain should carry eve's default tool
+  set at all is an open question for M1-T6 and M1-T9. Nothing was assumed.
+- **Open for M1-T4/M1-T6: how to run the agent programmatically.** Unchanged
+  from M1-T1. `eve/client` (`Client`, `ClientSession`) is the documented
+  programmatic surface and `eve/docs/guides/client/overview.mdx` is the page to
+  read; this task did not read it, because nothing here executes the agent.
+- **Open: there is no documented non-interactive local run command that works
+  without a model credential.** `eve dev` is an interactive TUI, `eve start`
+  serves a built `.output/`, and `eve invoke` sends a message; all reach a model.
+  That is why no `example:run` script exists yet. The acceptance criterion
+  belongs to M1-T4.
+- **Open: whether a tool's `execute` can run outside eve's runtime context.**
+  `ctx` is documented as live only while authored code runs. The example's tool
+  ignores `ctx` entirely, so the question did not arise here, but a harness that
+  wants to invoke an eve tool directly must answer it.
+- **Open: who chooses the model.** The example reads `EXAMPLE_AGENT_MODEL` and
+  falls back to eve's default. Whether the harness should select the model
+  instead of the domain is an M1-T4/M1-T6 decision.
+- **The Milestone 1 acceptance criterion "the example calls the harness API
+  rather than the `eve` runtime directly" is not yet enforced by anything.**
+  ADR-0025 names it as the complementary rule and puts its enforcement in M1-T4.
+  Between now and then the rule is a convention.
+
+### Next exact step
+**M1-T3, `defineDomain()`**. The example agent exists and is discoverable, so
+M1-T3 can register the vendor-triage domain against it:
+`apps/example-agent/agent/lib/vendor-evidence.ts` already defines the evidence
+shape a `defineDomain` input/output schema will have to describe.

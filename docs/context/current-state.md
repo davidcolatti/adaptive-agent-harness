@@ -4,61 +4,74 @@
 > session. History lives in `docs/progress/WORKLOG.md`; the frozen Milestone 0
 > record is `docs/progress/milestones/m0.md`.
 
-**Last updated:** 2026-09-19 (M1-T1 complete)
+**Last updated:** 2026-09-19 (M1-T2, M1-T7, M1-T8 complete)
 **Current milestone:** M1, Local Agent + Public Harness Boundary (in progress)
-**Current task:** M1-T2, Scaffold example agent (not started)
-**Last commit SHA:** `bdb4a23` (M1-T1). Run `git log --oneline` for the
-full history.
+**Current task:** M1-T3, `defineDomain()` (not started)
+**Last commit SHA:** PENDING_SHA (M1-T2/T7/T8). M1-T1 is `bdb4a23`. Run
+`git log --oneline` for the full history.
 
 ## Completed milestones / tasks
 
-- **Milestone 0, Repository Foundation: complete.** M0-T1 through M0-T11 all
-  completed and verified. Snapshot: `docs/progress/milestones/m0.md`.
-- **M1-T1, Install AI SDK and `eve`: complete.** Two adapter packages now hold
-  the framework dependencies. See `docs/progress/WORKLOG.md` (the 17:04 result
-  entry) and `docs/milestones/m1-local-agent-and-public-harness-boundary.md`.
+- **Milestone 0, Repository Foundation: complete.** Snapshot:
+  `docs/progress/milestones/m0.md`.
+- **M1-T1, Install AI SDK and `eve`: complete** (`bdb4a23`). Two adapter
+  packages hold the framework dependencies. ADR-0024.
+- **M1-T2, Scaffold example agent: complete.** `apps/example-agent` is a real
+  `eve` project (`eve info` reports `Compile ready`, 0 diagnostics) with one
+  read-only fixture tool. ADR-0025 lets `apps/*` author `eve` agents directly.
+- **M1-T7, Runtime context: complete.** `ExecutionContext` and supporting types
+  in `@internal/core`. Contract: `docs/contracts/execution-context.md`.
+- **M1-T8, Error taxonomy: complete.** Nine `HarnessError` classes plus
+  `serializeError` in `@internal/core`. Contract: `docs/contracts/errors.md`.
+  ADR-0026.
+
+Per-task detail: `docs/progress/WORKLOG.md` (entries dated 2026-09-19 16:53
+through 17:28) and `docs/milestones/m1-local-agent-and-public-harness-boundary.md`.
 
 ## What works now
 
 - `pnpm install --frozen-lockfile` and `pnpm check` pass (verified 2026-09-19
-  after M1-T1). `pnpm check` = format:check, lint, typecheck, test, build,
-  check:handoff.
-- Five workspace packages build and typecheck independently:
-  - `@internal/config` (tsconfig bases), `@internal/testing` (`createFakeClock`),
-    `@internal/core` (intentionally empty, `export {}`, still zero dependencies).
-  - `@internal/runtime-eve` pins `eve@0.63.0`, `ai@7.0.107`, `zod@4.6.5`.
-  - `@internal/runtime-ai-sdk` pins `ai@7.0.107`, `zod@4.6.5`.
-- Both adapter packages are dependency boundaries only. Each `src/index.ts`
-  re-exports exactly one documented public type (`AgentDefinition` from `eve`,
-  `LanguageModel` from `ai`) so that typecheck fails if the public entrypoint
-  stops resolving. Neither contains an adapter.
-- Each adapter package has a unit test asserting its installed versions match
-  its own pins and that it declares no `^`/`~` range. That is ADR-0024's
-  enforcement mechanism.
-- Test taxonomy wired: `unit`, `integration`, `contract`, `replay` Vitest
-  projects; only unit tests exist (51 tests across 6 files).
-- Architecture boundary test fails if a non-adapter package depends on `eve`,
-  `ai`, `@ai-sdk/*`, `@supabase/*`, `@vercel/*` or `workflow`. Now that `eve`
-  and `ai` are really installed this is live, and it was proven by adding `eve`
-  to `@internal/core` and watching it fail.
-- Husky hooks installed by `pnpm install`: pre-commit (secretlint + Biome on
-  staged files), pre-push (typecheck + unit tests).
-- The `eve` CLI runs (`pnpm --filter @internal/runtime-eve exec eve info`
-  reports v0.63.0) but has no project to inspect yet.
-- CI workflow exists (`.github/workflows/ci.yml`) but has never run: no remote
-  is configured.
+  after the M1-T2/T7/T8 wave). `pnpm check` = format:check, lint, typecheck,
+  test, build, check:handoff. Tests: 156 across 12 files, all in the `unit`
+  project.
+- Six workspace packages build and typecheck:
+  - `@internal/config` (tsconfig bases), `@internal/testing` (`createFakeClock`).
+  - `@internal/core`: zero dependencies. Exports `ExecutionContext`,
+    `createExecutionContext`, `DomainRef`, `Budget`, `ToolGrant`,
+    `RuntimeInfo`, `JsonValue`/`JsonObject`, `TraceWriter`, `TraceEvent` (M1
+    placeholder), `createNoopTraceWriter`, `HarnessError` and its nine
+    subclasses, `HarnessErrorCode`, `serializeError`, `isHarnessError`.
+  - `@internal/runtime-eve` (`eve@0.63.0`, `ai@7.0.107`, `zod@4.6.5`) and
+    `@internal/runtime-ai-sdk` (`ai@7.0.107`, `zod@4.6.5`): dependency
+    boundaries with one type re-export each. No adapter code yet.
+  - `@internal/example-agent` (`apps/example-agent`): `agent/agent.ts`
+    (`defineAgent`, Gateway model id from `EXAMPLE_AGENT_MODEL`),
+    `agent/instructions.md`, `agent/skills/triage-vendor.md`,
+    `agent/tools/lookup_vendor_evidence.ts` (`defineTool`, `approval: never()`),
+    `agent/tools/web_search.ts` and `web_fetch.ts` (`disableTool()`),
+    `agent/lib/vendor-fixtures.ts` (three fictional vendors) and the pure
+    `lookupVendorEvidence` with its test. `pnpm --filter @internal/example-agent
+    info` and `eve build` run offline without a credential.
+- Architecture boundary test: adapter-only rule for every `packages/*`
+  package; `apps/*` may depend on `eve`, `ai`, `@ai-sdk/*` only (ADR-0025);
+  `@supabase/*`, `@vercel/*`, `workflow` stay adapter-only for everyone.
+  Proven to bite in all three directions during M1-T2.
+- Dependency-pin tests in the three packages that declare framework deps
+  (ADR-0024).
+- Husky hooks: pre-commit (secretlint + Biome on staged files), pre-push
+  (typecheck + unit tests).
+- CI workflow exists (`.github/workflows/ci.yml`) but has never run: no remote.
 
 ## What is partially working
 
-- Nothing is partial. The two adapter packages are complete for M1-T1's scope,
-  which was install plus research plus policy, not implementation.
+- Nothing is partial. Everything present is complete for its task's scope.
 
 ## What does not exist yet
 
-- No agent runtime, no Jev, no trace, no Supabase, no workflow IR/runtime, no
-  registry, no replay, no evals, no learner, no compiler, no CLI, no `apps/`.
-  `packages/core` exports nothing. `eve` and `ai` are installed but nothing
-  calls them.
+- No `defineDomain()`, no `createHarness()`, no `AgentRuntime` contract, no
+  `EveAgentRuntime`, no capability registry. Nothing executes the example agent.
+  No Jev, trace package, Supabase, workflow IR, registry, replay, evals,
+  learner, compiler, CLI.
 
 ## Known failures
 
@@ -66,68 +79,78 @@ full history.
 
 ## Current blockers
 
-- None. A GitHub remote is not required for M1 but is needed before the
-  "deliberate failure fails CI" criteria can be upgraded from local proof to an
-  observed CI run.
+- None. A GitHub remote is needed before "deliberate failure fails CI" can be
+  upgraded from local proof to an observed CI run.
 
 ## Important active decisions
 
-- ADR-0001..0017: plan decisions and owner constraints. ADR-0018..0023:
-  toolchain. **ADR-0024: framework dependency versioning policy** (exact pins,
-  required peers declared explicitly, optional peers not installed, upgrades as
-  their own re-verified task, eve-compatible `ai` wins for the eve adapter).
-  Next free ADR number: **0025**.
+- ADR-0001..0017 plan decisions; ADR-0018..0023 toolchain; **ADR-0024** exact
+  pins and upgrade-as-a-task for framework deps; **ADR-0025** `apps/*` author
+  `eve` agents directly, execution goes through the harness API; **ADR-0026**
+  errors serialize to a whitelisted, stack-free shape with a stable `code`.
+  Next free ADR number: **0027**.
 - TypeScript stays on 6.0.x until TypeScript 7.1 ships its API (ADR-0019).
-- Framework-facing work follows `docs/development/source-of-truth-protocol.md`:
-  installed docs win, no guessed APIs, Implementation references logged before
-  code. Its §10 inspection commands were corrected in M1-T1 and now resolve
-  pnpm's isolated store properly; use them as written.
+- Framework-facing work follows `docs/development/source-of-truth-protocol.md`.
+  Its §10 commands resolve pnpm's isolated store correctly; use them as written.
 
-## Findings from M1-T1 that the next agent needs
+## Findings the next agent needs
 
-Full detail: `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`.
+Research notes: `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`
+and `docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`.
 
-- `eve` 0.63.0 ships **no `eve check` command**. `eve info` is the equivalent
-  diagnostic, and it requires an authored `agent/` directory.
-- `eve` ships 110 doc files under its own `docs/` directory. That is the primary
-  source for any `eve` task, ahead of the web.
-- `ai@7.0.107` satisfies eve's required peer `ai: "^7.0.105"`, so there is no
-  version conflict to manage today.
-- The AI SDK's agent class is `ToolLoopAgent`. `Agent` is a *type*;
-  `Experimental_Agent` is an alias. Do not use the experimental name (M1-T5).
-- `eve/internal/*` and `ai/internal` are exported but internal. Never import
-  them.
-- The AI SDK's shipped `.mdx` docs contain unresolved `__MODEL__` placeholders
-  in 82 files. Read shapes from `ai/dist/index.d.ts`, not from the examples.
+- `eve` derives tool identity from the file path; authored tools carry no
+  `name`. Relative imports inside `agent/` need the `.js` extension.
+- `eve` has no declarative read-only flag on tools; `approval: never()` is the
+  nearest documented mechanism. Read-only-ness is enforced by keeping tool
+  logic in a pure `lib/` module with its own test.
+- `eve`'s default tool set for the example agent still includes `bash`,
+  `read_file`, `write_file`, `todo`, `load_skill`, `ask_question`,
+  `task_cancel`, `agent`. Only the two web tools are disabled. Harness
+  permission semantics (`ToolGrant`, `PermissionDeniedError`) must gate these
+  when M1-T6 wires execution; decide then whether to disable more by file.
+- `eve/client` is the documented programmatic surface; M1-T6 must read its
+  guide (`$EVE/docs/guides/client/*`) before designing `EveAgentRuntime`.
+  Nothing yet establishes how to drive an agent run from TypeScript.
+- AI SDK 7's agent class is `ToolLoopAgent`; `Agent` is a type. `ai`'s shipped
+  `.mdx` examples contain unresolved `__MODEL__` placeholders; read shapes from
+  `ai/dist/index.d.ts`.
+- `ValidationError.issues` is schema-agnostic (`{ path, message }[]`). M1-T3
+  picks the schema mechanism and writes the normalizer. `@internal/core` must
+  stay zero-dependency, so a concrete library binding cannot live in core.
+- `runId`/`jobId` are opaque strings in M1; M2-T1 picks the ID scheme.
+- `ExecutionContext.signal` exists but nothing yet proves an adapter propagates
+  it. That acceptance criterion is open until M1-T5/T6.
+- No recording `TraceWriter` exists. The first test that needs to assert on
+  emitted events should add one to `@internal/testing`, not core.
 
 ## Uncommitted / generated artifacts
 
-- **Everything from M1-T1 is uncommitted**, pending orchestrator review: the two
-  new packages, ADR-0024, the research note, the doc updates, and the
-  `pnpm-lock.yaml` / `pnpm-workspace.yaml` changes the install produced.
-- `pnpm install` appended `@ai-sdk/gateway@4.0.87`,
-  `@ai-sdk/provider-utils@5.0.45`, `ai@7.0.107` and `eve@0.63.0` to
-  `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`. That is pnpm's own
-  supply-chain release-age bookkeeping, not a hand edit.
-- `dist/` and `.turbo/` are build outputs and are git-ignored.
+- None after the handoff commit. `dist/`, `.turbo/`, and eve's `.eve/` and
+  `.output/` under `apps/example-agent` are build outputs and git-ignored.
 
 ## Exact next task
 
-**M1-T2, Scaffold example agent**
-(`docs/milestones/m1-local-agent-and-public-harness-boundary.md`). Scaffold the
-example agent with the normal `eve` structure (`agent/agent.ts`,
-`agent/instructions.md`, `agent/skills/`, `agent/tools/`, `agent/lib/`) plus one
-read-only fixture tool, for the vendor-triage fixture domain.
+**M1-T3, `defineDomain()`**
+(`docs/milestones/m1-local-agent-and-public-harness-boundary.md`). Target
+shape from the build plan:
 
-It is framework-facing, so before any code: append a `started` WORKLOG entry
-with an `Implementation references` section, and read the installed eve docs
-for this task, at minimum `docs/concepts/project-structure.mdx`,
-`docs/reference/agent-files.md` and `docs/tools/overview.mdx`. The M1-T1
-research note is a starting point, not a substitute for reading them.
+```ts
+export const vendorTriage = defineDomain({
+  id: "vendor-triage",
+  version: "1.0.0",
+  inputSchema,
+  outputSchema,
+  createJob,
+  evals,
+});
+```
 
-Note that the example agent will live under `apps/`, which
-`pnpm-workspace.yaml` does not yet include; its `packages:` globs list only
-`packages/*`.
+It requires the `Job` and `DomainDefinition` contracts from build plan
+section 5 in `@internal/core`, a `Schema<T>` abstraction that keeps core free
+of a schema library, and the vendor-triage input/output schemas in the example
+app. Suggested order after T3: T4 `createHarness()`, T5 `AgentRuntime`
+contract, T6 `EveAgentRuntime` (framework-facing, needs its own Implementation
+references), T9 capability registry.
 
 ## Exact first command for the next agent
 
@@ -136,23 +159,15 @@ pnpm install --frozen-lockfile && pnpm check
 ```
 
 (Node 24.21.0 and pnpm 12.4.2 must be on PATH; see
-`docs/development/local-setup.md`.) Then read, in order: `AGENTS.md`, this file,
-`docs/README.md`, `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
-`docs/development/source-of-truth-protocol.md`, and
-`docs/decisions/0024-framework-dependency-versioning-policy.md`.
-
-To read the installed eve docs, resolve the real path first (pnpm isolates
-packages, so `node_modules/eve` is not a directory):
-
-```bash
-EVE=$(dirname "$(node -e "console.log(require.resolve('eve/package.json', { paths: ['packages/runtime-eve'] }))")")
-cat "$EVE/docs/README.md"
-```
+`docs/development/local-setup.md`.) Then read, in order: `AGENTS.md`, this
+file, `docs/README.md`, `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
+`docs/contracts/execution-context.md`, `docs/contracts/errors.md`, and
+`docs/decisions/0025-application-packages-may-author-eve-agents-directly.md`.
 
 ## Last successful verification
 
-- `pnpm check`: PASS, 2026-09-19, after M1-T1 (format:check, lint, typecheck,
-  test 51/51, build, check:handoff).
+- `pnpm check`: PASS, 2026-09-19, after M1-T2/T7/T8 (format:check, lint,
+  typecheck, test 156/156, build including `eve build`, check:handoff).
+- `eve info` (`pnpm --filter @internal/example-agent info`): `Compile ready`,
+  `0 errors, 0 warnings`, 1 skill, 9 tools.
 - `eve check`: not applicable. The command does not exist in `eve` 0.63.0.
-- `eve info`: not yet runnable. It needs the authored `agent/` directory that
-  M1-T2 creates.

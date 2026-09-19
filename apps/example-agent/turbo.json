@@ -1,0 +1,28 @@
+{
+  "$schema": "../../node_modules/turbo/schema.json",
+  // Package configuration for the example agent, extending the root turbo.json.
+  // It exists because this package is an eve application, not a TypeScript
+  // library, so the root task definitions describe the wrong files:
+  //
+  //   - its sources live under `agent/`, not `src/`, so the root `build`/
+  //     `typecheck` inputs would miss every edit to the agent and serve a stale
+  //     cache hit;
+  //   - its `build` is `eve build`, which writes `.eve/` and `.output/`, not
+  //     `dist/`, so the root `outputs` would cache nothing and a restored hit
+  //     would leave no build behind.
+  //
+  // `extends: ["//"]` is the only permitted value (turbo 2.11 schema).
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["agent/**", "src/**", "tsconfig.json", "package.json"],
+      "outputs": [".output/**"]
+    },
+    "typecheck": {
+      "dependsOn": [],
+      "inputs": ["agent/**", "src/**", "tsconfig.json", "package.json"],
+      "outputs": []
+    }
+  }
+}

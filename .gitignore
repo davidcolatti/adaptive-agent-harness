@@ -5,6 +5,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# eve compile/build artifacts (apps/example-agent/.eve, .output); see
+# `eve/docs/reference/cli.md` (`eve info`, `eve build`).
+.eve/
+.output/
+
 # Task and tool caches
 .turbo/
 coverage/

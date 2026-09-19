@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Typecheck configuration for the example agent. It extends the shared
+  // language baseline rather than `tsconfig.package.json`, because this is an
+  // application, not a library: nothing imports it, so it emits no declarations
+  // and has no `tsconfig.build.json`. Its build command is `eve build`, which
+  // compiles and bundles the authored files itself.
+  //
+  // `customConditions` matches every other typecheck config in the repository,
+  // so a future dependency on a workspace package resolves to TypeScript source
+  // without requiring a prior `pnpm build`.
+  "extends": "@internal/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@internal/source"]
+  },
+  "include": ["agent/**/*.ts", "src/**/*.ts"]
+}

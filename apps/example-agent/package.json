@@ -1,0 +1,22 @@
+{
+  "name": "@internal/example-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Neutral vendor-triage example agent. An eve project authored the way a consuming domain repository would author one (ADR-0025).",
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "info": "eve info",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "ai": "7.0.107",
+    "eve": "0.63.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

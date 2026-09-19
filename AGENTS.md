@@ -89,9 +89,13 @@ adaptive-agent-harness/
 ├── .github/workflows/ci.yml
 ├── .husky/                      # pre-commit, pre-push
 ├── .vscode/
+├── apps/
+│   └── example-agent/           # neutral vendor-triage eve project (M1-T2)
+│       ├── agent/               # agent.ts, instructions.md, skills/, tools/, lib/
+│       └── src/
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
-│   ├── core/                    # harness core contracts; empty until M1
+│   ├── core/                    # harness core contracts; ExecutionContext + errors (M1-T7/T8)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; AgentRuntime lands in M1-T5
 │   ├── runtime-eve/             # `eve` adapter; EveAgentRuntime lands in M1-T6
 │   └── testing/                 # shared test helpers
@@ -105,7 +109,7 @@ adaptive-agent-harness/
 │   ├── architecture/system-map.md
 │   ├── contracts/README.md
 │   ├── concepts/README.md
-│   ├── decisions/               # 0000-template.md plus ADRs 0001-0024
+│   ├── decisions/               # 0000-template.md plus ADRs 0001-0026
 │   ├── development/
 │   │   ├── local-setup.md
 │   │   ├── commands.md
@@ -134,7 +138,7 @@ What the build plan's Repository Layout (section 4) additionally plans, not
 yet built (**planned**):
 
 ```
-apps/playground/, apps/example-agent/                        (planned, M1)
+apps/playground/                                              (planned, unscheduled)
 packages/trace/, storage-supabase/                            (planned, M2)
 packages/decision-jev/                                        (planned, M3)
 packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
@@ -180,12 +184,21 @@ Rules (build plan section 4):
 
 **Enforcement today:** `tests/architecture/boundaries.ts` encodes this as data
 (`BOUNDARY_RULES`: adapter-only third-party dependencies, the adapter packages
-allowed to depend on them, and per-package extra bans) plus a pure rule
-engine, and `tests/architecture/package-boundaries.test.ts` runs it against
-the real workspace as part of `pnpm test:unit`. When you add a package, extend
+allowed to depend on them, the allowlist an application package may reach
+anyway, and per-package extra bans) plus a pure rule engine, and
+`tests/architecture/package-boundaries.test.ts` runs it against the real
+workspace as part of `pnpm test:unit`. When you add a package, extend
 `BOUNDARY_RULES` (and, if it is an adapter, `adapterPackages`) to cover it.
 Never weaken an existing rule to make a change pass; if a rule is genuinely
 wrong, that is an architecture change and needs an ADR.
+
+**Applications are domain consumers, not harness libraries** (ADR-0025). A
+package under `apps/*` may depend on `eve`, `ai` and `@ai-sdk/*` to author
+agents, because a real consuming domain repository is an `eve` project; that
+allowance is the explicit `appPackagesMayDependOn` allowlist and reaches no
+`packages/*` package. `@supabase/*`, `@vercel/*` and `workflow` stay
+adapter-only for applications too, and execution still goes through the harness
+API rather than the `eve` runtime.
 
 ## Architecture boundaries and hard prohibitions
 
@@ -194,8 +207,10 @@ wrong, that is an architecture change and needs an ADR.
   if it is a material choice.
 - **No direct database access outside `packages/storage-supabase`** (M2).
 - **No direct model calls outside runtime/decision adapter packages**:
-  `runtime-ai-sdk`, `runtime-eve`, `decision-jev` (M1/M3). Nothing else calls
-  a model provider or `eve` directly.
+  `runtime-ai-sdk`, `runtime-eve`, `decision-jev` (M1/M3). No harness package
+  calls a model provider or `eve` directly. An `apps/*` domain package authors
+  its agent with `eve` (ADR-0025), but runs it through the harness API, not the
+  `eve` runtime.
 - **No compiler-generated code promotion without replay and eval.** A
   generated workflow is never trusted because the compiler produced it.
 - **Installed dependency docs are authoritative** when they differ from a
@@ -507,8 +522,12 @@ decisions and owner constraints; ADRs 0018-0023 record the Milestone 0
 toolchain decisions, grounded in the toolchain research note
 (`docs/research/tooling/2026-09-19-m0-toolchain-verification.md`). ADR-0024
 records the framework dependency versioning policy adopted in M1-T1, grounded
-in `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`. The next
-free number is 0025.
+in `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`. ADR-0025
+records that `apps/*` packages are domain consumers and may author `eve` agents
+directly, grounded in
+`docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`. ADR-0026 records
+what "trace-safe" means for the M1-T8 error taxonomy: a whitelisted, stack-free
+serialization with a stable `code` discriminant. The next free number is 0027.
 
 ## Scope discipline
 
@@ -532,8 +551,12 @@ Avoid building these until the preceding milestone actually proves the need
 
 The project should remain surprisingly small until the compiler actually
 works. Prefer an honest empty boundary over speculative code: `packages/core`
-is intentionally empty (`export {}`) until Milestone 1 defines the contracts
-it exists to hold, rather than inventing placeholder abstractions early.
+stayed intentionally empty (`export {}`) through Milestone 0 rather than
+inventing placeholder abstractions early, and began filling only when M1-T7 and
+M1-T8 had a real contract to put there. The same rule still applies to what is
+not yet written: `TraceEvent` in core is a five-field M1 placeholder because
+M2-T3 owns the real schema, and no `Job`, `AgentRuntime` or registry type
+exists until the task that needs it.
 
 ## Git discipline
 

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Harness core contracts. Intentionally empty until Milestone 1.",
+  "description": "Harness core contracts: JSON value model, execution context, trace boundary and error taxonomy.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@internal/config": "workspace:*"
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
   }
 }

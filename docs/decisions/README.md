@@ -75,6 +75,8 @@ and related ADRs that motivated it.
 | [0022](0022-vitest-projects-and-test-file-taxonomy.md) | Vitest projects and test-file taxonomy | accepted |
 | [0023](0023-git-hooks-secret-scanning-and-ci-gates.md) | Git hooks, secret scanning, and CI gates | accepted |
 | [0024](0024-framework-dependency-versioning-policy.md) | Framework dependency versioning policy | accepted |
+| [0025](0025-application-packages-may-author-eve-agents-directly.md) | Application packages may author `eve` agents directly | accepted |
+| [0026](0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md) | Harness errors serialize to a whitelisted, stack-free trace-safe shape | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -89,3 +91,14 @@ recorded during M0".
 Entry 0024 records the framework dependency versioning policy adopted when Milestone 1 installed
 the first framework dependencies (`eve`, `ai`), grounded in
 `docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`.
+
+Entry 0025 records that application packages under `apps/*` are domain consumers rather than
+harness libraries, and may therefore author agents with `eve` directly, while `@supabase/*`,
+`@vercel/*` and `workflow` stay adapter-only for everyone. It was forced by M1-T2, the task that
+scaffolded `apps/example-agent`, and is grounded in
+`docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`.
+
+Entry 0026 records what "trace-safe" means for the M1-T8 error taxonomy: serialization is a
+whitelist of `name`, `code`, `message`, `details` and a depth-bounded `cause`, stacks are excluded
+by default, and every failure carries a stable `code` that survives serialization and class
+renames. It is grounded in `docs/contracts/errors.md` and `packages/core/src/errors.ts`.

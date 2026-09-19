@@ -203,6 +203,25 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  apps/example-agent:
+    dependencies:
+      ai:
+        specifier: 7.0.107
+        version: 7.0.107(zod@4.6.5)
+      eve:
+        specifier: 0.63.0
+        version: 0.63.0(ai@7.0.107(zod@4.6.5))
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@internal/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
+
   packages/config: {}
 
   packages/core:
@@ -210,6 +229,9 @@ importers:
       '@internal/config':
         specifier: workspace:*
         version: link:../config
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
 
   packages/runtime-ai-sdk:
     dependencies:

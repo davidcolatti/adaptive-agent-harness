@@ -1,0 +1,86 @@
+# Architecture Decision Records
+
+This directory holds the Architecture Decision Records (ADRs) for the adaptive agent harness.
+An ADR captures a significant architectural decision, the context that forced it, and its
+consequences, so a future contributor (human or coding agent) can understand *why* the system is
+built the way it is, not just *what* it currently looks like.
+
+## Numbering scheme
+
+Each ADR is a file named `NNNN-kebab-title.md`, where `NNNN` is a zero-padded, monotonically
+increasing four-digit number (`0001`, `0002`, ... `0017`, ...). Numbers are assigned once and are
+**never reused or renumbered**, even if an ADR is later superseded or deprecated. `0000-template.md`
+is reserved for the template itself and is not a decision.
+
+## Statuses
+
+Every ADR's frontmatter declares exactly one status:
+
+- `proposed`, under discussion, not yet binding.
+- `accepted`, the current, binding decision.
+- `superseded`, replaced by a later ADR; the frontmatter's `superseded_by` field names the
+  replacement, and the replacement's `supersedes` field names this one.
+- `deprecated`, no longer applicable and not replaced by a specific successor ADR.
+
+## When an ADR is required
+
+Per the build plan's Definition of Done (`docs/milestones/build-plan.md` §12): **any
+architecture-changing task requires an ADR.** AD-016 extends the same discipline to internal
+implementation choices the plan does not prescribe (for example, source-generator library, UUID
+scheme, canonical JSON encoding): material ones get an ADR, small ones are recorded directly in
+the task's `docs/progress/WORKLOG.md` entry instead. When in doubt, ask: "would a future engineer
+need to know *why*, not just *what*, to safely change this later?" If yes, write an ADR. If it is
+a small, easily-reversed implementation detail, log it in the WORKLOG.
+
+## How to supersede an ADR
+
+1. Write a new ADR with the next available number. Set its `supersedes` field to the old ADR's
+   number.
+2. In the old ADR, change `status` to `superseded` and set `superseded_by` to the new ADR's
+   number. Do not delete or renumber the old file; its history remains part of the record.
+3. Update the index table below for both entries.
+
+## Reading order for a fresh contributor
+
+Read `AGENTS.md` and `docs/context/current-state.md` first. Then read the ADRs relevant to the
+milestone/task at hand; the References section of each ADR links back to the build-plan sections
+and related ADRs that motivated it.
+
+## Index
+
+| Number | Title | Status |
+|---|---|---|
+| [0000](0000-template.md) | Template | n/a |
+| [0001](0001-harness-is-a-reusable-package-not-a-domain-monorepo.md) | Harness is a reusable package, not a domain monorepo | accepted |
+| [0002](0002-vercel-native-architecture-without-internal-vercel-lock-in.md) | Vercel-native architecture without internal Vercel lock-in | accepted |
+| [0003](0003-ai-sdk-is-the-lowest-agent-runtime-contract-eve-is-the-default-runtime-adapter.md) | AI SDK is the lowest agent-runtime contract; eve is the default runtime adapter | accepted |
+| [0004](0004-local-first-development-no-hosted-infrastructure-until-later-milestones.md) | Local-first development; no hosted infrastructure until later milestones | accepted |
+| [0005](0005-human-reviewed-promotion-precedes-autonomous-promotion.md) | Human-reviewed promotion precedes autonomous promotion | accepted |
+| [0006](0006-compiled-workflows-are-committed-source-ir-is-authoritative.md) | Compiled workflows are committed source; IR is authoritative, generated TypeScript is never hand-edited | accepted |
+| [0007](0007-typed-typescript-dsl-over-a-serializable-ir.md) | Typed TypeScript DSL over a serializable IR; runtime never executes unvalidated generated source | accepted |
+| [0008](0008-learning-is-domain-isolated-and-scoped-by-organization-domain-job-type.md) | Learning is domain-isolated and scoped by organization -> domain -> job type | accepted |
+| [0009](0009-judgment-jev-is-separate-from-policy-thresholds-versioned-and-replayable.md) | Judgment (Jev) is separate from policy (TypeScript thresholds), thresholds versioned and replayable | accepted |
+| [0010](0010-observability-trace-is-a-product-surface-captured-from-the-first-run.md) | Observability/trace is a product surface, captured from the first run | accepted |
+| [0011](0011-no-vercel-implementation-detail-may-be-guessed.md) | No Vercel implementation detail may be guessed; mandatory source precedence and research checkpoint | accepted |
+| [0012](0012-reuse-documented-eve-capabilities-instead-of-cloning-them.md) | Reuse documented eve capabilities instead of cloning them | accepted |
+| [0013](0013-strict-boundary-between-workflow-ir-and-generated-source.md) | Strict boundary between workflow IR and generated source; v1 is structural compilation only | accepted |
+| [0014](0014-every-unit-of-work-leaves-a-markdown-handoff.md) | Every unit of work leaves a Markdown handoff (WORKLOG + current-state) | accepted |
+| [0015](0015-workflow-ir-references-a-typed-versioned-capability-registry.md) | Workflow IR references a typed, versioned capability registry; promoted workflows pin exact versions | accepted |
+| [0016](0016-internal-implementation-choices-ts-morph-as-v1-code-generator.md) | Internal implementation choices are recorded explicitly; ts-morph is the v1 deterministic code generator | accepted |
+| [0017](0017-owner-decided-product-constraints.md) | Owner-decided product constraints without a single natural ADR home | accepted |
+| [0018](0018-pnpm-workspace-turborepo-and-node-24-pin.md) | pnpm workspace, Turborepo, and Node 24 pin | accepted |
+| [0019](0019-typescript-6-strict-baseline-and-tsc-only-builds.md) | TypeScript 6 strict baseline and tsc-only builds | accepted |
+| [0020](0020-internal-source-export-condition-for-workspace-resolution.md) | `@internal/source` export condition for workspace resolution | accepted |
+| [0021](0021-biome-for-formatting-and-linting-architecture-rules-in-tests.md) | Biome for formatting and linting; architecture rules live in tests | accepted |
+| [0022](0022-vitest-projects-and-test-file-taxonomy.md) | Vitest projects and test-file taxonomy | accepted |
+| [0023](0023-git-hooks-secret-scanning-and-ci-gates.md) | Git hooks, secret scanning, and CI gates | accepted |
+
+Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
+decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
+with deciders "project owner (build plan); recorded during M0".
+
+Entries 0018-0023 record the Milestone 0 toolchain (pnpm/Turborepo/Node, TypeScript, the
+`@internal/source` workspace-resolution condition, Biome, Vitest, and git hooks/secret
+scanning/CI), grounded in `docs/research/tooling/2026-09-19-m0-toolchain-verification.md`, dated
+2026-09-19 with deciders "orchestrator (Claude Fable 5.1) with repository owner constraints;
+recorded during M0".

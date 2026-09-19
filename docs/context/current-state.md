@@ -7,8 +7,8 @@
 **Last updated:** 2026-09-19 (M1-T1 complete)
 **Current milestone:** M1, Local Agent + Public Harness Boundary (in progress)
 **Current task:** M1-T2, Scaffold example agent (not started)
-**Last commit SHA:** not committed (orchestrator commits after review). The last
-commit on disk is the M0 handoff commit; run `git log --oneline`.
+**Last commit SHA:** `bdb4a23` (M1-T1). Run `git log --oneline` for the
+full history.
 
 ## Completed milestones / tasks
 

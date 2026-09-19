@@ -1178,7 +1178,7 @@ inspect `node_modules/eve/docs/` and the installed `ai` types.
 
 **Status:** completed
 **Actor/session:** implementer subagent (opus) — orchestrated by Claude Fable 5.1
-**Commit:** not committed (orchestrator commits after review)
+**Commit:** bdb4a23
 
 Result entry for the `started` entry above. Appended rather than rewritten, per
 `docs/progress/README.md`. The `Implementation references` section below is the

@@ -1,0 +1,19 @@
+# Fast, staged-file-only checks. Anything expensive belongs in pre-push or CI.
+#
+# `set -e` is required: without it a failing check is followed by the next one
+# and only the last command's exit code reaches git, so a failure can be masked.
+set -e
+
+if [ -z "$(git diff --cached --name-only --diff-filter=ACMR)" ]; then
+  exit 0
+fi
+
+# Secret scan first, because a leaked credential is the most serious thing a
+# commit can carry. secretlint has no --staged mode, so the staged paths are
+# passed explicitly: -z/-0 keeps filenames with spaces intact, and --no-glob
+# makes secretlint treat each argument as a literal path rather than a pattern.
+git diff --cached --name-only --diff-filter=ACMR -z |
+  xargs -0 pnpm exec secretlint --no-glob --
+
+# Formatting, lint rules and import organisation, on staged files only.
+pnpm exec biome check --staged --no-errors-on-unmatched

@@ -1,0 +1,6 @@
+# Whole-repository checks that are still cheap enough to run before a push.
+# Agent, eval and live-provider suites are deliberately not run here.
+set -e
+
+pnpm run typecheck
+pnpm run test:unit

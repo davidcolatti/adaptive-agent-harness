@@ -1,0 +1,25 @@
+# pnpm 12 reads its settings from this file, not from .npmrc.
+# Docs: https://pnpm.io/settings/cli
+packages:
+  - "packages/*"
+
+# Refuse to install a dependency that declares it is incompatible with the
+# running Node version. Note: pnpm 12.4.2 does NOT fail on THIS project's own
+# `engines.node` (verified 2026-09-19; the docs claim it does). The Node pin is
+# therefore enforced by .node-version/.nvmrc locally and by CI.
+engineStrict: true
+
+# Supply-chain release-age gate. pnpm appends to the exclude list below when a
+# package newer than the gate is installed deliberately. It does NOT prune stale
+# entries: `minimumReleaseAgeExcludePrune` defaults to false
+# (https://pnpm.io/settings/dependency-resolution), so a superseded version has
+# to be removed by hand.
+minimumReleaseAgeExclude:
+  - '@turbo/darwin-64@2.11.2'
+  - '@turbo/darwin-arm64@2.11.2'
+  - '@turbo/linux-64@2.11.2'
+  - '@turbo/linux-arm64@2.11.2'
+  - '@turbo/windows-64@2.11.2'
+  - '@turbo/windows-arm64@2.11.2'
+  - '@types/node@24.13.6'
+  - turbo@2.11.2

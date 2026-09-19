@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Task and tool caches
+.turbo/
+coverage/
+.vitest/
+
+# Compiler workspace (generated workflow source; see build plan AD-006)
+.compiler/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

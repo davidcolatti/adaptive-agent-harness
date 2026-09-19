@@ -1,0 +1,196 @@
+import { globSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
+import {
+  BOUNDARY_RULES,
+  type BoundaryRules,
+  findBoundaryViolations,
+  formatViolations,
+  matchesPattern,
+  type WorkspacePackage,
+} from "./boundaries.js";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+interface PackageJsonShape {
+  readonly name?: string;
+  readonly dependencies?: Record<string, string>;
+  readonly devDependencies?: Record<string, string>;
+  readonly peerDependencies?: Record<string, string>;
+  readonly optionalDependencies?: Record<string, string>;
+}
+
+/** Read the workspace globs pnpm itself uses, so the test cannot drift. */
+function readWorkspaceGlobs(): string[] {
+  const raw = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
+  const parsed: unknown = parseYaml(raw);
+  if (typeof parsed !== "object" || parsed === null || !("packages" in parsed)) {
+    throw new Error("pnpm-workspace.yaml does not declare a `packages` key");
+  }
+  const { packages } = parsed as { packages: unknown };
+  if (!Array.isArray(packages) || packages.some((entry) => typeof entry !== "string")) {
+    throw new Error("pnpm-workspace.yaml `packages` must be a list of glob strings");
+  }
+  return packages as string[];
+}
+
+function loadWorkspacePackages(): WorkspacePackage[] {
+  const packages: WorkspacePackage[] = [];
+
+  for (const glob of readWorkspaceGlobs()) {
+    for (const match of globSync(glob, { cwd: REPO_ROOT })) {
+      const manifestPath = join(REPO_ROOT, match, "package.json");
+      let contents: string;
+      try {
+        contents = readFileSync(manifestPath, "utf8");
+      } catch {
+        // A glob can match a directory that is not a package yet.
+        continue;
+      }
+      const manifest = JSON.parse(contents) as PackageJsonShape;
+      if (manifest.name === undefined) {
+        throw new Error(`${manifestPath} has no "name"`);
+      }
+      packages.push({
+        name: manifest.name,
+        directory: relative(REPO_ROOT, join(REPO_ROOT, match)).replaceAll("\\", "/"),
+        dependencies: [
+          ...Object.keys(manifest.dependencies ?? {}),
+          ...Object.keys(manifest.devDependencies ?? {}),
+          ...Object.keys(manifest.peerDependencies ?? {}),
+          ...Object.keys(manifest.optionalDependencies ?? {}),
+        ],
+      });
+    }
+  }
+
+  return packages;
+}
+
+describe("workspace dependency boundaries", () => {
+  const packages = loadWorkspacePackages();
+
+  it("discovers every workspace package", () => {
+    expect(packages.map((pkg) => pkg.name).sort()).toEqual([
+      "@internal/config",
+      "@internal/core",
+      "@internal/testing",
+    ]);
+  });
+
+  it("has no boundary violations", () => {
+    const violations = findBoundaryViolations(packages, BOUNDARY_RULES);
+
+    expect(violations, `Dependency rule violations:\n${formatViolations(violations)}`).toEqual([]);
+  });
+});
+
+describe("matchesPattern", () => {
+  it("matches an exact package name", () => {
+    expect(matchesPattern("eve", "eve")).toBe(true);
+    expect(matchesPattern("eve-utils", "eve")).toBe(false);
+  });
+
+  it("matches a scope wildcard", () => {
+    expect(matchesPattern("@ai-sdk/openai", "@ai-sdk/*")).toBe(true);
+    expect(matchesPattern("@ai-sdk-other/openai", "@ai-sdk/*")).toBe(false);
+  });
+});
+
+describe("findBoundaryViolations", () => {
+  // A miniature fabricated workspace. It proves the engine itself works,
+  // rather than only proving that today's three real packages happen to be
+  // clean.
+  const RULES: BoundaryRules = {
+    adapterOnlyDependencies: ["eve", "@supabase/*"],
+    adapterPackages: ["@internal/runtime-eve"],
+    forbiddenByPackage: {
+      "@internal/core": ["eve"],
+    },
+  };
+
+  const clean: WorkspacePackage = {
+    name: "@internal/core",
+    directory: "packages/core",
+    dependencies: ["@internal/config"],
+  };
+
+  it("returns no violations for a clean workspace", () => {
+    expect(findBoundaryViolations([clean], RULES)).toEqual([]);
+  });
+
+  it("flags a non-adapter package that depends on an adapter-only surface", () => {
+    const offender: WorkspacePackage = {
+      name: "@internal/core",
+      directory: "packages/core",
+      dependencies: ["eve"],
+    };
+
+    const violations = findBoundaryViolations([offender], RULES);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.packageName).toBe("@internal/core");
+    expect(violations[0]?.dependencyName).toBe("eve");
+    expect(violations[0]?.reason).toContain("adapter-only");
+  });
+
+  it("flags a scoped adapter-only dependency", () => {
+    const offender: WorkspacePackage = {
+      name: "@internal/trace",
+      directory: "packages/trace",
+      dependencies: ["@supabase/supabase-js"],
+    };
+
+    expect(findBoundaryViolations([offender], RULES)).toHaveLength(1);
+  });
+
+  it("allows a declared adapter package to depend on its surface", () => {
+    const adapter: WorkspacePackage = {
+      name: "@internal/runtime-eve",
+      directory: "packages/runtime-eve",
+      dependencies: ["eve"],
+    };
+
+    expect(findBoundaryViolations([adapter], RULES)).toEqual([]);
+  });
+
+  it("flags a library package that depends on an application package", () => {
+    const app: WorkspacePackage = {
+      name: "@example/playground",
+      directory: "apps/playground",
+      dependencies: [],
+    };
+    const offender: WorkspacePackage = {
+      name: "@internal/workflow",
+      directory: "packages/workflow",
+      dependencies: ["@example/playground"],
+    };
+
+    const violations = findBoundaryViolations([app, offender], RULES);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.reason).toContain("must not depend on the application package");
+  });
+
+  it("allows an application package to depend on a library package", () => {
+    const app: WorkspacePackage = {
+      name: "@example/playground",
+      directory: "apps/playground",
+      dependencies: ["@internal/core"],
+    };
+
+    expect(findBoundaryViolations([app, clean], RULES)).toEqual([]);
+  });
+
+  it("reports every violating dependency, not only the first", () => {
+    const offender: WorkspacePackage = {
+      name: "@internal/core",
+      directory: "packages/core",
+      dependencies: ["eve", "@supabase/supabase-js"],
+    };
+
+    expect(findBoundaryViolations([offender], RULES)).toHaveLength(2);
+  });
+});

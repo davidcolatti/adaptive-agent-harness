@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Base for library packages under packages/*. Adds the emit settings every
+  // package needs. Each package still declares rootDir/outDir and
+  // include/exclude itself, for the path-resolution reason explained in
+  // tsconfig.base.json.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

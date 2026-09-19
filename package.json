@@ -1,0 +1,40 @@
+{
+  "name": "adaptive-agent-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run check:handoff",
+    "check:handoff": "node scripts/verify-handoff.ts",
+    "dev": "turbo run dev",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome check --formatter-enabled=false .",
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:contract": "vitest run --project contract",
+    "test:integration": "vitest run --project integration",
+    "test:replay": "vitest run --project replay",
+    "test:unit": "vitest run --project unit",
+    "typecheck": "turbo run typecheck && tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@internal/config": "workspace:*",
+    "@internal/testing": "workspace:*",
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
+    "@types/node": "24.13.6",
+    "husky": "9.1.7",
+    "secretlint": "13.0.5",
+    "turbo": "2.11.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.1",
+    "yaml": "2.9.1"
+  }
+}

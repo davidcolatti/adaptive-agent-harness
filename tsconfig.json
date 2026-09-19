@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Typecheck configuration for the repository root itself: build scripts,
+  // root-level tests and root config files. Workspace packages are typechecked
+  // by their own tsconfig.json through `turbo run typecheck`; `pnpm typecheck`
+  // runs both so that every .ts file in the repository is covered.
+  "extends": "@internal/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@internal/source"]
+  },
+  "include": ["scripts/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

@@ -118,8 +118,8 @@ Architecture: `docs/architecture/runtime.md`. Contracts: `docs/contracts/`.
   authored model (the helper strips it); `outputSchema` type is
   `StandardJSONSchemaV1 | JsonObject`; `MessageResult.status` is not a
   discriminator, branch on turn events; `mockModel` needs
-  `modelContextWindowTokens`; `eve dev` process command name is `node`, so
-  find servers by listening port, not `pgrep eve`.
+  `modelContextWindowTokens`; `eve dev` runs as `node .../eve.js dev ...`, so `pgrep -f "eve dev"` never
+  matches; use `pgrep -f "eve.js dev"` or check listening ports.
 - `apps/*` is the only place eve may be imported outside `packages/runtime-eve`.
 
 ## Uncommitted / generated artifacts

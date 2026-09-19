@@ -84,6 +84,23 @@ export interface RuntimeInfo {
 }
 
 /**
+ * What {@link createExecutionContext} reports when no runtime is named.
+ *
+ * `name` is `harness` because that is literally what is executing at the
+ * moment the context is built: `createHarness()` has not handed the job to an
+ * adapter yet. `version` is a module constant rather than a value read from
+ * `packages/core/package.json` at runtime, because reading a package manifest
+ * from a compiled `dist/` at an unknown path is brittle and would make the
+ * contract depend on file layout. It tracks the package version by hand, and
+ * nothing branches on it.
+ */
+export const HARNESS_RUNTIME_INFO: RuntimeInfo = Object.freeze({
+  name: "harness",
+  version: "0.0.0",
+  metadata: Object.freeze({}),
+});
+
+/**
  * Everything an execution needs that is not the job itself.
  *
  * The split matters: a `Job` is immutable and describes *what* to do, while an
@@ -146,8 +163,22 @@ export interface CreateExecutionContextInput {
   readonly trace?: TraceWriter;
   /** Cancellation. Defaults to a signal that never aborts. */
   readonly signal?: AbortSignal;
-  /** What is executing. */
-  readonly runtime: RuntimeInfoInput;
+  /**
+   * What is executing.
+   *
+   * **Optional, and the default is the honest answer.** The harness builds the
+   * context *before* it calls an adapter, so at construction time it does not
+   * yet know which adapter will run the job or what version that adapter is.
+   * Omitting this field yields {@link HARNESS_RUNTIME_INFO}, which says "the
+   * harness is orchestrating this attempt" rather than naming a runtime that
+   * has not spoken yet. The adapter identifies itself where it actually can:
+   * `AgentExecution.runtime`, which is the value that reaches a caller and a
+   * trace.
+   *
+   * An adapter that builds its own context (a nested or delegated run) supplies
+   * its own identity here.
+   */
+  readonly runtime?: RuntimeInfoInput;
 }
 
 /**
@@ -186,10 +217,13 @@ export function createExecutionContext(input: CreateExecutionContextInput): Exec
     // "no cancellation was supplied" value, and it keeps `signal` non-optional
     // so no caller has to null-check it.
     signal: input.signal ?? new AbortController().signal,
-    runtime: {
-      name: input.runtime.name,
-      version: input.runtime.version,
-      metadata: input.runtime.metadata ?? {},
-    },
+    runtime:
+      input.runtime === undefined
+        ? HARNESS_RUNTIME_INFO
+        : {
+            name: input.runtime.name,
+            version: input.runtime.version,
+            metadata: input.runtime.metadata ?? {},
+          },
   };
 }

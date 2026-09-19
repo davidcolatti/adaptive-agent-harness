@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Build configuration for the example's `src/` entrypoints, added by M1-T6 so
+  // `pnpm example:run` has something to execute.
+  //
+  // It exists because Node 24.21.0 strips types but does **not** rewrite a
+  // relative `./x.js` specifier to `./x.ts` (verified: importing `./a.js` from
+  // a `.ts` sibling fails with ERR_MODULE_NOT_FOUND). Every module in this
+  // repository uses the `.js` extension, as `module: nodenext` requires, so
+  // `node src/run.ts` cannot resolve `./domain/index.js`. Compiling with the
+  // toolchain that is already pinned is better than adding a TypeScript runner
+  // (`tsx`, `vite-node`) that nothing else in the repository needs.
+  //
+  // `rootDir` is the package rather than `src`, because `src/capabilities.ts`
+  // registers the real handler from `agent/lib/`, so the compilation's common
+  // root spans both trees. The emitted entrypoint is therefore
+  // `dist/src/run.js`, which is what the `start` script runs. `agent/` is still
+  // owned by `eve build`; what lands under `dist/agent/lib/` is only the pure
+  // fixture module `src/` imports, and nothing reads it but `dist/src/`.
+  //
+  // Like every `tsconfig.build.json` here it deliberately does NOT enable the
+  // "@internal/source" condition, so it compiles against its dependencies'
+  // built declarations; turbo's `^build` is what guarantees they exist.
+  "extends": "@internal/config/tsconfig.package.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts", "agent/lib/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "agent/**/*.test.ts"]
+}

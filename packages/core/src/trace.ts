@@ -62,9 +62,9 @@ export interface TraceWriter {
  *
  * It exists so a unit test, or a caller that genuinely has nowhere to write
  * yet, can build an {@link ExecutionContext} without a trace package. It is
- * not a test double: it records nothing, so it cannot be asserted against. A
- * recording writer belongs in `@internal/testing` and is deferred until a test
- * actually needs to assert on emitted events.
+ * not a test double: it records nothing, so it cannot be asserted against. The
+ * recording counterpart is `createRecordingTraceWriter()` in
+ * `@internal/testing`, added by M1-T4.
  */
 export function createNoopTraceWriter(): TraceWriter {
   return {

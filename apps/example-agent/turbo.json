@@ -16,8 +16,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["agent/**", "src/**", "tsconfig.json", "package.json"],
-      "outputs": [".output/**"]
+      "inputs": ["agent/**", "src/**", "tsconfig.json", "tsconfig.build.json", "package.json"],
+      "outputs": [".output/**", "dist/**"]
     },
     "typecheck": {
       "dependsOn": [],

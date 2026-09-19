@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Typecheck configuration for the fixture agent. Same shape as
+  // `apps/example-agent/tsconfig.json`: it extends the shared language baseline
+  // rather than `tsconfig.package.json`, because this is an application, not a
+  // library. It emits no declarations and has no `tsconfig.build.json`; its
+  // build command is `eve build`.
+  "extends": "@internal/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@internal/source"]
+  },
+  "include": ["agent/**/*.ts", "src/**/*.ts"]
+}

@@ -862,16 +862,27 @@ new EveAgentRuntime({ host, auth?, headers? })   // harness-owned
      clock. `costUsd` stays optional (§5).
    Collect the events into an array so the terminal handling below can also use `result()`-style
    aggregation, or call `result()` on a second adapter path when no live policing is needed.
-7. **Settle — documented boundaries** (`$EVE/docs/concepts/sessions-runs-and-streaming.md`,
-   `$EVE/dist/src/client/types.d.ts` `MessageResult.status`):
+7. **Settle — documented boundaries** (`$EVE/docs/concepts/sessions-runs-and-streaming.md`),
+   discriminated on **events**, not on `MessageResult.status`.
 
-   | Observed | Adapter behaviour |
+   > **Corrected by §15.** `MessageResult.status` looked like the discriminator when this section
+   > was first written. It is not. The spike in §15 observed `status: "waiting"` for a successful
+   > turn, for a turn that failed with `OUTPUT_SCHEMA_NOT_FULFILLED`, **and** for a cancelled turn.
+   > It reports where the *session* ended up, not how the *turn* ended. Branch on the turn boundary
+   > event instead, and use the exported narrowing helper `isTurnFailureEvent` from `eve/client`
+   > (`$EVE/dist/src/protocol/message.d.ts`), which covers `session.failed | step.failed |
+   > turn.failed`.
+
+   | Observed in `events` | Adapter behaviour |
    | --- | --- |
-   | `turn.completed` then `session.waiting`, `data` present | success; validate `data` against the domain schema (§2) and return `AgentExecution` |
-   | `session.waiting` with `inputRequests` non-empty | `AgentExecutionError` — M1 has no human in the loop (§8) |
+   | `turn.completed`, `data` present | success; validate `data` against the domain schema (§2) and return `AgentExecution` |
+   | `turn.completed`, schema requested, `data` absent | `ValidationError` — the turn settled without fulfilling the schema |
+   | any event matching `isTurnFailureEvent` | `AgentExecutionError`, carrying eve's `{ code, message }` as context (§11 item 7) |
    | `turn.cancelled` | not a failure; surface whichever harness error caused the cancel (`PermissionDeniedError`, `BudgetExceededError`) or an abort error when `context.signal` fired |
-   | `turn.failed` / `session.failed` | `AgentExecutionError`, carrying eve's `{ code, message }` as context (§11 item 7) |
-   | `data` absent on an otherwise successful turn | `ValidationError` — the turn requested a schema and the server did not fulfil it |
+   | `inputRequests` non-empty | `AgentExecutionError` — M1 has no human in the loop (§8) |
+
+   Note also that `MessageResult.message` is `undefined` on a structured turn (§15), so the adapter
+   must read `data` and must not fall back to `message` when a schema was requested.
 
 8. **Do not leak eve types.** M1-T6's stated constraint
    (`docs/milestones/m1-local-agent-and-public-harness-boundary.md`). `sessionId`, `turnId`,
@@ -966,9 +977,16 @@ Paste into the `started` WORKLOG entry and extend with anything the implementati
    M1-T3's `Schema<T>` producing a Standard Schema value or a JSON Schema object. If M1-T3 lands on
    something that produces neither, M1-T6 needs a lowering step. Worth confirming the two tasks
    agree.
-3. **Can a `mockModel` agent serve a turn offline?** Not verified here (§10). If it cannot, every
-   end-to-end test of the adapter needs a credential, and the `live:eve` tag becomes mandatory for
-   anything above the transport fake. This is the one finding that could change the test plan.
+3. **Can a `mockModel` agent serve a turn offline? — ANSWERED: yes. See §15.** Verified by
+   execution on 2026-09-19 with every model credential unset: six turns, including structured
+   output with both schema forms and a real mid-flight cancellation, in 58-141 ms each. The
+   adapter's contract-level tests are credential-free and need no `live:eve` tag. Two prerequisites
+   the docs do not state came out of it, and they feed questions 4 and 5: the fixture must be its
+   own package whose `package.json` declares `eve` (§15.1), and it must set an agent-level
+   `modelContextWindowTokens`, because `mockModel` has no AI Gateway catalog entry and compaction
+   refuses to compile without one (§15.2). §15.7 lists three corrections the spike forced on
+   earlier sections, the important one being that `MessageResult.status` cannot discriminate
+   success from failure.
 4. **Disable `bash` / `write_file` / `agent` by file in the example?** §9 recommends
    `defaultTools: false` on `apps/example-agent`, leaving one authored tool. It shrinks the M1
    attack surface to almost nothing and removes the subagent-spawning `agent` tool. The cost is
@@ -976,10 +994,13 @@ Paste into the `started` WORKLOG entry and extend with anything the implementati
    back for `agent/skills/triage-vendor.md`. Confirm the trade, and confirm it belongs to M1-T6
    rather than a follow-up to M1-T2.
 5. **One example agent or two?** §12 suggests a separate fixture app root with a `mockModel` so the
-   example keeps its Gateway model. That is a new package under `apps/`, which touches the
-   architecture boundary rules in `tests/architecture/boundaries.ts`. The alternative is making the
+   example keeps its Gateway model. §15.1 settles the cost: a fixture **must** be its own package
+   with a `package.json` declaring `eve`, so it cannot hide inside `packages/runtime-eve`. That
+   makes it a workspace package under `apps/`, needing one entry in `BOUNDARY_RULES`
+   (`tests/architecture/boundaries.ts`) under the ADR-0025 allowlist. The alternative is making the
    example's model itself environment-switchable (`mockModel()` when `EXAMPLE_AGENT_MODEL` is
-   unset), which keeps one app root but makes the example's behaviour depend on an env var.
+   unset), which keeps one app root but makes the example's behaviour depend on an env var and
+   forces `modelContextWindowTokens` into the shipped example.
 6. **Does permission enforcement by observation satisfy M1?** §6's M1 fallback detects an
    ungranted tool call and fails the run *after* the call was requested — and, depending on event
    ordering, possibly after it executed. North-star invariant 7 ("Every external write has explicit
@@ -998,3 +1019,415 @@ Paste into the `started` WORKLOG entry and extend with anything the implementati
    or amend ADR-0012 to say "the documented eve event stream, through `eve/hooks` or `eve/client`".
    **Recommended: amend**, because the current wording will trip the next reader too. The
    implementer should not resolve this alone.
+
+---
+
+## 15. Verified by execution: a `mockModel` turn offline
+
+§10 left open question 3 unverified: can an agent whose model is `mockModel(...)` serve a full turn
+with no credential? **Yes.** Run on 2026-09-19 from a throwaway fixture at
+`packages/runtime-eve/.tmp-mock-agent/`, deleted afterwards. `AI_GATEWAY_API_KEY`,
+`VERCEL_OIDC_TOKEN`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` were all confirmed unset in the
+shell, and the server was additionally started under `env -u AI_GATEWAY_API_KEY -u
+VERCEL_OIDC_TOKEN`. Six turns ran, including structured output with both schema forms and a real
+mid-flight cancellation. Nothing reached a model provider.
+
+This section corrects three things the earlier sections got wrong or left vague. They are called
+out inline and at §15.7.
+
+### 15.1 An app-root `package.json` is required, and it must declare `eve`
+
+Answering the orchestrator's question directly: **`agent/` alone under a directory is not enough.**
+Three attempts, each with the identical `agent/agent.ts` and `agent/instructions.md`:
+
+| App root contents | `eve info` result |
+| --- | --- |
+| `agent/` only, no `package.json` | `Invalid eve project at …/packages/runtime-eve: found no agent files.` |
+| `agent/` + `package.json` with no dependencies | `No eve project contains …/packages/runtime-eve/.tmp-mock-agent.` |
+| `agent/` + `package.json` declaring `eve` (and `ai`, `zod`) | `Compile ready`, `0 errors, 0 warnings` |
+
+The first result is the informative one: with no `package.json` in the fixture directory, eve walked
+**up** to `packages/runtime-eve` — the nearest ancestor with a `package.json` — and reported that
+*that* directory had no agent files. So the app root is the nearest enclosing package, and an agent
+directory that is not itself a package root is invisible to eve. The second result shows that a bare
+`package.json` is not sufficient either; eve only recognizes the project once `eve` appears in its
+dependencies.
+
+This matches how every layout in `$EVE/docs/concepts/project-structure.mdx` and
+`$EVE/docs/reference/agent-files.md` is drawn — `package.json` always sits beside `agent/` — but
+those pages never state it as a requirement, and they never mention the dependency check.
+
+**Consequence for the permanent fixture (open question 5).** A mock-model fixture agent must be its
+own package with its own `package.json` declaring `eve`. It cannot be a subdirectory of
+`packages/runtime-eve`. That makes it a workspace package under `apps/`, which means extending
+`BOUNDARY_RULES` in `tests/architecture/boundaries.ts` so the new app is covered by the
+`appPackagesMayDependOn` allowlist (ADR-0025). Cost is now known and small; the decision is still
+the orchestrator's.
+
+Note the fixture needed **no `pnpm install`**: it declared `eve`, `ai` and `zod` but resolved them
+through `packages/runtime-eve/node_modules` by ordinary upward Node resolution. A real workspace
+package would be installed normally.
+
+### 15.2 `mockModel` alone does not compile: `modelContextWindowTokens` is required
+
+`$EVE/docs/evals/overview.mdx` presents this as a working one-liner:
+
+```ts
+export default defineAgent({
+  model: mockModel("A deterministic reply"),
+});
+```
+
+Verbatim, it fails at compile:
+
+```text
+Cannot compile agent compaction because the primary compaction trigger model "eve-mock/model" does not have known AI Gateway context window metadata.
+```
+
+Compaction needs a context-window size, eve resolves it from the AI Gateway catalog, and a mock
+model is not in the catalog. The fix is an **agent-level** `modelContextWindowTokens`, which exists
+on the definition type but is absent from the `$EVE/docs/agent-config.md` "Other defineAgent fields"
+table:
+
+```ts
+// $EVE/dist/src/shared/agent-definition.d.ts, PublicAgentDefinition (line 355)
+readonly modelContextWindowTokens?: number;   // "Optional context-window override for the static model."
+```
+
+Line 101 of the same file calls it "the agent-level `modelContextWindowTokens`", and
+`agent-config.md` mentions the name only for the *dynamic* selection object. **Recorded as a
+docs-vs-installed-package discrepancy** per the source-of-truth protocol §1: the installed
+declaration wins, and any harness fixture using a non-catalog model must set this field.
+
+### 15.3 The fixture
+
+```jsonc
+// packages/runtime-eve/.tmp-mock-agent/package.json
+{ "name": "tmp-mock-agent", "version": "0.0.0", "private": true, "type": "module",
+  "dependencies": { "ai": "7.0.107", "eve": "0.63.0", "zod": "4.6.5" } }
+```
+
+```ts
+// agent/agent.ts  (responder abridged: diagnostics writer omitted)
+import { defineAgent } from "eve";
+import { mockModel } from "eve/evals";
+
+export default defineAgent({
+  defaultTools: false,
+  modelContextWindowTokens: 128_000,
+  model: mockModel({
+    modelId: "fixture",
+    provider: "harness-spike",
+    respond: (request) => {
+      const last = request.lastUserMessage ?? "";
+      const called = new Set(request.toolResults.map((r) => r.name));
+
+      const structured = request.tools.find((t) => t.name === "final_output");
+      if (structured !== undefined && !called.has("final_output")) {
+        return { toolCalls: [{ name: "final_output", input: { category: "software", risk: 2 } }] };
+      }
+      if (last.includes("TOOLCALL")) {
+        if (!called.has("echo_fixture")) {
+          return { toolCalls: [{ name: "echo_fixture", input: { token: "spike-42" } }] };
+        }
+        return `Tool returned: ${JSON.stringify(request.toolResults[0]?.output)}`;
+      }
+      if (last.includes("SLOW")) {
+        return { toolCalls: [{ name: "echo_fixture", input: { token: "slow", delayMs: 8000 } }] };
+      }
+      return "Hello from the fixture agent.";
+    },
+  }),
+});
+```
+
+```ts
+// agent/tools/echo_fixture.ts
+import { defineTool } from "eve/tools";
+import { z } from "zod";
+
+export default defineTool({
+  description: "Echo a token back. Deterministic fixture tool, no side effects.",
+  inputSchema: z.object({ token: z.string(), delayMs: z.number().optional() }),
+  async execute({ token, delayMs }) {
+    if (delayMs !== undefined && delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    return { echoed: token, at: "fixture" };
+  },
+});
+```
+
+The `mockModel` options used are exactly those in `$EVE/dist/src/evals/mock-model.d.ts`:
+`MockModelOptions { modelId?, provider?, respond? }`, with `respond` a `MockModelResponder`
+receiving `MockModelRequest { messages, userMessages, lastUserMessage, userMessageCount, tools,
+toolResults }` and returning `MockModelResponse { text?, toolCalls?, usage? }` or a string. The
+options form is what `$EVE/docs/evals/overview.mdx` calls for "when a fixture also needs a custom
+model identity"; the `toolCalls` return is its documented "deterministic tool loops" form.
+
+`eve info` on the fixture reported `Compile ready`, `0 errors, 0 warnings`, `1 tool`.
+**`defaultTools: false` removed all eight defaults**, including `agent`, `bash` and `write_file`,
+leaving only the authored `echo_fixture`. That is §9's recommendation confirmed by execution.
+
+### 15.4 Commands
+
+```sh
+cd packages/runtime-eve/.tmp-mock-agent
+node "$EVE/bin/eve.js" info
+nohup env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN \
+  node "$EVE/bin/eve.js" dev --no-ui --port 0 > dev.log 2>&1 &
+# dev.log:
+#   ☰eve  v0.63.0
+#   [DEV] server listening at http://127.0.0.1:49277/
+node spike.mjs http://127.0.0.1:49277
+```
+
+`client.health()` returned `{"ok":true,"status":"ready","workflowId":"workflow//eve//workflowEntry"}`.
+`client.info()` reported the model as `harness-spike/fixture` with
+`"endpoint":{"kind":"external","provider":"harness-spike"}` and `contextWindowTokens: 128000` —
+so eve records a mock as an external-provider model and never consults the Gateway.
+
+Editing `agent/agent.ts` while the server ran produced
+`[eve:dev] change detected … rebuilding authored artifacts` / `[eve:dev] authored artifacts
+updated` in about 12 seconds, and the next turn used the new responder. Useful for iterating a
+fixture; irrelevant to the adapter.
+
+### 15.5 Event sequences observed
+
+Plain text turn, no schema — **141 ms**:
+
+```text
+session.started -> turn.started -> message.received -> step.started ->
+message.appended -> message.completed -> step.completed -> turn.completed -> session.waiting
+```
+
+`message` was `"Hello from the fixture agent."`, `data` was `undefined`, `inputRequests` was empty,
+and the single `step.completed` carried
+`{"inputTokens":118,"outputTokens":8,"cacheReadTokens":0,"cacheWriteTokens":0}` — **no `costUsd`**,
+confirming §5's claim that cost appears only when AI Gateway served the call. `clientContext`
+produced a second user-role message (`roles: system,user,user` versus `system,user` without it),
+confirming how it reaches the model.
+
+Authored tool call — **80 ms**, two steps:
+
+```text
+session.started -> turn.started -> message.received -> step.started ->
+actions.requested -> action.result -> step.completed ->
+step.started -> message.appended -> message.completed -> step.completed ->
+turn.completed -> session.waiting
+```
+
+So **a mocked tool call does round-trip as `actions.requested` / `action.result`**, which is what
+the harness's permission check and `toolCalls` count depend on. The tool result reached the second
+model call as `toolResults: [{ id: "mock-tool-call-1-0-1", isError: false, name: "echo_fixture",
+output: { echoed: "spike-42", at: "fixture" } }]`.
+
+Structured output, zod — **125 ms**; plain JSON Schema — **58 ms**; identical sequences:
+
+```text
+session.started -> turn.started -> message.received -> step.started ->
+step.completed -> result.completed -> turn.completed -> session.waiting
+```
+
+Both produced `data: {"category":"software","risk":2}`, matching
+`result.completed.data.result` exactly. **Both schema forms work.** Event ids looked like
+`evt_01M2XTKMJYHCJEPZ3DRKQEVVB9` with `at: 2026-09-19T21:54:23.966Z`, as §5 describes.
+
+Cancellation of a genuinely in-flight turn (the tool slept 8 s), cancel issued at 1576 ms:
+
+```text
+session.started@110ms -> turn.started@112ms -> message.received@112ms ->
+step.started@112ms -> actions.requested@112ms ->
+turn.cancelled@1620ms -> session.waiting@1620ms
+```
+
+`cancel()` returned `{ status: "accepted", sessionId: … }` and the turn ended **44 ms later**, with
+the 8-second tool still running and **no `action.result`** — the incomplete tool state was
+discarded exactly as `$EVE/docs/concepts/sessions-runs-and-streaming.md` says. Total 1622 ms
+against a tool that would have taken 8000 ms. Cancellation is real and fast.
+
+Two contrasts worth keeping:
+
+- Cancelling a turn that is already effectively done still returns `"accepted"`, but the turn
+  completes normally (`turn.completed`, not `turn.cancelled`). With an instant mock model there is
+  nothing left to interrupt. **A test that asserts on `turn.cancelled` must make the turn slow.**
+- `SendTurnOptions.signal` aborted with `DOMException: AbortError: This operation was aborted`,
+  thrown out of the client — a different mechanism and a different failure mode from `cancel()`,
+  exactly as §4 predicted.
+
+### 15.6 How a per-turn `outputSchema` actually reaches the model
+
+Undocumented, and discovered by recording what the mock saw. On a turn with an `outputSchema`, eve
+adds **a synthetic tool named `final_output`** whose `inputSchema` is the lowered JSON Schema, and
+the model satisfies the schema by calling it. For the zod schema above, the mock was offered:
+
+```json
+{ "name": "final_output",
+  "inputSchema": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+    "properties": { "category": { "type": "string" },
+                    "risk": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 } },
+    "required": ["category", "risk"], "additionalProperties": false } }
+```
+
+which also shows the client's zod-to-JSON-Schema lowering (§2) working, integer bounds and all.
+
+Returning plain text on such a turn fails:
+
+```text
+{"code":"OUTPUT_SCHEMA_NOT_FULFILLED",
+ "message":"The agent could not produce a result matching the requested schema.",
+ "sequence":0,"stepIndex":0,"turnId":"turn_0"}
+```
+
+emitted as `step.failed` and then `turn.failed`, with the full sequence
+`… message.completed -> step.completed -> step.failed -> turn.failed -> session.waiting`.
+
+Two rules follow, and they point in opposite directions:
+
+- **A fixture may script `final_output`.** It is the only way to make a mock satisfy a schema, the
+  fixture is ours, and a rename would break a test rather than production.
+- **The adapter must never mention `final_output`.** The name is not in any doc or declaration file;
+  it is an internal that the source-of-truth protocol §2 forbids depending on. The adapter reads
+  `MessageResult.data` and `result.completed`, both documented. Note also that `final_output` is
+  **not** projected onto the stream as `actions.requested` / `action.result` — consistent with
+  "Excluded internal actions never publish their input stream" — so it does not pollute the tool
+  count or trip a permission check.
+
+### 15.7 Corrections to earlier sections
+
+1. **§12, step 7 — `MessageResult.status` is not a discriminator.** It was `"waiting"` for the
+   successful turn, the `OUTPUT_SCHEMA_NOT_FULFILLED` turn, and the cancelled turn alike. It
+   describes where the session ended, not how the turn ended. The table in §12 has been rewritten to
+   branch on turn boundary events and to use `isTurnFailureEvent`, which `eve/client` exports for
+   exactly this (`$EVE/dist/src/protocol/message.d.ts`: "Narrows a stream event to the failure
+   events that terminate or poison a turn", covering `session.failed | step.failed | turn.failed`).
+2. **§2 — `MessageResult.message` is `undefined` on a structured turn.** When the model answers
+   through the schema there is no terminal assistant text at all. An adapter that falls back to
+   `message` when `data` is missing would silently return nothing useful.
+3. **§10 / §14 question 3 — answered: yes.** A `mockModel` fixture serves turns offline, so the
+   adapter's contract-level tests are credential-free. The cost is an app-root package (§15.1) and
+   the `modelContextWindowTokens` field (§15.2), neither of which was visible from the docs alone.
+
+### 15.8 Teardown
+
+`packages/runtime-eve/.tmp-mock-agent/` was deleted in full, including its 20 MB `.eve/` directory
+and the diagnostics file under `/tmp`. The dev server was stopped and `pgrep -fl "eve.js dev"`
+confirmed no process remained. `eve info` had also reported a workflow build cache inside the
+installed package (`$EVE/.eve/workflow-cache/…`); it was absent after teardown, and anything under
+`node_modules/` is git-ignored regardless.
+
+---
+
+## 16. What the implementation found that this note did not
+
+Appended 2026-09-19 by the M1-T6 implementer, after building `EveAgentRuntime`
+(`packages/runtime-eve`), `apps/eve-fixture-agent`, and `pnpm example:run` / `example:run:mock`.
+Everything above held except where noted. Three findings are new, and the first two would each
+have cost a later reader a day.
+
+### 16.1 `SendTurnOptions.outputSchema` is narrower than §2 reads it
+
+§2 says "Both schema forms are accepted … the client also accepts Standard Schema implementations
+such as Zod", and §12 concludes the harness can hand its `Schema<T>` straight to the client. The
+prose is eve's, and it is about `zod`. **The type is about a different interface.**
+
+```ts
+// $EVE/dist/src/client/types.d.ts
+readonly outputSchema?: StandardJSONSchemaV1<unknown, TOutput> | JsonObject;
+```
+
+`StandardJSONSchemaV1` (`$EVE/dist/src/compiled/@standard-schema/spec/index.d.ts`, line 78)
+requires `~standard.jsonSchema`, a `{ input, output }` converter pair. ADR-0027's `Schema<T>` is
+Standard **Schema** v1, which requires `~standard.validate` and says nothing about `jsonSchema`.
+They are siblings in one specification family, not the same interface, and neither is assignable
+to the other.
+
+eve's runtime agrees with its type. `$EVE/dist/src/tools/schema.js` `serializeOutputSchema` reads
+`~standard.jsonSchema[direction]` and, when it is not a function, throws
+`Zod 3 cannot emit an output JSON Schema. Upgrade to Zod 4 or provide a plain JSON Schema object.`
+for a `zod` vendor, and `Standard Schema vendor "<v>" does not support JSON Schema conversion.`
+for anything else.
+
+Verified that `zod@4.6.5` does publish it: `z.object({...})["~standard"]` has keys
+`validate, vendor, version, jsonSchema`, and `jsonSchema.output({ target: "draft-07" })` on the
+vendor-triage output schema emits `minLength`, `minItems`, `enum`, `required` and
+`additionalProperties: false`, with a `$schema` key eve strips.
+
+**What the adapter does.** It lowers the domain schema itself through the converter and sends a
+plain JSON Schema object, which the same field accepts as `JsonObject`
+(`packages/runtime-eve/src/eve-schema.ts`). A domain whose schema publishes no converter fails
+before a turn starts, with a message saying so. Recorded in ADR-0028.
+
+### 16.2 eve silently replaces authored models when `NODE_ENV=test`
+
+**Not in any document.** `$EVE/dist/src/runtime/agent/mock-model-adapter.js`:
+
+```js
+function shouldMockAuthoredRuntimeModels() {
+  return process.env.NODE_ENV === "test" || process.env.EVE_MOCK_AUTHORED_MODELS === "1";
+}
+```
+
+When it is true, eve swaps **every** authored model, including a `mockModel` from `eve/evals`, for
+its own internal `MockLanguageModelV3` (`provider: "eve-runtime-mock"`). That mock satisfies a
+turn's `outputSchema` from `$EVE/dist/src/runtime/agent/mock-structured-output.js`
+`createJsonSchemaSample()`, whose string leaf is the literal `"structured-output"`, and it
+**never calls the authored `respond` callback**.
+
+Vitest sets `NODE_ENV=test` in the process that spawns the server, so a fixture agent's scripted
+responder is ignored inside `pnpm test:contract` and only inside it. The symptom is the worst
+kind: the turn succeeds, the structured output validates against the domain schema, and every
+scripted branch, tool call, permission denial and cancellation, is silently unreachable. It was
+found by instrumenting the responder, seeing the file it wrote stay empty while turns succeeded,
+and then grepping eve's `dist` for the string `"structured-output"` that appeared in the output.
+
+`startEveDevServer()` therefore strips `NODE_ENV` and `EVE_MOCK_AUTHORED_MODELS` from the child,
+alongside `AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN`.
+
+The silver lining for §15.6: a fixture does **not** need to script eve's synthetic `final_output`
+tool by name. `apps/eve-fixture-agent` finds it by eliminating its own authored tools from
+`request.tools`, which needs no internal name and survives a rename.
+
+### 16.3 `eve/bin/eve.js` is not a declared subpath
+
+`require.resolve("eve/bin/eve.js")` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. `eve/package.json`
+**is** exported, and its `bin` field is `{"eve": "./bin/eve.js"}`, so the helper resolves the
+manifest and joins. That stays inside the public surface, which `require.resolve` on the binary
+path would not.
+
+### 16.4 Confirmations
+
+Everything else in §§1-15 held in implementation:
+
+- `MessageResult.status` is useless as a discriminator; branching on turn boundary events and
+  `isTurnFailureEvent` is correct (§15.7).
+- `response.cancel()` is real and fast. A contract test against a tool sleeping 30 s resolves
+  `aborted` in well under a second of the abort.
+- `clientContext` arrives as a second user-role message and is excluded from
+  `MockModelRequest.userMessages`' authored view but present in `messages`.
+- A mocked tool call does round-trip as `actions.requested` / `action.result`, and the synthetic
+  output tool does not, so it pollutes neither the tool count nor the permission check.
+- No `costUsd` appears for a mock model, confirming cost is a Gateway artefact.
+- `defaultTools: false` leaves exactly the authored tools; `eve info --json` reported 2 for the
+  fixture and 2 for the example agent after `load_skill` was re-added by one-line re-export.
+
+### 16.5 Outside eve: Node 24 does not rewrite `.js` to `.ts`
+
+Not an eve finding, but it shaped `pnpm example:run`. Node 24.21.0 strips types, and does **not**
+resolve a relative `./a.js` specifier to a sibling `./a.ts`:
+
+```sh
+$ printf 'export const a = 1;\n' > a.ts
+$ printf 'import { a } from "./a.js";\nconsole.log(a);\n' > b.ts
+$ node b.ts
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/a.js'
+```
+
+Every module in this repository uses the `.js` extension, as `module: nodenext` requires, so
+`node src/run.ts` cannot resolve its own imports. `apps/example-agent` compiles `src/` with the
+already-pinned `tsc` before `eve build` rather than the repository adding `tsx` or `vite-node`.
+
+### 16.6 Teardown
+
+No `eve dev` process remained (`pgrep -fl "eve dev"` empty), and no `.tmp` directory was left. The
+`.eve/` and `.output/` directories under both app roots are git-ignored build artefacts.

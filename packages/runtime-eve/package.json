@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Adapter boundary for the eve agent framework. EveAgentRuntime lands in M1-T6.",
+  "description": "The eve agent-runtime adapter: EveAgentRuntime, plus a test helper that starts an eve dev server.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -11,6 +11,11 @@
       "@internal/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@internal/source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -22,12 +27,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@internal/core": "workspace:*",
     "ai": "7.0.107",
     "eve": "0.63.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@internal/config": "workspace:*",
+    "@internal/testing": "workspace:*",
     "vitest": "5.0.1"
   }
 }

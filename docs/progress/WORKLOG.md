@@ -2422,3 +2422,1262 @@ validation points, `vendorTriage.createJob()` for the job,
 `createExecutionContext()` for the context, and `createFakeAgentRuntime()` from
 `@internal/testing` to run against in tests without `eve`. M1-T6 and M1-T9 are
 independent of it and of each other.
+
+## 2026-09-19 17:58 — M1-T6 (research, addendum) — Verified by execution: a `mockModel` eve turn runs offline
+
+**Status:** completed
+**Actor/session:** coding agent (research subagent)
+**Commit:** not committed by this task (see Decisions / deviations)
+
+### Goal
+
+Close open question 3 of
+`docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` by execution
+rather than by reading: prove or disprove that an eve agent whose `agent.ts` is
+`defineAgent({ model: mockModel(...), defaultTools: false })` serves a full turn
+offline, driven by `eve/client`, with a per-turn `outputSchema` in both the zod
+and plain-JSON-Schema forms, returning `MessageResult.data`. The answer decides
+whether the M1-T6 adapter's end-to-end tests need a model credential.
+
+### Implementation references
+
+- package/version: `eve` 0.63.0, `ai` 7.0.107, `zod` 4.6.5, resolved through
+  `packages/runtime-eve/node_modules` (unchanged from the parent entry).
+- installed docs read: `$EVE/docs/evals/overview.mdx` ("Deterministic fixture
+  models"), `$EVE/docs/concepts/project-structure.mdx`,
+  `$EVE/docs/reference/agent-files.md`, `$EVE/docs/agent-config.md`
+  ("Other defineAgent fields"), `$EVE/docs/concepts/built-in-tools.md`
+  ("Disable optional default tools"), `$EVE/docs/reference/cli.md`
+  (`eve info`, `eve dev`).
+- official docs/repos/examples read: none; the installed package settled
+  everything, and two answers came only from running it.
+- public types/exports inspected: `$EVE/dist/src/evals/mock-model.d.ts`
+  (`MockModelOptions { modelId?, provider?, respond? }`, `MockModelRequest`,
+  `MockModelResponse { text?, toolCalls?, usage? }`);
+  `$EVE/dist/src/shared/agent-definition.d.ts` line 355
+  (agent-level `modelContextWindowTokens`, absent from the agent-config.md
+  field table); `$EVE/dist/src/protocol/message.d.ts`
+  (`isTurnFailureEvent`, `TurnFailureStreamEvent`);
+  `$EVE/dist/src/client/types.d.ts` (`MessageResult`).
+- selected documented pattern: unchanged. `eve/client` against an
+  `eve dev --no-ui --port 0` server; `mockModel` options form with a scripted
+  `respond`; per-turn `outputSchema`; `MessageResponse.cancel()`.
+
+### Work completed
+
+- Built a throwaway fixture at `packages/runtime-eve/.tmp-mock-agent/`, ran six
+  turns against it, and deleted it in full.
+- Appended section 15, "Verified by execution: a `mockModel` turn offline", to
+  the research note: the three-attempt app-root table, the
+  `modelContextWindowTokens` discrepancy, the fixture source, the exact
+  commands and server output, four event sequences with timings, the
+  `final_output` mechanism, and a teardown record.
+- Rewrote §12 step 7's terminal-state table and updated §14 questions 3 and 5.
+
+Findings, in order of how much they change M1-T6:
+
+1. **A `mockModel` turn runs offline.** Six turns, 58-141 ms each, every model
+   credential unset. Adapter contract tests need no credential and no
+   `live:eve` tag.
+2. **`MessageResult.status` is not a discriminator.** It was `"waiting"` for a
+   successful turn, a turn that failed with `OUTPUT_SCHEMA_NOT_FULFILLED`, and a
+   cancelled turn. The adapter must branch on turn boundary events and should
+   use the exported `isTurnFailureEvent`. §12's table said otherwise and has
+   been corrected.
+3. **An app-root `package.json` declaring `eve` is required.** With no
+   `package.json`, eve walked up to `packages/runtime-eve` and reported "found
+   no agent files"; with a bare one it reported "No eve project contains …".
+   A permanent fixture must therefore be its own workspace package.
+4. **`mockModel` alone does not compile.** The evals doc's one-liner fails with
+   "Cannot compile agent compaction because the primary compaction trigger model
+   \"eve-mock/model\" does not have known AI Gateway context window metadata."
+   The fix is an agent-level `modelContextWindowTokens`, which exists on
+   `PublicAgentDefinition` but is missing from the agent-config.md field table.
+   Recorded as a docs-vs-installed-package discrepancy.
+5. **A per-turn `outputSchema` reaches the model as a synthetic `final_output`
+   tool** carrying the lowered JSON Schema. Undocumented. A fixture may script
+   it; the adapter must not name it and does not need to.
+6. **`MessageResult.message` is `undefined` on a structured turn.**
+7. **`defaultTools: false` really does remove all eight defaults**, `agent`
+   included: `eve info` reported 1 tool, the authored one. §9 confirmed.
+8. **Cancellation is real and fast.** Against a tool sleeping 8000 ms, `cancel()`
+   returned `"accepted"` and `turn.cancelled -> session.waiting` arrived 44 ms
+   later with no `action.result`. But cancelling an instant turn completes
+   normally, so a cancellation test must make the turn slow.
+9. **A mocked tool call round-trips** as `actions.requested -> action.result`,
+   which is what the permission check and tool count depend on.
+10. **No `costUsd` on a mock model's `step.completed.usage`**, only token and
+    cache counters. §5's optional-cost claim confirmed.
+
+### Files changed
+
+- `docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` (section 15
+  appended; §12 step 7 table rewritten; §14 questions 3 and 5 updated).
+- `docs/progress/WORKLOG.md` (this entry).
+
+Created and deleted within the task: `packages/runtime-eve/.tmp-mock-agent/**`,
+including its 20 MB `.eve/`. No other file in the repository was touched; nothing
+under `packages/core`, `packages/testing`, `apps/example-agent` or
+`docs/contracts` was read for writing or modified.
+
+### Verification
+
+- **Spike itself — PASS.** `client.health()` returned
+  `{"ok":true,"status":"ready","workflowId":"workflow//eve//workflowEntry"}`;
+  plain turn PASS (141 ms, `message: "Hello from the fixture agent."`); tool
+  round-trip PASS (80 ms, `actions.requested -> action.result`); zod
+  `outputSchema` PASS (125 ms, `data: {"category":"software","risk":2}`); plain
+  JSON Schema PASS (58 ms, identical `data`); in-flight cancel PASS
+  (`turn.cancelled` 44 ms after accept). One deliberate negative case also
+  behaved as expected: a text-only reply on a schema turn FAILED with
+  `OUTPUT_SCHEMA_NOT_FULFILLED`, which is the finding, not a defect.
+- `AI_GATEWAY_API_KEY`, `VERCEL_OIDC_TOKEN`, `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY` all confirmed unset before the run; the server was
+  additionally started under `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN` —
+  PASS (no credential was read and none reached a provider).
+- Teardown — PASS. `packages/runtime-eve/.tmp-mock-agent/` removed;
+  `pgrep -fl "eve.js dev"` reported no remaining process; `git status --short`
+  shows only this task's documentation changes.
+- `pnpm check:handoff` — PASS (`check:handoff — OK`).
+
+### Decisions / deviations
+
+- **This task did not commit, but its earlier output was committed by another
+  agent.** The concurrent M1-T3/M1-T5 task committed the whole working tree as
+  `16e10e8`, which swept in the research note, the research README entry and both
+  earlier M1-T6 WORKLOG entries. Nothing was lost and the content is intact, but
+  M1-T6 research is now recorded under an M1-T3/M1-T5 commit message. Left alone
+  deliberately: AGENTS.md forbids rewriting another agent's committed work.
+  Flagged for the orchestrator. The section 15 changes in this entry are
+  uncommitted.
+- The fixture declared `eve`, `ai` and `zod` in its `package.json` but was never
+  `pnpm install`ed; it resolved them upward through
+  `packages/runtime-eve/node_modules`. Deliberate, to avoid touching
+  `pnpm-lock.yaml` or the workspace while another agent was working.
+- The fixture's mock responder scripts the undocumented `final_output` tool.
+  That is acceptable in a fixture and forbidden in the adapter; §15.6 states the
+  split explicitly so nobody copies it into `packages/runtime-eve`.
+
+### Known issues / blockers
+
+- None from this task.
+- Open questions 1, 2, 4, 6, 7 and 8 in note §14 remain for the orchestrator.
+  Questions 3 and 5 are now answered or costed.
+
+### Next exact step
+
+Orchestrator settles note §14 questions 1 (who owns the eve server process),
+4 (`defaultTools: false` on the example agent) and 5 (one app root or a second
+fixture package, now costed at one `BOUNDARY_RULES` entry), then starts M1-T6
+with the §13 `Implementation references` block plus the §15.7 corrections.
+
+## 2026-09-19 18:01 — M1-T4, M1-T9 — `createHarness()` and the domain capability registry
+
+**Status:** started
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed
+
+### Goal
+
+Add the two remaining `@internal/core` pieces Milestone 1 owns.
+
+**M1-T4, `createHarness()`**: the public entry point the build plan states as
+`createHarness({ agentRuntime, storage })` plus
+`harness.run({ domain, input })`. It is the single choke point where input is
+validated before execution and a runtime's claimed output is re-validated
+before success, and the place trace events for a run are emitted.
+
+**M1-T9, capability registry**: `CapabilityRegistry` and `CapabilityManifest`
+per build plan section 5 and AD-015, with the canonical-JSON/fingerprint
+primitives the manifest needs, and the example domain registering its five
+capability kinds.
+
+Out of scope: `EveAgentRuntime` (M1-T6), the `Storage` contract (M2), the real
+trace taxonomy (M2-T3), the sortable ID scheme (M2-T1), and behavior
+fingerprints over instructions/SOP/skills/model config (M2-T8).
+
+### Implementation references
+
+Not Vercel-framework-facing: neither task touches `eve`, the AI SDK, AI
+Gateway, Jev, Workflow or Sandbox. The source material is this repository's own
+plan plus one Node built-in.
+
+- package/version: Node 24.21.0, pnpm 12.4.2, `typescript@6.0.3`,
+  `vitest@5.0.1`, `@types/node@24.13.6`. `@internal/core` stays at zero
+  third-party dependencies; the only new import is the Node built-in
+  `node:crypto`.
+- installed docs read: `node_modules/@types/node/crypto.d.ts`
+  (`createHash(algorithm: string, options?: HashOptions): Hash`, and `Hash`'s
+  `update(data, inputEncoding)` / `digest(encoding)`), matching the Node 24 API
+  documentation for `crypto.createHash`.
+- plan sections read: build plan §5 (Core Contracts — Job, Domain definition,
+  Agent runtime, **Capability registry**, Fallback envelope), **AD-015**
+  (workflow IR references a typed capability registry; the seven capability
+  kinds and the eight metadata fields a registry record carries), **AD-016**
+  (internal implementation choices are recorded, not implied, and it names
+  "canonical JSON encoding used for fingerprints" as an explicit example),
+  Milestone 1 tasks M1-T4 and M1-T9 with the milestone's acceptance criteria,
+  and M2-T1 (stable identifiers), M2-T3 (trace event taxonomy) and M2-T8
+  (behavior fingerprint) so that nothing here forecloses what M2 extends.
+- repository contracts read in full: `docs/contracts/execution-context.md`,
+  `errors.md`, `job.md`, `domain-definition.md`, `agent-runtime.md`, and every
+  file under `packages/core/src/` and `packages/testing/src/` with its test.
+- external specification consulted: RFC 8785 (JSON Canonicalization Scheme) for
+  the canonical-JSON rules the fingerprint needs — sorted object keys, no
+  insignificant whitespace, arrays in order. The harness implements the subset
+  it needs over its own `JsonValue` model rather than depending on a library,
+  and rejects the values JSON cannot represent (`NaN`, `Infinity`).
+- selected documented pattern: none is prescribed for either task, so both are
+  harness-owned by the no-assumption stop condition. The canonical-JSON and
+  fingerprint scheme is material enough for an ADR under AD-016 and is recorded
+  as **ADR-0029**; the smaller choices (harness-owned `Clock`, `runtime`
+  optionality on `createExecutionContext`, `HarnessRunResult` shape, the
+  registry's error type for an unknown reference) are recorded in this entry.
+- anything not documented that must be harness-owned: the build plan's
+  `createHarness({ agentRuntime, storage })` names a `storage` option whose
+  contract M2 defines; M1 omits the option rather than inventing a placeholder
+  type. The build plan's `CapabilityManifest` is named but never defined; its
+  shape (`{ version: 1, entries }`, deterministically sorted) is harness-owned.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- Another agent's research spike may leave `packages/runtime-eve/.tmp-mock-agent/`
+  in the tree; it is not this task's and is ignored.
+
+### Next exact step
+
+Implement `packages/core/src/identifiers.ts`, `fingerprint.ts`,
+`capabilities.ts` and `harness.ts` with their tests, then the example domain's
+capabilities, handler and policy.
+
+---
+
+## 2026-09-19 18:22 — M1-T6 — Eve adapter (`EveAgentRuntime`)
+
+**Status:** started
+**Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
+**Commit:** not committed
+
+### Goal
+Implement `EveAgentRuntime` in `packages/runtime-eve`, the first real
+`AgentRuntime`, without leaking any `eve` session type past the package
+boundary. Add the credential-free fixture app `apps/eve-fixture-agent`, the
+`startEveDevServer()` test helper, unit and contract tests, `pnpm example:run`
+and `pnpm example:run:mock`, ADR-0028 and `docs/architecture/runtime.md`.
+
+### Implementation references
+- package/version: `eve@0.63.0`, `ai@7.0.107`, `zod@4.6.5`, pinned by
+  `packages/runtime-eve/package.json` and `apps/example-agent/package.json`
+  (ADR-0024). Resolved with
+  `require.resolve('eve/package.json', { paths: ['packages/runtime-eve'] })` to
+  `node_modules/.pnpm/eve@0.63.0_ai@7.0.107_zod@4.6.5_/node_modules/eve`;
+  `node -e "require('$EVE/package.json').version"` printed `0.63.0`.
+- installed docs read: `$EVE/docs/guides/client/{overview,messages,streaming,output-schema}.mdx`;
+  `$EVE/docs/concepts/built-in-tools.md`; `$EVE/docs/evals/overview.mdx`
+  (`mockModel`, "Deterministic fixture models"); `$EVE/docs/reference/cli.md`
+  (command table and the `eve dev` flag table, `--no-ui`, `--port`).
+- official docs/repos/examples read: none beyond the installed package. The
+  installed docs and declaration files settled every question, and the
+  source-of-truth protocol §1 puts them first.
+- public types/exports inspected: `$EVE/dist/src/client/index.d.ts` (the full
+  `eve/client` export list, including `isTurnFailureEvent` and
+  `isCurrentTurnBoundaryEvent`); `client/types.d.ts` (`ClientOptions`,
+  `ClientAuth`, `HeadersValue`, `ClientRedirectPolicy`, `SendTurnInput`,
+  `SendTurnOptions`, `MessageResult`, `CancelSessionResult`); `client/client.d.ts`
+  (`Client.health()`, `Client.info()`, `Client.sessions`);
+  `client/sessions.d.ts` (`ClientSessions.create`, `CreatedClientSession`);
+  `client/session.d.ts`; `client/message-response.d.ts` (`sessionId`, `cancel()`,
+  `result()`, `[Symbol.asyncIterator]`, single-use);
+  `client/health-schema.d.ts`; `protocol/cancel-turn.d.ts` (`CancelTurnResult`);
+  `protocol/message.d.ts` (`MessageStreamEventMeta`, `StepStartedStreamEvent`,
+  `StepCompletedStreamEvent.usage`, `StepFailedStreamEvent`,
+  `ActionsRequestedStreamEvent`, `ActionResultStreamEvent`,
+  `ResultCompletedStreamEvent`, `TurnCompleted/Cancelled/FailedStreamEvent`,
+  `SessionWaiting/Failed/CompletedStreamEvent`, `TurnFailureStreamEvent`,
+  `isTurnFailureEvent`); `shared/action-types.d.ts` (`RuntimeActionRequest`'s
+  five kinds and `RuntimeActionResult`'s three); `evals/mock-model.d.ts`
+  (`MockModelOptions`, `MockModelRequest`, `MockModelResponse`);
+  `evals/index.d.ts`; `shared/agent-definition.d.ts` (`defaultTools`, `tool`,
+  `modelContextWindowTokens` on `PublicAgentDefinition`);
+  `compiled/@standard-schema/spec/index.d.ts` (`StandardSchemaV1`,
+  `StandardJSONSchemaV1`, `StandardJSONSchemaV1.Converter`);
+  `tools/schema.d.ts` + `tools/schema.js` (`serializeOutputSchema`, which is how
+  eve actually lowers a client `outputSchema`).
+- selected documented pattern: `eve/client` over HTTP against a running eve
+  server, exactly as
+  `docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` §12
+  recommends. One fresh session per `run()` via
+  `client.sessions.create({ message, clientContext, outputSchema, signal })`;
+  the turn's events consumed live with `for await (const event of response)`;
+  cancellation via `MessageResponse.cancel()`; terminal state branched on turn
+  boundary events and `isTurnFailureEvent`, never on `MessageResult.status`
+  (§15.7). The adapter never spawns a process; a separate
+  `startEveDevServer()` helper under `@internal/runtime-eve/testing` does, using
+  the `eve dev --no-ui --port 0` invocation eve's own Next/Nuxt/SvelteKit
+  adapters use (`$EVE/dist/src/public/next/server.js`).
+- not documented / harness-owned: obtaining and owning the server URL;
+  presenting `job.objective` as the turn message and `job.input` as
+  `clientContext`; per-run tool-permission enforcement by observation;
+  `Job.budget` enforcement; the `{ modelCalls, toolCalls, durationMs, costUsd? }`
+  roll-up and its retry counting rule; the eve-failure-code to
+  `AgentExecutionError` mapping; the `eve.<type>` trace projection.
+- **one correction to the research note.** §2 and §12 say the harness can pass
+  its `Schema<T>` straight to eve because `SendTurnOptions.outputSchema` accepts
+  "Standard Schema implementations". The installed types are narrower than that
+  sentence: the field is `StandardJSONSchemaV1<unknown, TOutput> | JsonObject`,
+  which requires `~standard.jsonSchema`, and `@internal/core`'s `Schema<T>`
+  (ADR-0027) is Standard **Schema** v1, which declares only `~standard.validate`.
+  `$EVE/dist/src/tools/schema.js` `serializeOutputSchema` confirms the runtime
+  behaviour: without a `jsonSchema.output` function it throws
+  `Zod 3 cannot emit an output JSON Schema`. Verified that `zod@4.6.5` does
+  publish `~standard.jsonSchema` with `input`/`output` converters, and that
+  `output({ target: "draft-07" })` on the vendor-triage output schema emits
+  `minLength`, `minItems`, `enum` and `additionalProperties: false`. The adapter
+  therefore lowers the domain schema itself through the documented
+  `StandardJSONSchemaV1.Converter` and sends a plain JSON Schema object.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- `AgentRuntime.run(job, context)` hands the adapter no schema: `Job.contracts`
+  carries string references only, and M1-T9's capability registry does not exist
+  yet. The adapter therefore takes the domains' output schemas at construction.
+
+### Next exact step
+
+Write `packages/runtime-eve/src/eve-agent-runtime.ts` and its unit test.
+
+## 2026-09-19 18:24 — M1-T4, M1-T9 — `createHarness()` and the domain capability registry (result)
+
+**Status:** completed
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed (the orchestrator reviews and commits)
+
+### Goal
+
+As stated in the `started` entry above (2026-09-19 18:01).
+
+### Implementation references
+
+As stated in the `started` entry. Nothing changed during implementation: neither
+task is Vercel-framework-facing, `@internal/core` gained no third-party
+dependency, and the only new import anywhere in core is the Node built-in
+`node:crypto`.
+
+### Work completed
+
+**M1-T4, `createHarness()`.** `packages/core/src/harness.ts` is the single
+choke point the milestone needs. `harness.run({ domain, input, signal?,
+budget?, permissions?, metadata? })`:
+
+1. validates `input` against `domain.inputSchema` and **throws**
+   `ValidationError` on failure, because a rejected input is a caller bug found
+   before a run exists and nothing has been spent;
+2. builds the job with `domain.createJob(validInput)` and applies the
+   overrides: budget merged shallowly, permissions replaced wholesale, metadata
+   merged per key;
+3. generates `runId` with `crypto.randomUUID()` and fixes `attempt` at `1`
+   (M1 has no retries; **M2-T1** replaces the ID scheme and nothing may parse
+   the current format);
+4. builds the `ExecutionContext`, emits `run.started`, runs, emits exactly one
+   terminal event and calls `flush()`;
+5. contains a runtime that throws, reporting `AgentExecutionError` with the
+   thrown value in `cause`;
+6. re-validates a completed execution's output against `domain.outputSchema`
+   before calling the run a success.
+
+`HarnessRunResult<TOutput>` is a discriminated union on `status`:
+
+```ts
+type HarnessRunResult<TOutput = unknown> =
+  | { status: "completed"; output: TOutput; /* base */ }
+  | { status: "failed"; error: SerializedHarnessError; /* base */ }
+  | { status: "aborted"; /* base */ };
+```
+
+with `runId`, `jobId`, `domain`, `attempt`, `usage` and `runtime` on every
+variant, because a failed or cancelled attempt still cost something. The
+`failed` variant has **no `output` field at all**, so an output that failed
+validation is unreachable rather than merely undocumented.
+
+**M1-T9, capability registry.** `packages/core/src/capabilities.ts` implements
+the split build plan section 5 states: the runtime registry holds executable
+values, the serializable manifest holds only metadata.
+`createCapabilityRegistry()` returns `register` / `resolve` / `has` /
+`entries` / `toManifest`, with `CapabilityManifestEntry` exactly as the plan
+writes it. Every field of an entry is a string, a string array or an
+`{ id, version }` pair, so "no executable source or secrets" is a property of
+the type as well as of a test.
+
+`packages/core/src/fingerprint.ts` holds `canonicalJson()` and `fingerprint()`
+(**ADR-0029**). `packages/core/src/identifiers.ts` holds the identifier and
+version rules, extracted from `domain.ts` so `defineDomain()` and the registry
+cannot drift apart.
+
+**Example domain.** `apps/example-agent/src/capabilities.ts` registers all six
+entries across the five required kinds, with two new pure modules written for
+the purpose (`src/handlers/detect-payment-detail-change.ts`,
+`src/policies/no-proceed-with-open-risk-flags.ts`).
+`apps/example-agent/src/domain/harness.test.ts` runs the real domain end to end
+through `createHarness()` with `createFakeAgentRuntime()`.
+
+**Testing package.** `createRecordingTraceWriter()` was added to
+`@internal/testing`, which the M1-T7 handoff had predicted would be the first
+thing a test needing to assert on emitted events would want.
+
+### Files changed
+
+New, `packages/core/src/`:
+
+- `harness.ts` + `harness.test.ts` — `createHarness`, `Harness`,
+  `CreateHarnessOptions`, `HarnessRunInput`, `HarnessRunResult` and its three
+  variants, `Clock`.
+- `capabilities.ts` + `capabilities.test.ts` — `CapabilityKind`,
+  `CapabilityRef`, `CapabilityRegistration`, `CapabilityManifestEntry`,
+  `CapabilityManifest`, `CapabilityRegistry`, `createCapabilityRegistry`,
+  `capabilityFingerprint`, `formatCapabilityRef`, `parseCapabilityRefString`,
+  `CAPABILITY_KINDS`.
+- `fingerprint.ts` + `fingerprint.test.ts` — `canonicalJson`, `fingerprint`,
+  `FINGERPRINT_ALGORITHM_PREFIX`.
+- `identifiers.ts` — `isCapabilityIdentifier`, `isExactVersion`, plus the
+  internal `collectRefIssues` / `throwIfIssues` shared with `domain.ts`.
+
+Modified:
+
+- `packages/core/src/context.ts` — `runtime` is now optional on
+  `CreateExecutionContextInput`, defaulting to the new exported
+  `HARNESS_RUNTIME_INFO`.
+- `packages/core/src/domain.ts` — the two regexes and `throwIfIssues` moved to
+  `identifiers.ts`; behaviour unchanged.
+- `packages/core/src/trace.ts` — the "no recording writer exists" note is no
+  longer true and now names the one that does.
+- `packages/core/src/index.ts` — the new exports.
+- `packages/core/package.json` — `@internal/testing` in **devDependencies**.
+  Still no `dependencies` at all.
+- `packages/core/turbo.json` — **new.** Drops `^build` for this one package;
+  see "Decisions" below.
+- `packages/testing/src/recording-trace-writer.ts` + its test + `index.ts`.
+- `apps/example-agent/src/capabilities.ts` + its test — **new.**
+- `apps/example-agent/src/handlers/detect-payment-detail-change.ts` + test —
+  **new.**
+- `apps/example-agent/src/policies/no-proceed-with-open-risk-flags.ts` + test —
+  **new.**
+- `apps/example-agent/src/domain/harness.test.ts` — **new.**
+- `apps/example-agent/src/domain/schemas.ts` — exports the
+  `VendorTriageRiskFlag` type so the handler can produce one without restating
+  the shape.
+- `apps/example-agent/package.json` — `@internal/testing` in devDependencies.
+- `pnpm-lock.yaml`.
+
+Documentation:
+
+- `docs/contracts/harness.md` — **new.**
+- `docs/contracts/capability-registry.md` — **new.**
+- `docs/contracts/README.md` — both rows, and the summary prose.
+- `docs/contracts/execution-context.md` — `HARNESS_RUNTIME_INFO`, `runtime`
+  optionality, the defaults table, the recording-writer note.
+- `docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md` —
+  **new.**
+- `docs/decisions/README.md` — the table row and the entry prose.
+- `AGENTS.md` — ADR paragraph and the `decisions/` layout comment; next free
+  number is now **0030** (M1-T6 takes 0028).
+- `docs/architecture/system-map.md` — core and testing descriptions, the
+  source-file list, and the `packages/registry` row, corrected to say it is the
+  **M5 workflow** registry while the capability registry is in core.
+- `docs/examples/README.md` — the file table, a "Running it through the
+  harness" section and a "The capability manifest" section.
+- `docs/milestones/m1-local-agent-and-public-harness-boundary.md` — T4 and T9
+  marked `completed` with result paragraphs, and the acceptance criteria
+  rewritten.
+- `docs/progress/WORKLOG.md` — this entry.
+
+`docs/context/current-state.md` was deliberately **not** touched: another agent
+owns it this session.
+
+### Verification
+
+Run with Node 24.21.0 and pnpm 12.4.2 from `~/.n/bin`. Two other agents were
+working in this tree concurrently, so the per-stage results below separate what
+this task owns from what it does not.
+
+- `pnpm vitest run --project unit` over this task's eight new test files —
+  **PASS**, 80/80.
+- `pnpm test:unit` (whole repository) — **FAIL, 358/359**, and the single
+  failure is not this task's: `tests/architecture/package-boundaries.test.ts >
+  discovers every workspace package` lists the expected workspace inventory by
+  hand and does not yet include `@internal/eve-fixture-agent`, the package
+  M1-T6 created in this tree while this task was running. The other 14
+  assertions in that file **PASS**, including the real
+  `findBoundaryViolations` check, so no boundary is violated. That file belongs
+  to M1-T6's task and was deliberately not edited here.
+- `pnpm typecheck` — **PASS** (6/6 packages, plus the root `tsc --noEmit`).
+- `pnpm build` — **PASS** (6/6, including `eve build`).
+- `pnpm format:check` — **FAIL**, on three files, all M1-T6's:
+  `apps/eve-fixture-agent/agent/lib/json-schema-value.ts`,
+  `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts`,
+  `packages/runtime-eve/src/eve-agent-runtime.test.ts`. This task's files:
+  `biome format packages/core packages/testing apps/example-agent` — **PASS**,
+  59 files, no fixes applied.
+- `pnpm lint` — **FAIL**, on three files, all M1-T6's
+  (`packages/runtime-eve/src/eve-agent-runtime.ts`, its test, and
+  `packages/runtime-eve/src/index.ts`). This task's files:
+  `biome check --formatter-enabled=false packages/core packages/testing
+  apps/example-agent` — **PASS**, no errors.
+- `pnpm check:handoff` — **FAIL**, one problem, not this task's: the WORKLOG
+  references decision record `0028` and no `0028-*` file exists yet. That
+  reference is M1-T6's entry and M1-T6 writes the ADR. The `0029` reference
+  this task introduced resolves, because
+  `docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md`
+  exists.
+- `pnpm check` — **not run to completion**, because three of its six stages
+  fail on another agent's in-flight files. Every stage was run individually and
+  is recorded above.
+- `pnpm --filter @internal/example-agent run info` — **PASS**:
+  `Compile ready`, `Diagnostics 0 errors, 0 warnings`, 1 skill. It now reports
+  **2 tools** rather than 9, which is M1-T6's `defaultTools: false` change
+  landing in this tree, not this task's; nothing here touches `agent/`.
+- `packages/core/package.json` has no `dependencies` key at all;
+  `@internal/testing` is in `devDependencies` only — **PASS**, asserted by
+  reading the manifest.
+
+### Decisions / deviations
+
+Project decisions, recorded here rather than as ADRs (ADR-0029 covers the one
+that needed one):
+
+1. **`storage` is omitted from `CreateHarnessOptions`, not stubbed.** The build
+   plan's target API names it; M2 defines the `Storage` contract. A placeholder
+   type would publish a guess as a contract and force M2 to break it. Adding an
+   optional option later is not a breaking change.
+2. **`runtime` became optional on `CreateExecutionContextInput`**, defaulting to
+   the exported `HARNESS_RUNTIME_INFO` (`{ name: "harness", version: "0.0.0",
+   metadata: {} }`). The harness builds the context before it calls an adapter,
+   so it genuinely does not know the adapter's identity. Of the two options the
+   task considered, this was chosen over hard-coding `{ name: "harness" }` at
+   the single call site because it states the situation in the contract rather
+   than hiding it in one caller, and it is a small, documented change. The
+   `AgentRuntime` contract was **not** changed. `version` is a module constant
+   rather than a value read from `package.json` at runtime, because reading a
+   manifest from a compiled `dist/` at an unknown path is brittle; nothing
+   branches on it.
+3. **`Clock` is `{ now(): Date }`**, declared in core. A `Date` rather than a
+   number so that `createFakeClock()` satisfies it structurally with no
+   adapter, the same way a `zod` schema satisfies `Schema<T>`. Core does not
+   import the testing package at runtime.
+4. **An already-aborted signal short-circuits** to `aborted` without calling the
+   runtime. Handing work to an adapter that the contract then obliges it to
+   abandon is pointless, and it would make "the runtime saw this run" false in
+   the trace while true in the adapter's records. Because input validation is
+   awaited first, a signal firing during validation also takes this path; a
+   signal firing during the run is the adapter's to honour and it reports
+   `aborted` itself. A unit test covers each path.
+5. **Budget overrides are not checked for being narrowings.** The harness has no
+   basis for comparing an absent limit (unlimited) with a present one, and a
+   rule it cannot enforce is worse than none. Permissions **replace** rather
+   than merge, so a caller states the whole list or none. Documented in
+   `docs/contracts/harness.md`.
+6. **`CapabilityRef` is an alias of `DomainRef`, not a structural twin.** The
+   plan writes the identical shape for both; one type means a domain reference
+   can be handed to the registry without a conversion and the two cannot drift.
+7. **An unknown capability reference is a `ValidationError`**, with the issue
+   path `[kind, id, version]`. `WorkflowError` was rejected because nothing is a
+   workflow yet. Noted in the contract that M4 may introduce a dedicated error
+   when reference resolution becomes part of IR validation.
+8. **Five capability kinds, not AD-015's seven.** `evaluator` (M6) and
+   `artifact` (M4) are left out rather than declared empty, following the scope
+   discipline that kept `packages/core` empty through M0.
+9. **The example's module specifiers are repository-relative paths.**
+   `apps/example-agent` publishes no subpath exports and two capabilities live
+   under `agent/`, which the package does not export at all. A path names every
+   capability consistently and is what a consuming repository would write.
+10. **The agent capability's value is a plain descriptor**, not the `eve`
+    definition. The registry needs to know where the agent is, not what `eve`
+    makes of it, and importing `agent/agent.ts` would drag `eve` into the
+    harness-facing half of the package. The descriptor is also the natural
+    input for M2-T8's content fingerprint.
+11. **`procurement-sop` is not registered.** A SOP is content, not an
+    executable capability; putting a wrong kind on a permanent ID is not
+    reversible. SOP-as-capability is M2-T8/M5.
+12. **The identifier and version rules moved out of `domain.ts`** into
+    `identifiers.ts`, exported as `isCapabilityIdentifier` and `isExactVersion`.
+    Two boundaries enforce the same rule and must not drift. `defineDomain()`'s
+    behaviour is unchanged and its existing tests still pass.
+
+One thing that had to be worked around rather than decided:
+
+13. **REVERSED on 2026-09-19 18:28 at the orchestrator's request. Do not
+    reinstate; see the addendum entry below.** The workspace graph is now
+    cyclic, and turbo refused it. Adding
+    `@internal/testing` to `@internal/core`'s devDependencies (so the harness's
+    own tests use the same fakes as everything else) makes
+    `@internal/core#build -> @internal/testing#build -> @internal/core#build`
+    under the root `build` task's `dependsOn: ["^build"]`. `pnpm build` failed
+    with `Cyclic dependency detected`, naming both edges. The fix is
+    `packages/core/turbo.json`, which drops `^build` for this one package and
+    explains why in a comment: `tsconfig.build.json` excludes `*.test.ts` and
+    `@internal/core` declares no runtime dependency at all and must keep none,
+    so `^build` was provably vacuous for it. `@internal/testing#build` keeps its
+    own `^build`. The pattern matches `apps/example-agent/turbo.json`, which
+    already overrides the root task definitions for the same kind of reason.
+    **`pnpm install` now prints `There are cyclic workspace dependencies`** for
+    these two packages. pnpm proceeds; the warning is expected and is the visible
+    cost of this choice.
+
+### Known issues / blockers
+
+- **Not blockers for this task, but the tree is not green.** Three stages of
+  `pnpm check` fail on M1-T6's in-flight files, and `tests/architecture/package-boundaries.test.ts`
+  needs `@internal/eve-fixture-agent` added to its expected workspace inventory.
+  All four are M1-T6's to resolve; this task deliberately did not edit files
+  outside its own scope.
+- `pnpm example:run` still does not exist. It is M1-T6's, together with
+  `EveAgentRuntime` and `apps/example-agent/src/run.ts`, which is why the
+  milestone's first acceptance criterion is recorded as not met.
+- Nothing enforces a budget. `Budget` reaches the job and the context and a
+  runtime may read it; the harness does not stop a run that exceeds one. That
+  is M2's.
+- `resolve<TValue>()` returns what the caller names, because the registry's
+  five kinds hold five unrelated types. M4, which resolves references while
+  validating workflow IR, is where that becomes checkable against a node's
+  declared schemas.
+
+### Next exact step
+
+Orchestrator reviews and commits. M1-T6 (`EveAgentRuntime`,
+`apps/example-agent/src/run.ts`, `pnpm example:run`, ADR-0028) is the only
+Milestone 1 task left; it calls `createHarness({ agentRuntime })` from
+`src/run.ts` and should add `@internal/eve-fixture-agent` to the expected
+workspace inventory in `tests/architecture/package-boundaries.test.ts`.
+
+## 2026-09-19 18:25 — M1-T4, M1-T9 — Addendum: grant `load_skill` in the vendor-triage domain
+
+**Status:** completed
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed (the orchestrator reviews and commits)
+
+### Goal
+
+Follow-up to the entry above, requested by the concurrent M1-T6 agent. M1-T6
+hardened `apps/example-agent/agent/agent.ts` with `defaultTools: false` and
+re-added eve's framework `load_skill` tool at `agent/tools/load_skill.ts`,
+because `agent/skills/triage-vendor.md` is an on-demand skill and `load_skill`
+is the only way a model can pull it into a turn. `EveAgentRuntime` enforces
+`context.permissions` by observation: on `actions.requested` it matches the tool
+name against the grants and fails the run closed with a serialized
+`PermissionDeniedError` when there is none. The domain granted only
+`lookup_vendor_evidence`, so the first live `load_skill` call would have failed
+a run that was behaving correctly.
+
+### Implementation references
+
+- verified before editing, rather than taken from the request: `ls
+  apps/example-agent/agent/tools/` shows exactly `load_skill.ts` and
+  `lookup_vendor_evidence.ts`; `web_search.ts` and `web_fetch.ts` are deleted;
+  `pnpm --filter @internal/example-agent exec eve info --json` reports
+  `["load_skill", "lookup_vendor_evidence"]`.
+- `eve/docs/concepts/built-in-tools.md`, quoted by
+  `agent/tools/load_skill.ts`: `load_skill` "adds no execution surface by
+  itself", which is what makes `read` the right `ToolGrantMode` rather than
+  `write`.
+
+### Work completed
+
+- `apps/example-agent/src/domain/index.ts`: `createJob` now grants
+  `{ toolId: "load_skill", mode: "read" }` alongside
+  `{ toolId: "lookup_vendor_evidence", mode: "read" }`, so the grants match
+  exactly the two tools eve discovers. The comment explains both modes and why
+  a framework tool is granted here but not registered as a domain capability.
+- `apps/example-agent/src/domain/domain.test.ts` and
+  `src/domain/harness.test.ts`: both permission assertions updated.
+- `docs/examples/README.md`: "exactly one permission" corrected to the two, with
+  the reason.
+
+### Files changed
+
+- `apps/example-agent/src/domain/index.ts`
+- `apps/example-agent/src/domain/domain.test.ts`
+- `apps/example-agent/src/domain/harness.test.ts`
+- `docs/examples/README.md`
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `pnpm vitest run --project unit apps/example-agent packages/core` — **PASS**,
+  248/248 across 17 files.
+- `pnpm --filter @internal/example-agent run typecheck` — **PASS**.
+- `biome check --formatter-enabled=false apps/example-agent packages/core` —
+  **PASS**, 48 files, no fixes.
+- `biome format apps/example-agent packages/core` — **PASS**, no fixes.
+- `eve info --json` tool list, read before the edit — `["load_skill",
+  "lookup_vendor_evidence"]`, which is what the grant list now mirrors.
+
+### Decisions / deviations
+
+- **The tool id is a plain string, not `LOAD_SKILL_TOOL_ID` from
+  `@internal/runtime-eve`.** M1-T6 offered the constant. Importing it would make
+  the harness-facing half of the example depend on the eve adapter, which is
+  precisely the line ADR-0025 and the example's own structure keep: nothing
+  under `src/domain/` knows which runtime will execute the job. A permission is
+  a statement about a tool name, and `lookup_vendor_evidence` is already written
+  the same way.
+- **`load_skill` is granted but deliberately not registered as a capability.**
+  It is a framework tool re-exported at its own slot, not something this domain
+  authored, so it has no module or export of its own to record and no behavior
+  of its own to fingerprint. The capability manifest still holds six entries.
+
+### Known issues / blockers
+
+- Unverifiable here. Only `pnpm example:run` against a live Gateway model
+  exercises this path, and no credential is available in this environment.
+  `pnpm example:run:mock` targets `apps/eve-fixture-agent`, which has no skills
+  and never calls `load_skill`.
+
+### Next exact step
+
+Unchanged: the orchestrator reviews and commits. M1-T6 remains the only
+Milestone 1 task open.
+
+## 2026-09-19 18:28 — M1-T4 — Addendum: remove the `core` -> `testing` dev dependency and the turbo override
+
+**Status:** completed
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed (the orchestrator reviews and commits)
+
+### Goal
+
+Reverse decision 13 of the 18:24 entry, at the orchestrator's instruction.
+`@internal/core` declared `@internal/testing` in `devDependencies` so that
+`harness.test.ts` could use the shared fakes. Because `@internal/testing`
+depends on `@internal/core` for its types, that made the workspace graph
+cyclic: pnpm warned on every install, and turbo refused the resulting `build`
+task cycle until `packages/core/turbo.json` dropped `^build` for that one
+package.
+
+The orchestrator's judgment, which is correct and is recorded here so it is not
+re-litigated: a cyclic workspace graph plus a per-package turbo override
+suppressing `^build` is a **new architectural pattern** under AGENTS.md rule 11,
+carrying a permanent install-time warning, adopted to save a few lines of test
+code. `@internal/testing` stays the canonical home for fakes that consuming
+packages and applications share; core's own tests use local ones.
+
+### Implementation references
+
+None needed. No framework surface, no new dependency, no removed behaviour.
+The relevant local facts: `packages/core/tsconfig.build.json` excludes exactly
+`src/**/*.test.ts` and nothing else, so a sibling `*.test-helpers.ts` module
+would **not** have been excluded from the build and would have needed a new
+exclusion rule. The doubles are therefore declared inline in `harness.test.ts`,
+which the existing rule already covers. That is the one deviation from the
+instruction's suggested file path, and it is the reason for it.
+
+### Work completed
+
+- `packages/core/src/harness.test.ts` now declares its own test doubles,
+  none exported and none reachable from the barrel:
+  - `createLocalAgentRuntime({ result?, handler?, delayMs?, runtime? })`, which
+    records every call as `{ job, context }` and honours `context.signal` both
+    when already aborted and when it fires during `delayMs`, so the two
+    cancellation tests still prove what they proved before;
+  - `createLocalTraceWriter()`, which keeps events in append order and counts
+    `flush` calls;
+  - `clockAt(iso)`, a fixed `Clock` with an `advance(ms)`.
+  A comment at the top of the block states why they are local, so a future
+  agent does not "tidy up" by adding the dependency back.
+- `packages/core/package.json`: `@internal/testing` removed. Its
+  devDependencies are now `@internal/config` and `vitest` again, and it still
+  has no `dependencies` key at all.
+- `packages/core/turbo.json`: **deleted.** `@internal/core#build` inherits the
+  root task definition, `^build` included, like every other library package.
+  `apps/example-agent/turbo.json` is untouched and unrelated; it exists because
+  that package is an `eve` application, not because of this.
+- `pnpm-lock.yaml` regenerated.
+
+No behaviour changed in any shipped module. `@internal/testing` keeps
+`createRecordingTraceWriter()`, which `apps/example-agent/src/domain/harness.test.ts`
+uses along with `createFakeAgentRuntime()` and `createFakeClock()`; app to
+library is the direction the dependency rule already allows, and that test is
+unchanged.
+
+### Files changed
+
+- `packages/core/src/harness.test.ts`
+- `packages/core/package.json`
+- `packages/core/turbo.json` (deleted)
+- `pnpm-lock.yaml`
+- `docs/architecture/system-map.md` (the `packages/testing` paragraph)
+- `docs/contracts/harness.md` (the tracing section now says core's own tests use
+  local doubles, and not to add the dependency)
+- `docs/milestones/m1-local-agent-and-public-harness-boundary.md` (the M1-T4
+  result paragraph)
+- `docs/progress/WORKLOG.md` (this entry, plus a pointer on the superseded
+  decision 13 above)
+
+`docs/development/commands.md` needed no change: its `turbo.json` paragraph is
+about `@internal/example-agent`, which is unaffected.
+
+### Verification
+
+- `pnpm install --frozen-lockfile` — **PASS**, and **no cyclic-dependency
+  warning**, which was the point. The previous run printed
+  `There are cyclic workspace dependencies: .../packages/core, .../packages/testing`.
+- `pnpm exec vitest run --project unit packages/core` — **PASS**, 195/195
+  across 10 files, the same count as before the change.
+- `pnpm typecheck` — **PASS**, 6/6 packages plus the root `tsc --noEmit`.
+- `pnpm build` — **PASS**, 6/6, with no per-package turbo override for core.
+- `biome format packages/core` and
+  `biome check --formatter-enabled=false packages/core` — **PASS**, 26 files,
+  no fixes.
+
+### Decisions / deviations
+
+- **The doubles are inline in `harness.test.ts`, not in a sibling
+  `harness.test-helpers.ts`.** The instruction allowed either and asked that the
+  file be covered by the existing build exclusion. `tsconfig.build.json`
+  excludes `src/**/*.test.ts` only, so a `*.test-helpers.ts` sibling would have
+  been compiled into `dist/` unless a new exclusion pattern were added. Adding
+  one is a new convention for the same reason the turbo override was; inline
+  needs nothing.
+- The local runtime keeps the real-timer `raceAbort` that
+  `@internal/testing`'s fake uses, rather than a fake clock, for the reason that
+  fake already documents: a fake clock schedules nothing, so a delayed run would
+  never resume. Roughly fifteen lines are duplicated between the two files. That
+  duplication is the deliberate price of an acyclic graph.
+
+### Known issues / blockers
+
+- Unchanged from the 18:24 entry. The repository-wide `pnpm check` still fails
+  on M1-T6's in-flight files and on the missing ADR-0028; nothing in this
+  addendum touches either.
+
+### Next exact step
+
+Unchanged: the orchestrator reviews and commits. M1-T6 remains the only
+Milestone 1 task open.
+
+---
+
+## 2026-09-19 18:39 — M1-T6 — Eve adapter (`EveAgentRuntime`)
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
+**Commit:** not committed
+
+### Goal
+As the `started` entry above (2026-09-19 18:22). The Implementation references
+block there is this task's research checkpoint and is not repeated; §16 of
+`docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` records what
+implementation added to it.
+
+### Work completed
+
+- **`EveAgentRuntime`** (`packages/runtime-eve/src/eve-agent-runtime.ts`), the
+  harness's first real `AgentRuntime`. URL-only: it never spawns a process. One
+  fresh session per run, `message` = `job.objective`, `clientContext` =
+  `{ jobId, domain, jobType, input }`, the domain's `outputSchema` per turn, and
+  the turn's event stream consumed live with `for await` so the adapter can
+  trace, police permissions and enforce the budget as the run proceeds.
+  Terminal state comes from turn boundary events and `isTurnFailureEvent`, never
+  from `MessageResult.status`. `run()` never throws for an agent failure; the
+  constructor throws `TypeError` for a bad argument.
+- **`eve-events.ts`**: reading eve's stream events without letting their types
+  escape the package, plus the whitelisted trace projection.
+  **`eve-schema.ts`**: lowering a `Schema<T>` to the JSON Schema eve's
+  `outputSchema` actually accepts.
+- **`startEveDevServer()`** behind the new `@internal/runtime-eve/testing`
+  subpath: spawns `eve dev --no-ui --port 0` the way eve's own Next/Nuxt/
+  SvelteKit adapters do, parses the listening URL, waits on `client.health()`,
+  and guarantees a kill on every failure path. Kept out of the main entrypoint
+  so importing the adapter never pulls in `node:child_process`.
+- **`apps/eve-fixture-agent`**, a new workspace package: a credential-free eve
+  project whose model is eve's own `mockModel` with a scripted responder, two
+  authored tools (`echo_fixture`, granted; `forbidden_tool`, deliberately not),
+  and a small JSON-Schema-shaped value generator so the fixture can satisfy any
+  caller's `outputSchema` without knowing the domain. `eve info`: `Compile
+  ready`, 0 diagnostics, 2 tools.
+- **Example agent hardened**: `defaultTools: false` on `agent/agent.ts`, the two
+  `disableTool()` files deleted as redundant, and `agent/tools/load_skill.ts`
+  re-adding the one default the skill needs. `eve info --json` went from nine
+  tools to two, `load_skill` and `lookup_vendor_evidence`.
+- **`pnpm example:run` and `pnpm example:run:mock`**, both running
+  `apps/example-agent/src/run.ts`: start an eve server, build an
+  `EveAgentRuntime`, run `vendorTriage` through `createHarness()`, print the
+  `HarnessRunResult` as JSON, stop the server, exit non-zero unless completed.
+  The live target exits 1 with a message naming `.env.example` when no
+  credential is set.
+- **Tests**: 29 unit cases against an injected fake client (no process, no
+  server, no credential) covering completed-with-data, missing data, turn
+  failure, permission denial, three budget dimensions plus the duration timer,
+  abort before and during a run, usage arithmetic and trace emission; and 5
+  contract cases against a real `eve dev` server.
+- **Docs**: ADR-0028; `docs/architecture/runtime.md` (new); an "Amended by
+  ADR-0028" note on ADR-0012; `docs/contracts/agent-runtime.md` gained an
+  Implementations section; system map, milestone, commands, local-setup,
+  `.env.example`, examples README, `docs/README.md`, AGENTS.md and both eve
+  research notes updated.
+
+### Files changed
+
+Added:
+- `packages/runtime-eve/src/eve-agent-runtime.ts`, `eve-events.ts`,
+  `eve-schema.ts`, `eve-agent-runtime.test.ts`,
+  `eve-agent-runtime.contract.test.ts`
+- `packages/runtime-eve/src/testing/index.ts`, `testing/dev-server.ts`
+- `apps/eve-fixture-agent/` (`package.json`, `tsconfig.json`, `turbo.json`,
+  `agent/agent.ts`, `agent/instructions.md`, `agent/tools/echo_fixture.ts`,
+  `agent/tools/forbidden_tool.ts`, `agent/lib/json-schema-value.ts` and its
+  test, `src/dependency-pins.test.ts`)
+- `apps/example-agent/src/run.ts`, `apps/example-agent/tsconfig.build.json`,
+  `apps/example-agent/agent/tools/load_skill.ts`
+- `docs/decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md`
+- `docs/architecture/runtime.md`
+
+Deleted:
+- `apps/example-agent/agent/tools/web_search.ts`,
+  `apps/example-agent/agent/tools/web_fetch.ts` (redundant under
+  `defaultTools: false`)
+
+Modified:
+- `packages/runtime-eve/package.json` (the `./testing` subpath export,
+  `@internal/core` dependency, `@internal/testing` devDependency), `src/index.ts`,
+  `src/index.test.ts`
+- `apps/example-agent/package.json` (`build` now compiles `src/` first, new
+  `start`, `@internal/runtime-eve` dependency), `turbo.json`,
+  `agent/agent.ts`
+- root `package.json` (`example:run`, `example:run:mock`), `pnpm-lock.yaml`
+- `tests/architecture/package-boundaries.test.ts` (inventory)
+- `AGENTS.md`, `.env.example`, `docs/README.md`,
+  `docs/architecture/system-map.md`, `docs/contracts/agent-runtime.md`,
+  `docs/decisions/README.md`,
+  `docs/decisions/0012-reuse-documented-eve-capabilities-instead-of-cloning-them.md`,
+  `docs/development/commands.md`, `docs/development/local-setup.md`,
+  `docs/examples/README.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md`,
+  `docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md`,
+  `docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`
+
+### Verification
+
+- `pnpm install --frozen-lockfile` — PASS
+- `pnpm test:unit` — PASS (28 files, 359 tests)
+- `pnpm test:contract` — PASS (1 file, 5 tests, 4.21s including server boot)
+- `pnpm check` — PASS, exit 0 (format:check, lint, typecheck, test 364/364
+  across 29 files, build, check:handoff)
+- `pnpm --filter @internal/example-agent run info` — PASS: `Compile ready`,
+  `0 errors, 0 warnings`, 1 skill, **2 tools**
+- `pnpm --filter @internal/eve-fixture-agent run info` — PASS: `Compile ready`,
+  `0 errors, 0 warnings`, 0 skills, **2 tools**
+- `pnpm example:run:mock` — PASS, exit 0:
+
+```text
+Starting an eve dev server for @internal/eve-fixture-agent...
+{
+  "target": "mock",
+  "agent": "@internal/eve-fixture-agent",
+  "host": "http://127.0.0.1:52820",
+  "result": {
+    "runId": "cb7c023f-786c-4574-b1f0-d711738689cf",
+    "jobId": "db3a8fc6-4563-4d6a-8c4c-d31fa70d4060",
+    "domain": { "id": "vendor-triage", "version": "1.0.0" },
+    "attempt": 1,
+    "usage": { "modelCalls": 1, "toolCalls": 0, "durationMs": 111 },
+    "runtime": {
+      "name": "eve",
+      "version": "0.63.0",
+      "metadata": {
+        "sessionId": "wrun_01M2XX52DPVDVWTFGPR54JKK3R",
+        "turnId": "turn_0"
+      }
+    },
+    "status": "completed",
+    "output": {
+      "category": "fixture:category",
+      "riskFlags": [],
+      "missingInformation": [],
+      "recommendation": {
+        "decision": "proceed",
+        "rationale": "fixture:recommendation.rationale"
+      },
+      "evidence": [
+        { "claim": "fixture:evidence.0.claim", "source": "fixture:evidence.0.source" }
+      ]
+    }
+  }
+}
+```
+
+- `pnpm example:run` without a credential — PASS: exits 1 with the message
+  naming `.env.example`. **Against a live Gateway model: NOT RUN**, no
+  credential available. `AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` were
+  confirmed unset for the whole session and no credential was written anywhere.
+- `pgrep -fl "eve dev"` — empty. No `.tmp` directory left.
+- **Contract-suite stability: 1 unexplained failure in ~13 runs.** One
+  `pnpm check` (18:41) failed in `beforeAll` with `startEveDevServer: the eve
+  dev server exited before it was ready (code=1)`. It did not reproduce: five
+  consecutive `pnpm test:contract` runs passed, three more passed while an
+  `eve build` ran concurrently against the other app root, a direct
+  `eve dev --no-ui --port 0` on the fixture booted normally, and the final
+  `pnpm check` passed. The theory that a concurrent eve compile collides over
+  the build cache inside the installed package was **tested and not confirmed**.
+  No fix was invented for an unconfirmed cause. What was fixed is the
+  diagnosis: `startEveDevServer` now puts the child's own output in the error
+  **message** rather than only in `details`, because a test runner prints the
+  message, and that failure reported no reason at all. Flagged for the
+  orchestrator rather than silently retried; if it recurs, the message will say
+  why.
+
+### Decisions / deviations
+
+Recorded as **ADR-0028**: URL-only adapter with a separate spawn helper; the
+`eve/client` stream as the observation source, amending ADR-0012; structured
+output via the domain schema with no message fallback; permission enforcement by
+observation as a named M1 limitation; budget enforcement in the adapter; one
+fresh session per run with no reset; the fixture as its own `apps/*` package.
+
+Smaller project decisions, recorded here rather than as ADRs:
+
+1. **The adapter takes `domains`, not a registry.** `AgentRuntime.run(job,
+   context)` hands over a job whose contracts are string references, and M1-T9's
+   capability registry is what resolves them. Rather than widen the core
+   contract, the runtime is constructed with the domains it may request output
+   schemas for, and a job for an unlisted domain fails before a turn starts.
+   **M1-T9's registry is expected to replace this option.**
+2. **Retried steps are counted.** eve runs a durable step up to four times and
+   records no attempt identity, so the roll-up over-reports for an interrupted
+   turn. The figure is provider-attempted usage; over-reporting cost is the safe
+   error, and deduplicating would risk keeping the abandoned attempt.
+3. **The duration budget uses a timer, not an event check.** A wall-clock limit
+   checked only when an event arrives is no limit at all, because a stalled turn
+   emits nothing.
+4. **`costUsd` stays absent rather than `0`** when nothing reported one.
+5. **A health preflight runs before every turn**, so an unreachable server is a
+   clear failure before a session exists rather than a transport error mid-run.
+6. **`apps/example-agent` gained a `tsc` build** (`tsconfig.build.json`, and
+   `build` is now `tsc && eve build`), because Node 24.21.0 does not rewrite a
+   relative `./x.js` specifier to `./x.ts` and every module here uses the `.js`
+   extension. Adding `tsx` or `vite-node` was rejected: the pinned toolchain
+   already compiles TypeScript, and a second TypeScript runner would be a
+   toolchain change nothing else needs. Its `rootDir` is the package rather than
+   `src`, because `src/capabilities.ts` registers a handler from `agent/lib/`.
+7. **`@internal/runtime-eve` now depends on `@internal/core`.** Library to
+   library, untouched by the boundary rule, and unavoidable: the package
+   implements a core contract.
+
+Three discrepancies between a source and the installed package, all resolved in
+favour of the installed package per the source-of-truth protocol §1, all
+recorded in §16 of the programmatic-execution research note:
+
+1. **eve's docs versus eve's types on `outputSchema`.** The docs say the client
+   accepts Standard Schema implementations; the type is
+   `StandardJSONSchemaV1 | JsonObject`, which needs `~standard.jsonSchema`,
+   while ADR-0027's `Schema<T>` declares only `~standard.validate`. eve's
+   `serializeOutputSchema` throws without the converter. The adapter lowers the
+   schema itself. **This corrects §2 and §12 of the research note**, which had
+   read the prose as covering the harness's own type.
+2. **eve replaces every authored model with its own runtime mock when
+   `NODE_ENV=test`** or `EVE_MOCK_AUTHORED_MODELS=1`, answering a turn's schema
+   from an internal sample generator and never calling the authored responder.
+   Documented nowhere. Vitest sets `NODE_ENV=test`, so a `mockModel` fixture is
+   silently ignored inside a test run and only inside one; the symptom is a turn
+   that succeeds with plausible data while every scripted branch is unreachable.
+   `startEveDevServer()` strips both names.
+3. **`eve/bin/eve.js` is not a declared export subpath.** `eve/package.json` is,
+   and its `bin` field names the entrypoint, so the helper resolves the manifest
+   and joins rather than reaching past the export map.
+
+The scaffold research note's §6 recorded a decision that M1-T6 reversed
+(`disableTool()` per tool versus `defaultTools: false`); a superseding note was
+added there rather than editing the original reasoning.
+
+### Known issues / blockers
+
+- **`pnpm example:run` against a live AI Gateway model is unverified.** No
+  credential was available and none was created. Everything below the model is
+  covered by the contract suite and by `pnpm example:run:mock`.
+- **Permission enforcement is detection, not prevention** (ADR-0028). An
+  ungranted tool may have executed by the time the run fails. The auth-plus-
+  approval composition is the M2/M5 upgrade path.
+- Usage over-reports for a retried step, by deliberate choice (decision 2).
+- The trace payload is an M1 placeholder; M2-T3 owns the taxonomy and schema,
+  and M2-T9 owns redaction. The adapter carries no message content, tool input,
+  tool output or structured result, so there is nothing to redact yet.
+
+### Next exact step
+
+Milestone 1 is functionally complete: M1-T1 through M1-T9 are all `completed`.
+Rewrite `docs/context/current-state.md` for the M1 handoff, commit, and record
+the SHA here. Then archive the milestone snapshot under
+`docs/progress/milestones/m1.md` and open Milestone 2.
+
+---
+
+## 2026-09-19 18:55 — M1-T6 — Addendum: `eve dev` lifecycle, repeatable `example:run:mock`
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 implementer subagent (orchestrated)
+**Commit:** not committed
+
+### Goal
+Fix `pnpm example:run:mock` failing on a second consecutive run with
+`startEveDevServer: the eve dev server exited before it was ready (code=1)` and
+eve's own "A dev server is already running for this eve agent". Reported by the
+orchestrator with the leftover `.eve/` state attached. This also explains the
+one unexplained contract-suite failure recorded in the previous entry.
+
+### Implementation references
+- package/version: `eve@0.63.0`, unchanged.
+- installed docs read: `$EVE/docs/reference/cli.md` §"`eve dev`" and the local
+  dev paragraph at line 271, which is the decisive one. Searched the whole
+  `$EVE/docs` tree for a documented stop command (`--stop`, "shut down",
+  SIGTERM, "already running"): **there is none.** The only documented shutdown
+  contract is that the record is cleared when the server stops.
+- public types/exports inspected:
+  `$EVE/dist/src/internal/nitro/host/dev-server-state.d.ts` (`DevelopmentServerState`:
+  `read`, `write`, `remove`, with "It is not a lock: a stale or malformed record
+  simply causes the caller to start a new server and overwrite it once that
+  server is ready" and "Clears the record after the listening server has
+  stopped"); `$EVE/dist/src/internal/nitro/host/start-development-server.js`
+  (`isActiveDevelopmentServerForApp`, `isDevelopmentServerReady`, and the throw
+  site of `createDevelopmentServerAlreadyRunningError`).
+- selected documented pattern: read `.eve/dev-server-state.v1.json` and probe
+  the recorded URL, which is what eve's own `isActiveDevelopmentServerForApp`
+  does. Shut down with `SIGTERM`, which is what makes eve remove the record
+  itself.
+
+### Work completed
+
+**Root cause, established from eve's own source.** `startNitroDevelopmentServer`
+reads the recorded URL and, if it is loopback **and still answering**, either
+attaches or throws:
+
+```js
+if (s !== undefined && isLoopbackServerUrl(s) && await isDevelopmentServerReady(s)) {
+  if (t.existing === "attach-if-unconfigured" && !a) return { kind: "existing", url: s };
+  throw await createDevelopmentServerAlreadyRunningError(n.appRoot, s);
+}
+```
+
+`a` is true when a host, a port or `PORT` was configured. **This helper always
+passes `--port 0`, so `a` is always true and the attach branch is unreachable**
+— exactly what `cli.md` documents: "Passing `--host`, `--port`, or a `PORT`
+environment value skips reconnection and reports a healthy recorded server
+instead."
+
+So the trigger is **a previous server still answering**, not a stale file: a
+record whose server is dead fails the probe and is replaced, as documented.
+Measured directly, a clean cycle leaves nothing behind (process gone, record
+absent, port unreachable immediately and at +400ms, twice in a row). The failure
+needs a server that outlived its `stop()`, which happens when the parent dies
+without running it, or when the five-second `SIGKILL` escalation fires and
+leaves both the record and the bound port.
+
+**Fixes, all inside documented behaviour.**
+
+1. `stop()` now verifies the address is free rather than only that the process
+   exited: `SIGTERM`, await the child's `exit`, then poll the URL until it stops
+   answering (bounded at 10s). A caller restarting immediately can no longer
+   race a closing socket.
+2. `startEveDevServer()` probes for a live server **before** spawning and fails
+   with a message naming the URL, instead of letting eve's refusal arrive as
+   `code=1`. It does **not** reuse the server: one started earlier may be
+   serving different code, and a test passing against the wrong agent is worse
+   than one that refuses to start. A caller who wants the running server passes
+   its URL to `EveAgentRuntime` directly. Documented in
+   `docs/architecture/runtime.md`.
+3. A `process.on("exit")` guard `SIGKILL`s any surviving child, so a parent that
+   crashes or exits without `stop()` no longer leaves an orphan. Ctrl-C needs no
+   handler: the shell signals the whole foreground process group and the child
+   is in it, because the helper never detaches.
+4. `readRecordedDevServerUrl()` is exported from `@internal/runtime-eve/testing`
+   and is **read-only**. The harness never writes or deletes eve's record,
+   because eve documents that it replaces a stale one itself. No dead-pid
+   heuristics and no touching `dev-cleanup-intent.*.json` or `dev-runtime/`.
+
+### Files changed
+
+- `packages/runtime-eve/src/testing/dev-server.ts` — the four changes above.
+- `packages/runtime-eve/src/testing/index.ts` — exports `readRecordedDevServerUrl`.
+- `packages/runtime-eve/src/testing/dev-server.test.ts` — **new**, 5 unit cases
+  for the record reader (valid, absent, five malformed shapes, a non-app-root
+  path, and that reading never mutates).
+- `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts` — the existing
+  server lifecycle moved from file scope into its `describe`, so a second
+  `describe` can own its own servers; new `startEveDevServer lifecycle` suite
+  running start → turn → stop twice and asserting each cycle got its own port
+  and left nothing answering.
+- `docs/architecture/runtime.md` — new "Only one `eve dev` per app root"
+  section, and the test table.
+
+### Verification
+
+- `pnpm example:run:mock` three times in a row from the repository root:
+  **exit 0, exit 0, exit 0**, each printing `"status": "completed"`.
+- `pgrep -f "eve.js dev"` empty before and after. (Note for future readers: the
+  spawned process's command line is `node <path>/eve.js dev …`, so
+  `pgrep -fl "eve dev"` does **not** match it. That pattern reporting nothing is
+  not evidence that no server is running.)
+- Orphan case, verified by starting a server by hand and leaving it up:
+  `pnpm example:run:mock` exits 1 with
+  `an eve dev server is already running for …/apps/eve-fixture-agent at
+  http://127.0.0.1:63976/`, naming the URL and how to proceed, instead of
+  `code=1`.
+- `pnpm test:contract` — PASS, 7 tests, 13.5s (up from 4.2s; the restart suite
+  boots two more servers).
+- `pnpm check` — PASS, exit 0, 371 tests across 30 files.
+
+### Decisions / deviations
+
+- **Fail fast rather than reuse** when a live server exists, chosen over
+  attaching. Recorded here and in `docs/architecture/runtime.md`. ADR-0028 is
+  unchanged: it already says the adapter takes a URL, and reuse is that path.
+- **Nothing in `.eve/` is written or deleted by the harness.** The orchestrator
+  offered a dead-pid check on `dev-cleanup-intent.*.json` as a fallback; it is
+  not needed, because eve documents that a stale record is replaced
+  automatically, and the measured clean cycle confirms it. Reaching into another
+  tool's state would have been an undocumented fix for a problem that does not
+  exist.
+- The previous entry's "1 unexplained failure in ~13 runs" is now explained: it
+  was this bug, hit when a server from an earlier run was still answering.
+
+### Known issues / blockers
+
+- The contract suite is now 13.5s rather than 4.2s, because proving the restart
+  path costs two extra server boots. That is the price of the demo being
+  repeatable, and it stays well inside the milestone's budget.
+- Everything else from the main M1-T6 entry stands, including that
+  `pnpm example:run` against a live Gateway model remains unverified.
+
+### Next exact step
+
+Unchanged from the main M1-T6 entry: rewrite `docs/context/current-state.md` for
+the Milestone 1 handoff, commit, and record the SHA.

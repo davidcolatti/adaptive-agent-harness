@@ -137,6 +137,29 @@ opaque: it is how an adapter publishes its own detail without those details
 becoming core contract fields. That is the mechanism ADR-0003 requires for
 keeping `eve` session specifics out of the core contracts.
 
+#### `HARNESS_RUNTIME_INFO`
+
+```ts
+const HARNESS_RUNTIME_INFO: RuntimeInfo = { name: "harness", version: "0.0.0", metadata: {} };
+```
+
+**M1-T4 made `runtime` optional on `CreateExecutionContextInput`**, defaulting
+to this constant. The reason is that `createHarness()` builds the context
+*before* it calls an adapter, so at construction time it does not know which
+adapter will run the job or what version that adapter is. Naming one would be a
+guess; naming the harness is the honest answer, because at that moment the
+harness is what is executing. The adapter identifies itself where it actually
+can, in `AgentExecution.runtime`, which is the value that reaches a caller and
+a trace.
+
+`version` is a module constant rather than a value read from
+`packages/core/package.json` at runtime: reading a package manifest from a
+compiled `dist/` at an unknown path is brittle and would make the contract
+depend on file layout. Nothing branches on it.
+
+An adapter that builds its own context, for a nested or delegated run, supplies
+its own identity and this default does not apply.
+
 ### `JsonValue` and `JsonObject`
 
 ```ts
@@ -197,9 +220,9 @@ build plan already fixes and M2 will keep.
 `createNoopTraceWriter()` returns a writer that discards every event. It exists
 so a test, or a caller that genuinely has nowhere to write yet, can build a
 context without a trace package. It is not a test double: it records nothing,
-so it cannot be asserted against. A recording writer belongs in
-`@internal/testing` and is deferred until a test needs to assert on emitted
-events.
+so it cannot be asserted against. The recording counterpart is
+`createRecordingTraceWriter()` in `@internal/testing`, added by M1-T4 when the
+harness's own tests needed to assert on emitted events.
 
 ## `createExecutionContext`
 
@@ -208,8 +231,8 @@ function createExecutionContext(input: CreateExecutionContextInput): ExecutionCo
 ```
 
 One constructor, so defaults are applied in one place rather than at every call
-site. Required: `runId`, `jobId`, `domain`, and `runtime.name`/`runtime.version`.
-Everything else defaults, and every default is the conservative reading:
+site. Required: `runId`, `jobId` and `domain`. Everything else defaults, and
+every default is the conservative reading:
 
 | Field | Default | Why |
 | --- | --- | --- |
@@ -218,6 +241,7 @@ Everything else defaults, and every default is the conservative reading:
 | `permissions` | `[]` | Permission is explicit, so the default is denial. |
 | `trace` | `createNoopTraceWriter()` | Nowhere to write yet is not a reason to fail. |
 | `signal` | a signal that never aborts | Not a signal that is already aborted. |
+| `runtime` | `HARNESS_RUNTIME_INFO` | The caller may not know the adapter yet; see above. |
 | `runtime.metadata` | `{}` | An adapter that publishes nothing is not an error. |
 
 The default signal comes from an `AbortController` whose reference is

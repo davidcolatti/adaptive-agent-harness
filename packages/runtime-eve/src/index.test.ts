@@ -38,12 +38,25 @@ function declaredDependencies(pkg: PackageManifest): [string, string][] {
   });
 }
 
-/** The third-party dependencies whose installed version this package pins. */
-const PINNED_DEPENDENCIES = Object.keys(manifest.dependencies ?? {});
+/**
+ * The third-party dependencies whose installed version this package pins.
+ *
+ * Workspace packages are excluded: they are declared `workspace:*`, which is
+ * not a version to pin and resolves to source rather than to a published
+ * artefact. The adapter gained `@internal/core` in M1-T6, when it acquired an
+ * `AgentRuntime` to implement.
+ */
+const PINNED_DEPENDENCIES = Object.keys(manifest.dependencies ?? {}).filter(
+  (name) => !name.startsWith("@internal/"),
+);
 
 describe("@internal/runtime-eve dependency pins", () => {
   it("declares the framework dependencies the adapter is built on", () => {
     expect(PINNED_DEPENDENCIES.sort()).toEqual(["ai", "eve", "zod"]);
+  });
+
+  it("depends on the harness core, which is the contract the adapter implements", () => {
+    expect(manifest.dependencies?.["@internal/core"]).toBe("workspace:*");
   });
 
   it.each(PINNED_DEPENDENCIES)("installs exactly the pinned version of %s", (name) => {

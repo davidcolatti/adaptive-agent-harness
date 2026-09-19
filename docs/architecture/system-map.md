@@ -7,10 +7,15 @@ related:
   - docs/decisions/README.md
   - docs/decisions/0025-application-packages-may-author-eve-agents-directly.md
   - docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md
+  - docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md
   - docs/contracts/README.md
   - docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md
   - docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md
+  - docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md
+  - docs/architecture/runtime.md
+  - docs/decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md
 implementation:
+  - apps/eve-fixture-agent
   - apps/example-agent
   - packages/core
   - packages/testing
@@ -157,12 +162,25 @@ Five packages and one application exist. Everything else in the repository layou
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
   directory.
 - `packages/testing` (`@internal/testing`) is the test-helpers package required by M0-T4. It
-  holds `createFakeClock` (M0-T4) and `createFakeAgentRuntime` (M1-T5), the scripted
-  `AgentRuntime` that lets a unit test replace `EveAgentRuntime` without either knowing. It is the
+  holds `createFakeClock` (M0-T4), `createFakeAgentRuntime` (M1-T5), the scripted
+  `AgentRuntime` that lets a unit test replace `EveAgentRuntime` without either knowing, and
+  `createRecordingTraceWriter` (M1-T4), the counterpart to core's no-op writer. It is the
   one library package that depends on `@internal/core`, which is library-to-library and therefore
   unaffected by the boundary rule.
-- `packages/core` (`@internal/core`) holds the harness contracts added by M1-T3, M1-T5, M1-T7 and
-  M1-T8. It is no longer the empty boundary Milestone 0 left behind.
+
+  **The dependency runs one way only, and must keep doing so.** M1-T4 briefly added
+  `@internal/testing` to `@internal/core`'s `devDependencies` so the harness's own tests could
+  use these helpers, and reverted it: even a dev-only edge in that direction makes the workspace
+  graph cyclic, which pnpm warns about on every install and which turbo refuses as a `build` task
+  cycle unless `packages/core` overrides the root task definition. A cyclic graph plus a
+  per-package turbo override is a new architectural pattern, and it is not worth sixty lines of
+  test code. `packages/core/src/harness.test.ts` declares its own local scripted runtime,
+  recording trace writer and fixed clock inline, and a comment there says why. This package stays
+  the canonical home for fakes that **consuming** packages and applications share, which is the
+  direction the dependency rule already allows:
+  `apps/example-agent/src/domain/harness.test.ts` uses all three.
+- `packages/core` (`@internal/core`) holds the harness contracts added by M1-T3, M1-T4, M1-T5,
+  M1-T7, M1-T8 and M1-T9. It is no longer the empty boundary Milestone 0 left behind.
 
   - The **execution context** (M1-T7): `ExecutionContext` plus `DomainRef`, `Budget`, `ToolGrant`
     and `RuntimeInfo`, with a `createExecutionContext()` factory that applies the documented
@@ -189,8 +207,23 @@ Five packages and one application exist. Everything else in the repository layou
     optional metadata. No `eve` or AI SDK concept appears in it. Documented in
     [`../contracts/agent-runtime.md`](../contracts/agent-runtime.md).
 
-  Of build plan section 5, `CapabilityRegistry` (M1-T9) and `DecisionEngine` (M3) are still to
-  come. The package still declares no runtime dependency and must keep none.
+  - **`createHarness()`** (M1-T4): the public entry point, and the single choke point where a
+    run's input is validated before execution and a runtime's claimed output is re-validated
+    before success. It emits `run.started` plus one terminal event per run, holds no state
+    between runs, and omits the build plan's `storage` option until M2 defines that contract.
+    Documented in [`../contracts/harness.md`](../contracts/harness.md).
+  - The **capability registry** (M1-T9): `CapabilityRegistry`, `CapabilityManifest` and the five
+    kinds build plan section 5 fixes, with registration validating duplicate IDs, a fixed kind per
+    ID, and schema references that must already be registered so the manifest is closed. The
+    serializable manifest is typed so that it cannot carry a function or a secret. Its behavior
+    fingerprints rest on `canonicalJson()` and `fingerprint()`, an RFC 8785-style canonical
+    encoding hashed with SHA-256 via the Node built-in `node:crypto`
+    ([ADR-0029](../decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md)).
+    Documented in [`../contracts/capability-registry.md`](../contracts/capability-registry.md).
+
+  Of build plan section 5, `DecisionEngine` (M3) is still to come and `FallbackContext` waits for
+  M4. The package still declares no third-party dependency and must keep none; `node:crypto` is a
+  Node built-in, not a dependency, and `@internal/testing` is a devDependency used only by tests.
 - `packages/runtime-eve` (`@internal/runtime-eve`) and `packages/runtime-ai-sdk`
   (`@internal/runtime-ai-sdk`) were created by M1-T1 to hold the framework dependencies it
   installed: `eve@0.63.0`, `ai@7.0.107` and `zod@4.6.5` for the first,
@@ -198,15 +231,27 @@ Five packages and one application exist. Everything else in the repository layou
   already listed in `BOUNDARY_RULES.adapterPackages`, so they are the only packages permitted to
   declare those dependencies.
 
-  **Neither contains an adapter yet.** Each `src/index.ts` re-exports exactly one documented
-  public type from the framework it adapts (`AgentDefinition` from `eve`, `LanguageModel` from
-  `ai`), which proves the public entrypoint resolves under typecheck and nothing more. The
-  `AgentRuntime` contract is M1-T5 and `EveAgentRuntime` is M1-T6. Each package's unit test
-  asserts that the installed version matches its own pin and that it declares no `^`/`~` range,
-  which is ADR-0024's enforcement mechanism.
+  **`packages/runtime-eve` holds the first real adapter, as of M1-T6.** `EveAgentRuntime`
+  implements `AgentRuntime` over `eve/client`: it takes a server URL, runs a job as one turn of
+  one fresh session, requests the domain's output schema per turn, and consumes the turn's event
+  stream live so it can trace, police permissions and enforce the budget as the run proceeds. It
+  never spawns a process; `startEveDevServer()` behind the package's `./testing` subpath is what
+  a test or a demonstration uses to get a server.
 
-  What the installed packages actually document is recorded in
-  [`../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`](../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md).
+  **No `eve` type crosses the package boundary.** Session and turn ids leave only as opaque
+  strings inside `RuntimeInfo.metadata` and trace payloads, which is ADR-0003's line. How it
+  works, what it enforces and what it cannot yet enforce: [`runtime.md`](runtime.md), decided in
+  [ADR-0028](../decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md).
+
+  **`packages/runtime-ai-sdk` still contains no adapter.** Its `src/index.ts` re-exports one
+  documented public type (`LanguageModel` from `ai`), which proves the entrypoint resolves under
+  typecheck and nothing more. Each package's unit test asserts that the installed version matches
+  its own pin and that it declares no `^`/`~` range, which is ADR-0024's enforcement mechanism.
+
+  What the installed packages document is recorded in
+  [`../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md`](../research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md)
+  and, for driving an agent from TypeScript,
+  [`../research/vercel/2026-09-19-m1-eve-programmatic-execution.md`](../research/vercel/2026-09-19-m1-eve-programmatic-execution.md).
 - `apps/example-agent` (`@internal/example-agent`) was created by M1-T2. It is the neutral
   vendor-triage fixture domain, authored as a real `eve` project: `agent/agent.ts`,
   `agent/instructions.md`, one Markdown skill under `agent/skills/`, one read-only fixture tool
@@ -228,7 +273,22 @@ Five packages and one application exist. Everything else in the repository layou
   calls the harness API rather than the `eve` runtime directly.
 
   What the installed `eve` required of the scaffold is recorded in
+  M1-T6 added `src/run.ts`, the `pnpm example:run` entrypoint, and hardened the agent with
+  `defaultTools: false` plus a one-line re-export restoring `load_skill`, so `eve info` now
+  reports exactly two tools instead of nine. The package therefore also depends on
+  `@internal/runtime-eve`, and its `build` compiles `src/` with `tsc` before running `eve build`,
+  because Node 24 strips types but does not rewrite a relative `./x.js` specifier to `./x.ts`.
+
   [`../research/vercel/2026-09-19-m1-eve-project-scaffold.md`](../research/vercel/2026-09-19-m1-eve-project-scaffold.md).
+- `apps/eve-fixture-agent` (`@internal/eve-fixture-agent`) was created by M1-T6. It is a
+  credential-free `eve` project whose model is eve's own `mockModel` with a scripted responder,
+  and it exists so `EveAgentRuntime`'s contract tests and `pnpm example:run:mock` have a real eve
+  server to run against without reaching a model provider. It is a separate app root because an
+  eve app root is the nearest enclosing `package.json` and eve recognizes the project only once
+  `eve` is in its dependencies, so a fixture cannot live inside `packages/runtime-eve`.
+
+  It authors two tools: `echo_fixture`, which the fixture jobs grant, and `forbidden_tool`, which
+  they deliberately do not.
 
 ### Package status
 
@@ -238,12 +298,13 @@ plan's milestone sections.
 | Package | Status |
 | --- | --- |
 | `packages/config` | exists (Milestone 0) |
-| `packages/core` | exists (Milestone 0; contracts from M1-T3/T5/T7/T8, registry in M1-T9) |
+| `packages/core` | exists (Milestone 0; contracts from M1-T3/T4/T5/T7/T8/T9) |
 | `packages/testing` | exists (Milestone 0; fake `AgentRuntime` added in M1-T5) |
 | `packages/runtime-ai-sdk` | exists (M1-T1, dependency boundary only; `AgentRuntime` is M1-T5) |
-| `packages/runtime-eve` | exists (M1-T1, dependency boundary only; `EveAgentRuntime` is M1-T6) |
-| `packages/registry` | planned (M1), capability registry, per M1-T9 |
-| `apps/example-agent` | exists (M1-T2 eve project plus the M1-T3 domain; no harness call until M1-T4) |
+| `packages/runtime-eve` | exists (M1-T1 dependency boundary; `EveAgentRuntime` and the `./testing` dev-server helper added in M1-T6) |
+| `packages/registry` | planned (M5), **workflow** registry; the *capability* registry is in `packages/core` (M1-T9) |
+| `apps/example-agent` | exists (M1-T2 eve project, M1-T3 domain, M1-T9 capabilities, M1-T6 `src/run.ts`; runs through `createHarness()` with either runtime) |
+| `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
 | `packages/trace` | planned (M2) |
 | `packages/storage-supabase` | planned (M2) |
 | `packages/observability` | planned (M2) |
@@ -259,29 +320,45 @@ plan's milestone sections.
 `apps/playground` appears in the build plan's repository layout but no milestone section assigns
 it, so it has no scheduled milestone.
 
-### No AI runtime code exists yet
+### Source files
 
-`eve` and the AI SDK are now installed, but no code calls either. The source files in the
-workspace packages are:
+`EveAgentRuntime` (M1-T6) is the first code that calls a framework; `packages/runtime-ai-sdk`
+still calls nothing. The source files in the workspace packages are:
 
 - `packages/core/src/index.ts` (the named re-export barrel)
 - `packages/core/src/json.ts`, `context.ts`, `trace.ts`, `errors.ts` and their four co-located
   `*.test.ts` files (the M1-T7 and M1-T8 contracts described above)
 - `packages/core/src/schema.ts`, `job.ts`, `domain.ts`, `agent-runtime.ts` and the three
   co-located `*.test.ts` files (`job.ts` is types only, exercised through `domain.test.ts`)
+- `packages/core/src/harness.ts` (M1-T4), `capabilities.ts`, `fingerprint.ts` and
+  `identifiers.ts` (M1-T9), with a co-located test for each except `identifiers.ts`, whose two
+  rules are exercised through `domain.test.ts` and `capabilities.test.ts`
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
 - `packages/testing/src/fake-agent-runtime.ts` and `fake-agent-runtime.test.ts`
+- `packages/testing/src/recording-trace-writer.ts` and `recording-trace-writer.test.ts`
 - `packages/runtime-eve/src/index.ts` and `index.test.ts`
+- `packages/runtime-eve/src/eve-agent-runtime.ts` (the adapter), `eve-events.ts` (reading eve's
+  stream events and projecting them into trace payloads), `eve-schema.ts` (lowering a
+  `Schema<T>` to the JSON Schema eve wants), with `eve-agent-runtime.test.ts` (unit, faked
+  transport) and `eve-agent-runtime.contract.test.ts` (contract, real server)
+- `packages/runtime-eve/src/testing/index.ts` and `testing/dev-server.ts` (the `./testing`
+  subpath: `startEveDevServer()`)
 - `packages/runtime-ai-sdk/src/index.ts` and `index.test.ts`
 - `apps/example-agent/agent/agent.ts`, `agent/tools/lookup_vendor_evidence.ts`,
-  `agent/tools/web_search.ts` and `agent/tools/web_fetch.ts` (the last two disable eve's live web
-  defaults), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test,
-  `src/domain/schemas.ts`, `src/domain/procurement-sop.ts`, `src/domain/index.ts` and
-  `src/domain/domain.test.ts`, and `src/dependency-pins.test.ts`
+  `agent/tools/load_skill.ts` (a one-line re-export restoring the one default tool the skill
+  needs, after `defaultTools: false` removed all eight), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test,
+  `src/domain/schemas.ts`, `src/domain/procurement-sop.ts`, `src/domain/index.ts`,
+  `src/domain/domain.test.ts` and `src/domain/harness.test.ts`, `src/capabilities.ts` with its
+  test, `src/handlers/detect-payment-detail-change.ts` and
+  `src/policies/no-proceed-with-open-risk-flags.ts` with theirs, `src/run.ts` (the
+  `pnpm example:run` entrypoint), and `src/dependency-pins.test.ts`
+- `apps/eve-fixture-agent/agent/agent.ts` (the scripted `mockModel`), `agent/instructions.md`,
+  `agent/tools/echo_fixture.ts`, `agent/tools/forbidden_tool.ts`,
+  `agent/lib/json-schema-value.ts` with its test, and `src/dependency-pins.test.ts`
 
-The four files in the two adapter packages contain one type re-export and one dependency-pin test
+The two files in `packages/runtime-ai-sdk` contain one type re-export and one dependency-pin test
 each. The example agent's files are authored `eve` definitions plus frozen fixture data: they are
 compiled by `eve`, not by anything in this workspace, and none of them calls a model. There is no
 agent runtime, no model call and no Supabase dependency anywhere in the workspace. `@internal/core` still declares no runtime dependency; its only devDependencies are

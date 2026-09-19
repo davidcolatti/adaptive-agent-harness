@@ -3,8 +3,9 @@
 // Milestone 1 fills this package with the contracts specified in
 // `docs/milestones/build-plan.md` section 5. Present so far: the execution
 // context (M1-T7), the error taxonomy (M1-T8), the schema boundary, `Job`,
-// `DomainDefinition` and `defineDomain()` (M1-T3), and `AgentRuntime` with
-// `AgentExecution` (M1-T5). `CapabilityRegistry` lands in M1-T9.
+// `DomainDefinition` and `defineDomain()` (M1-T3), `AgentRuntime` with
+// `AgentExecution` (M1-T5), `createHarness()` (M1-T4), and the capability
+// registry with its canonical-JSON fingerprint scheme (M1-T9).
 //
 // Re-exports are listed by name rather than starred, so this file states the
 // package's public surface and a symbol becomes public deliberately. Their
@@ -26,6 +27,23 @@ export type {
   FailedAgentExecution,
 } from "./agent-runtime.js";
 
+// Capability registry (M1-T9). AD-015; ADR-0029 for the fingerprint scheme.
+export type {
+  CapabilityKind,
+  CapabilityManifest,
+  CapabilityManifestEntry,
+  CapabilityRef,
+  CapabilityRegistration,
+  CapabilityRegistry,
+} from "./capabilities.js";
+export {
+  CAPABILITY_KINDS,
+  capabilityFingerprint,
+  createCapabilityRegistry,
+  formatCapabilityRef,
+  parseCapabilityRefString,
+} from "./capabilities.js";
+
 // Execution context (M1-T7).
 export type {
   Budget,
@@ -37,7 +55,7 @@ export type {
   ToolGrant,
   ToolGrantMode,
 } from "./context.js";
-export { createExecutionContext } from "./context.js";
+export { createExecutionContext, HARNESS_RUNTIME_INFO } from "./context.js";
 
 // Domain definition (M1-T3).
 export type {
@@ -47,7 +65,6 @@ export type {
   DomainEval,
 } from "./domain.js";
 export { defineDomain } from "./domain.js";
-
 // Error taxonomy (M1-T8).
 export type {
   BudgetDimension,
@@ -77,6 +94,26 @@ export {
   ValidationError,
   WorkflowError,
 } from "./errors.js";
+// Canonical JSON and behavior fingerprints (M1-T9; ADR-0029). M2-T8 extends
+// what is fingerprinted, not how.
+export { canonicalJson, FINGERPRINT_ALGORITHM_PREFIX, fingerprint } from "./fingerprint.js";
+
+// The public entry point (M1-T4).
+export type {
+  AbortedHarnessRunResult,
+  Clock,
+  CompletedHarnessRunResult,
+  CreateHarnessOptions,
+  FailedHarnessRunResult,
+  Harness,
+  HarnessRunInput,
+  HarnessRunResult,
+} from "./harness.js";
+export { createHarness } from "./harness.js";
+
+// The identifier and version rules shared by `defineDomain()` and the
+// capability registry.
+export { isCapabilityIdentifier, isExactVersion } from "./identifiers.js";
 
 // The immutable unit of work (M1-T3; M2-T2 finalizes the schema).
 export type { Job, JobContracts } from "./job.js";

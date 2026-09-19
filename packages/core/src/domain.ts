@@ -1,5 +1,12 @@
 import type { Budget, DomainRef, ToolGrant } from "./context.js";
-import { ValidationError, type ValidationIssue } from "./errors.js";
+import type { ValidationIssue } from "./errors.js";
+import {
+  EXACT_VERSION_MESSAGE,
+  IDENTIFIER_MESSAGE,
+  isCapabilityIdentifier,
+  isExactVersion,
+  throwIfIssues,
+} from "./identifiers.js";
 import type { Job, JobContracts } from "./job.js";
 import type { JsonObject } from "./json.js";
 import { assertIsSchema, type Schema } from "./schema.js";
@@ -103,25 +110,6 @@ export interface DefineDomainConfig<TInput, TOutput> {
   readonly evals?: readonly DomainEval<TInput, TOutput>[];
 }
 
-/**
- * The domain and job identifier rule.
- *
- * Lenient on purpose: it bans whitespace, path separators and `@` rather than
- * insisting on strict kebab-case, because a domain owns its own naming. `@` and
- * whitespace are excluded because a contract reference is written
- * `vendor-triage.input@1.0.0`, and an ID containing either would make that
- * string ambiguous to parse.
- */
-const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
-
-/**
- * Exactly `major.minor.patch`, each a non-negative integer without leading
- * zeros. No ranges (`^1.0.0`), no pre-release and no build metadata: a domain
- * version is pinned by a promoted workflow (ADR-0015) and compared for equality,
- * and nothing in the harness yet defines an ordering for pre-release tags.
- */
-const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
-
 function requireNonEmptyString(
   value: unknown,
   path: readonly (string | number)[],
@@ -130,12 +118,6 @@ function requireNonEmptyString(
     return { path, message: "expected a non-empty string" };
   }
   return undefined;
-}
-
-function throwIfIssues(message: string, issues: readonly ValidationIssue[]): void {
-  if (issues.length > 0) {
-    throw new ValidationError(message, { issues });
-  }
 }
 
 /**
@@ -155,7 +137,7 @@ function throwIfIssues(message: string, issues: readonly ValidationIssue[]): voi
  *
  * What it checks, and why each check is here rather than left to a caller:
  *
- * - **`id`** matches {@link IDENTIFIER_PATTERN}. An ID that cannot be written
+ * - **`id`** matches {@link isCapabilityIdentifier}. An ID that cannot be written
  *   into a capability reference is a problem at registration time, not at the
  *   first run.
  * - **`version`** is exactly `major.minor.patch`. A range would make "which
@@ -180,19 +162,12 @@ export function defineDomain<TInput, TOutput>(
 ): DomainDefinition<TInput, TOutput> {
   const issues: ValidationIssue[] = [];
 
-  if (typeof config.id !== "string" || !IDENTIFIER_PATTERN.test(config.id)) {
-    issues.push({
-      path: ["id"],
-      message:
-        "expected a non-empty identifier of letters, digits, `.`, `-` or `_`, starting with a letter or digit",
-    });
+  if (!isCapabilityIdentifier(config.id)) {
+    issues.push({ path: ["id"], message: IDENTIFIER_MESSAGE });
   }
 
-  if (typeof config.version !== "string" || !VERSION_PATTERN.test(config.version)) {
-    issues.push({
-      path: ["version"],
-      message: "expected an exact `major.minor.patch` version, e.g. `1.0.0`, with no range or tag",
-    });
+  if (!isExactVersion(config.version)) {
+    issues.push({ path: ["version"], message: EXACT_VERSION_MESSAGE });
   }
 
   if (typeof config.createJob !== "function") {

@@ -10,3 +10,5 @@ export type {
   FakeAgentRuntimeResultOptions,
 } from "./fake-agent-runtime.js";
 export { createFakeAgentRuntime } from "./fake-agent-runtime.js";
+export type { RecordingTraceWriter } from "./recording-trace-writer.js";
+export { createRecordingTraceWriter } from "./recording-trace-writer.js";

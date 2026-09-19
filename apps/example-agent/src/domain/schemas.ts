@@ -76,5 +76,14 @@ export const vendorTriageOutputSchema = z.object({
 /** What a triage request supplies. */
 export type VendorTriageInput = z.infer<typeof vendorTriageInputSchema>;
 
+/**
+ * One concern a triage raised.
+ *
+ * Exported as its own type so that a deterministic handler can produce a risk
+ * flag that slots straight into a `VendorTriageOutput` without restating the
+ * shape (M1-T9).
+ */
+export type VendorTriageRiskFlag = z.infer<typeof riskFlagSchema>;
+
 /** What a triage produces. */
 export type VendorTriageOutput = z.infer<typeof vendorTriageOutputSchema>;

@@ -12,6 +12,8 @@
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run check:handoff",
     "check:handoff": "node scripts/verify-handoff.ts",
     "dev": "turbo run dev",
+    "example:run": "turbo run build --filter=@internal/example-agent && pnpm --filter @internal/example-agent run start",
+    "example:run:mock": "turbo run build --filter=@internal/example-agent && pnpm --filter @internal/example-agent run start -- --mock",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome check --formatter-enabled=false .",

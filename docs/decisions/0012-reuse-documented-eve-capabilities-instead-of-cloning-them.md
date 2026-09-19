@@ -2,12 +2,20 @@
 status: accepted
 date: 2026-09-19
 deciders: project owner (build plan); recorded during M0
-related: [0003, 0010, 0011]
+related: [0003, 0010, 0011, 0028]
 supersedes: null
 superseded_by: null
 ---
 
 # ADR-0012: Reuse documented eve capabilities instead of cloning them
+
+> **Amended by [ADR-0028](0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md)
+> (2026-09-19).** The Decision below says agent-runtime observation "MUST go through
+> `eve/hooks`". Read that clause as: *through the documented eve event stream, via `eve/hooks`
+> in-process or via `eve/client` from a caller.* `eve`'s own documentation states the two carry
+> the same envelope, and a hook runs inside the server process so it cannot reach a caller's
+> `TraceWriter`. Nothing else in this ADR is changed, and the rule it exists to state, normalize
+> the documented event stream rather than parse console logs, is unchanged.
 
 ## Context
 

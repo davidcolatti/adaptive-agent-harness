@@ -47,10 +47,25 @@ function createJob(input: VendorTriageInput): CreateJobInput<VendorTriageInput> 
       maxToolCalls: MAX_TOOL_CALLS,
       maxDurationMs: MAX_DURATION_MS,
     },
-    // The one tool the agent has. `read` because the tool reads frozen fixture
-    // data and changes nothing; the agent's own `approval: never()` and the
-    // pure `agent/lib/` module are the other two halves of that claim.
-    permissions: [{ toolId: "lookup_vendor_evidence", mode: "read" }],
+    // Exactly the two tools the agent has, and `eve info --json` reports
+    // exactly these two. A grant is checked by tool name at the moment the
+    // model asks for it (`EveAgentRuntime`, M1-T6), so an ungranted tool fails
+    // the run closed rather than running unnoticed.
+    //
+    // `lookup_vendor_evidence` is `read` because it reads frozen fixture data
+    // and changes nothing; the tool's own `approval: never()` and the pure
+    // `agent/lib/` module are the other two halves of that claim.
+    //
+    // `load_skill` is `read` because it adds no execution surface by itself
+    // (`eve/docs/concepts/built-in-tools.md`): it pulls
+    // `agent/skills/triage-vendor.md`, instructions this repository wrote, into
+    // the turn. It is a framework tool rather than an authored one, which is why
+    // it is granted here but not registered as a domain capability in
+    // `src/capabilities.ts`.
+    permissions: [
+      { toolId: "lookup_vendor_evidence", mode: "read" },
+      { toolId: "load_skill", mode: "read" },
+    ],
     metadata: { fixtureEvidenceOnly: true },
   };
 }

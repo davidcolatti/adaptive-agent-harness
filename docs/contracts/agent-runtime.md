@@ -3,6 +3,7 @@ status: active
 owner: core
 last_verified: 2026-09-19
 related:
+  - docs/architecture/runtime.md
   - docs/milestones/build-plan.md
   - docs/contracts/job.md
   - docs/contracts/execution-context.md
@@ -11,6 +12,7 @@ related:
 implementation:
   - packages/core
   - packages/testing
+  - packages/runtime-eve
 ---
 
 # Agent runtime
@@ -47,8 +49,21 @@ or through `metadata`, which is exactly the boundary
 draws: the AI SDK is the lowest agent-runtime contract, and `eve` specifics stay
 behind the adapter.
 
-`EveAgentRuntime` (M1-T6) is the first implementation. It does not exist yet,
-and how to drive `eve` programmatically is still being established.
+## Implementations
+
+| Implementation | Package | Notes |
+| --- | --- | --- |
+| `EveAgentRuntime` | [`packages/runtime-eve`](../../packages/runtime-eve) | The `eve` adapter (M1-T6). How it works, what it enforces, and what it cannot yet enforce: [`docs/architecture/runtime.md`](../architecture/runtime.md), decided in [ADR-0028](../decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md). |
+| `createFakeAgentRuntime()` | [`packages/testing`](../../packages/testing) | The scripted double, below. |
+
+`EveAgentRuntime` presents a job as a turn message (`job.objective`) plus ephemeral
+`clientContext` (`{ jobId, domain, jobType, input }`), requests the domain's `outputSchema` per
+turn, and returns what eve emits as the turn's structured result. A domain author should read
+`docs/architecture/runtime.md` to know where their input lands and what the adapter enforces.
+
+`packages/runtime-ai-sdk` has no adapter yet. The contract suite the build plan requires for every
+`AgentRuntime` implementation is `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts`;
+when a second implementation exists, that suite is what both should be measured against.
 
 ## `AgentExecution`
 
@@ -164,12 +179,11 @@ itself an argument for the harness re-validating output.
 
 ## Open for later milestones
 
-- **M1-T6** implements `EveAgentRuntime` against this interface.
 - **M1-T4** calls it, and owns validation on both sides of the call.
 - The **contract test suite** the build plan requires for every `AgentRuntime`
-  implementation (`*.contract.test.ts`, build plan section 8) does not exist
-  yet. It belongs with the second implementation, when there is something for
-  both to be measured against.
+  implementation (`*.contract.test.ts`, build plan section 8) exists as of
+  M1-T6, but covers one implementation. Generalizing it to run against every
+  implementation belongs with the second one.
 - `FallbackContext` (build plan section 5) is not part of this interface yet. A
   fallback invokes the full-agent runtime with the original job **plus** an
   envelope, and how that envelope reaches an adapter is M4's question.

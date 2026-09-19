@@ -21,10 +21,30 @@ import { defineAgent } from "eve";
  * defined with an environment expression (`eve/docs/reference/cli.md`, "Set
  * model settings"). Change the environment variable, or edit the fallback here.
  *
- * Nothing executes this agent yet. `createHarness()` is M1-T4, and Milestone 1's
- * acceptance criterion is that the example calls the harness API rather than the
- * `eve` runtime directly (ADR-0025).
+ * `pnpm example:run` executes this agent through the harness API, never through
+ * the `eve` runtime directly (ADR-0025). It needs an AI Gateway credential; the
+ * credential-free demonstration is `pnpm example:run:mock`, which runs the same
+ * script against `apps/eve-fixture-agent`.
+ *
+ * ## Why `defaultTools: false`
+ *
+ * M1-T6 shrank this agent to exactly the capability it needs.
+ * `defaultTools: false` removes all eight optional default tools in one line
+ * (`eve/docs/concepts/built-in-tools.md`, "Disable optional default tools"),
+ * and `agent/tools/load_skill.ts` adds back the only one this agent uses. What
+ * that removes, beyond the `web_search` and `web_fetch` M1-T2 had already
+ * disabled by file: `bash`, `read_file`, `write_file`, `todo`, `ask_question`,
+ * `task_cancel`, and `agent`.
+ *
+ * `agent` is the one worth naming. It is root-only and enabled by default even
+ * with no subagent declared, and the model calling it spawns a second full copy
+ * of this agent in its own durable session with its own sandbox and its own
+ * model spend (`eve/docs/subagents/index.mdx`). That child's events are on a
+ * different stream, so `EveAgentRuntime` would neither count its usage nor
+ * police its tool calls. Removing it is what makes the harness's accounting
+ * true rather than approximate.
  */
 export default defineAgent({
+  defaultTools: false,
   model: process.env.EXAMPLE_AGENT_MODEL ?? "openai/gpt-5.6-luna-fast",
 });

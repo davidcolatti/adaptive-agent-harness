@@ -1,0 +1,22 @@
+{
+  "name": "@internal/eve-fixture-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Credential-free eve fixture agent with a scripted mockModel. The target of EveAgentRuntime's contract tests and of `pnpm example:run:mock`.",
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "info": "eve info",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "ai": "7.0.107",
+    "eve": "0.63.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

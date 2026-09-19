@@ -159,6 +159,17 @@ export default disableTool();
 optional default, including `load_skill`, which this agent's skill needs in order to be loadable at
 all. Two one-line files are the narrower instrument.
 
+> **Superseded by M1-T6 (2026-09-19).** The trade was re-made once there was a runtime to run the
+> agent, and it went the other way. `apps/example-agent/agent/agent.ts` now sets
+> `defaultTools: false`, `agent/tools/load_skill.ts` re-adds the one default the skill needs with
+> the documented one-line re-export (`export { default } from "eve/tools/load_skill";`), and the
+> two `disableTool()` files are gone as redundant. `eve info --json` reports exactly two tools,
+> `load_skill` and `lookup_vendor_evidence`. The paragraph below anticipated the reason and named
+> the wrong worry: the decisive tool is not `bash` but `agent`, because a model calling it spawns
+> a second full copy of the agent in its own durable session, on a different event stream, whose
+> usage and tool calls `EveAgentRuntime`'s accounting would never see. See ADR-0028 and
+> `docs/architecture/runtime.md`.
+
 After the change, `eve info` reports 9 tools: `bash`, `read_file`, `write_file`, `todo`,
 `load_skill`, `ask_question`, `task_cancel`, `agent`, and the authored
 `lookup_vendor_evidence`.

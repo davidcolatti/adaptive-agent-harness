@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/turbo/schema.json",
+  // Package configuration for the fixture agent, for the same reason
+  // `apps/example-agent/turbo.json` exists: its sources live under `agent/`
+  // rather than `src/`, and `eve build` writes `.eve/` and `.output/` rather
+  // than `dist/`, so the root task definitions describe the wrong files.
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["agent/**", "src/**", "tsconfig.json", "package.json"],
+      "outputs": [".output/**"]
+    },
+    "typecheck": {
+      "dependsOn": [],
+      "inputs": ["agent/**", "src/**", "tsconfig.json", "package.json"],
+      "outputs": []
+    }
+  }
+}

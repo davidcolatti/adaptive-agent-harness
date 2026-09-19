@@ -21,7 +21,7 @@ before making a change:
 
 | Category | Responsibility | Entry point |
 |---|---|---|
-| `architecture/` | how the current system works | [docs/architecture/system-map.md](architecture/system-map.md) |
+| `architecture/` | how the current system works | [docs/architecture/system-map.md](architecture/system-map.md), [docs/architecture/runtime.md](architecture/runtime.md) |
 | `contracts/` | stable boundaries and schemas | [docs/contracts/README.md](contracts/README.md) |
 | `decisions/` | why architectural choices were made | [docs/decisions/README.md](decisions/README.md) |
 | `concepts/` | mental models and definitions | [docs/concepts/README.md](concepts/README.md) |

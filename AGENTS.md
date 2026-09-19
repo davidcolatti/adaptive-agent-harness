@@ -90,15 +90,17 @@ adaptive-agent-harness/
 ├── .husky/                      # pre-commit, pre-push
 ├── .vscode/
 ├── apps/
+│   ├── eve-fixture-agent/       # credential-free mockModel eve project (M1-T6)
+│   │   └── agent/               # agent.ts, instructions.md, tools/, lib/
 │   └── example-agent/           # neutral vendor-triage eve project (M1-T2)
 │       ├── agent/               # agent.ts, instructions.md, skills/, tools/, lib/
-│       └── src/
+│       └── src/                 # domain/, capabilities, handlers, policies, run.ts
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; context, errors, schema,
 │   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
-│   ├── runtime-eve/             # `eve` adapter; EveAgentRuntime lands in M1-T6
+│   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
 │   └── testing/                 # shared test helpers; fake clock, fake AgentRuntime
 ├── docs/
 │   ├── README.md
@@ -107,10 +109,10 @@ adaptive-agent-harness/
 │   │   ├── README.md
 │   │   ├── WORKLOG.md
 │   │   └── milestones/
-│   ├── architecture/system-map.md
+│   ├── architecture/            # system-map.md, runtime.md
 │   ├── contracts/README.md
 │   ├── concepts/README.md
-│   ├── decisions/               # 0000-template.md plus ADRs 0001-0027
+│   ├── decisions/               # 0000-template.md plus ADRs 0001-0029
 │   ├── development/
 │   │   ├── local-setup.md
 │   │   ├── commands.md
@@ -245,6 +247,8 @@ Every root script (`package.json`):
 | `pnpm format` | `biome format --write .`. |
 | `pnpm format:check` | `biome format .`; fails on unformatted files. |
 | `pnpm check:handoff` | `node scripts/verify-handoff.ts`; enforces the handoff protocol (see below). |
+| `pnpm example:run` | Run the vendor-triage example end to end through the harness against `apps/example-agent`. Needs an AI Gateway credential. |
+| `pnpm example:run:mock` | The same path against `apps/eve-fixture-agent`, whose model is eve's `mockModel`. No credential. |
 | `pnpm check` | The single local quality gate: `format:check && lint && typecheck && test && build && check:handoff`, in that order. |
 | `pnpm prepare` | `husky`; installs git hooks (`.husky/pre-commit`, `.husky/pre-push`). |
 
@@ -531,7 +535,17 @@ what "trace-safe" means for the M1-T8 error taxonomy: a whitelisted, stack-free
 serialization with a stable `code` discriminant. ADR-0027 records the M1-T3
 schema contract: Standard Schema v1, declared structurally in `@internal/core`
 so the package keeps zero dependencies while domains author schemas in `zod`.
-The next free number is 0028.
+ADR-0028 records the M1-T6 `eve` adapter design: `EveAgentRuntime` is a URL-only client that
+never spawns a process, observes a run through the `eve/client` event stream, enforces permissions
+and budget itself, and reads terminal state from turn boundary events. It **amends ADR-0012**'s
+"MUST go through `eve/hooks`" to "the documented eve event stream, via `eve/hooks` in-process or
+`eve/client` from a caller". It is grounded in
+`docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` and described in
+`docs/architecture/runtime.md`.
+ADR-0029 records the M1-T9 fingerprint scheme: RFC 8785-style canonical JSON and
+`sha256:`-prefixed digests, with `node:crypto` permitted in `@internal/core`
+because a Node built-in is not a third-party dependency.
+The next free number is 0030.
 
 ## Scope discipline
 

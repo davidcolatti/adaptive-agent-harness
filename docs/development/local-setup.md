@@ -63,12 +63,33 @@ start and nothing to copy before `pnpm install` works.
 `.env.example` exists so the variable names are discoverable early, and every line in it is
 commented out for exactly that reason. It records:
 
-- Milestone 1: `AI_GATEWAY_API_KEY`.
+- Milestone 1: `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`, and the optional
+  `EXAMPLE_AGENT_MODEL`.
 - Milestone 2: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server side only,
   never exposed to a client or an agent tool).
 
 Copy `.env.example` to `.env` and fill values in when the milestone that introduces them starts.
 `.env` is never committed.
+
+### What needs a model credential, and what does not
+
+`pnpm check` needs **none**, and neither does anything it runs. That includes `pnpm test:contract`,
+which as of M1-T6 starts a real `eve dev` server and runs `EveAgentRuntime` against it; the fixture
+agent's model is eve's own `mockModel`, and the helper that starts the server strips
+`AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` from the child so a logged-in machine cannot quietly
+reach a provider.
+
+Exactly one command needs a credential:
+
+| Command | Credential |
+| --- | --- |
+| `pnpm example:run` | `AI_GATEWAY_API_KEY` **or** `VERCEL_OIDC_TOKEN`. It exits 1 with a message naming `.env.example` when neither is set. |
+| `pnpm example:run:mock` | none. Same harness path, scripted model. |
+| `pnpm --filter @internal/example-agent run dev` | a credential, because eve's terminal UI reaches a real model. |
+
+`eve link` writes a Gateway credential into `.env.local` for you if the project is linked to a
+Vercel project; `eve dev`'s `/login` stores one in the OS secret store instead. Never commit
+either.
 
 ## Setup sequence
 

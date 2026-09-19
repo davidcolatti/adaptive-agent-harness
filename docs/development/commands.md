@@ -10,16 +10,18 @@ Listed in the order they appear in `package.json`.
 
 | Command | What it runs | When to use it |
 | --- | --- | --- |
-| `pnpm build` | `turbo run build` | Run every workspace package's own `build` script: `tsc` to `dist` for the libraries, `eve build` for the example agent. Needed before anything consumes built output, and part of `pnpm check`. |
+| `pnpm build` | `turbo run build` | Run every workspace package's own `build` script: `tsc` to `dist` for the libraries, and `tsc` plus `eve build` for the example agent. Needed before anything consumes built output, and part of `pnpm check`. |
 | `pnpm check` | `pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run check:handoff` | The single local quality gate. Run it before declaring a task complete. |
 | `pnpm check:handoff` | `node scripts/verify-handoff.ts` | Verify `docs/context/current-state.md` and `docs/progress/WORKLOG.md` are present and internally consistent (completed entries have verification results; referenced ADRs exist). Runs as the last stage of `pnpm check`. |
+| `pnpm example:run` | `turbo run build --filter=@internal/example-agent && pnpm --filter @internal/example-agent run start` | Run the vendor-triage example end to end through the harness API against `apps/example-agent`. **Needs an AI Gateway credential** (`AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`); it exits 1 with a message naming `.env.example` when neither is set. Prints the `HarnessRunResult` as JSON and exits non-zero unless the run completed. |
+| `pnpm example:run:mock` | the same, with `--mock` | The same path against `apps/eve-fixture-agent`, whose model is eve's `mockModel`. **No credential.** Real eve server, real durable session, real domain and schema; only the model is scripted. This is the one to run to check the harness path still works. |
 | `pnpm dev` | `turbo run dev` | Start every package's watch build (`tsc --watch`). Persistent and uncached. |
 | `pnpm format` | `biome format --write .` | Rewrite files to Biome's formatting. Use while editing; this is the fix-it counterpart of `format:check`. |
 | `pnpm format:check` | `biome format .` | Formatting check only, no writes. First stage of `pnpm check`; fails on an unformatted file. |
 | `pnpm lint` | `biome check --formatter-enabled=false .` | Biome's linter plus the `organizeImports` assist, with formatting deliberately switched off so lint and format fail for distinct reasons. |
 | `pnpm prepare` | `husky` | Installs the git hooks. You never run this by hand: pnpm runs it automatically after `pnpm install`. |
 | `pnpm test` | `vitest run` | Run every Vitest project (unit, integration, contract, replay) once. Part of `pnpm check`. |
-| `pnpm test:contract` | `vitest run --project contract` | Run only `*.contract.test.ts`. |
+| `pnpm test:contract` | `vitest run --project contract` | Run only `*.contract.test.ts`. As of M1-T6 this starts a real `eve dev` server for `apps/eve-fixture-agent` and runs `EveAgentRuntime` against it, in about four seconds. It needs no credential and reaches no model provider. |
 | `pnpm test:integration` | `vitest run --project integration` | Run only `*.integration.test.ts`. |
 | `pnpm test:replay` | `vitest run --project replay` | Run only `*.replay.test.ts`. |
 | `pnpm test:unit` | `vitest run --project unit` | Run only the default unit layer. This is also what the pre-push hook runs. |
@@ -82,6 +84,7 @@ root-level wrapper script; run the commands through the package filter.
 | `pnpm --filter @internal/example-agent run info` | `eve info`. Confirms eve discovered every authored file and prints its diagnostics, the resolved model, the artifact paths and the HTTP routes. Needs no model credential. |
 | `pnpm --filter @internal/example-agent exec eve info --json` | The machine-readable form. Use it to check that a specific tool or skill was discovered; the plain-text form does not print their names. |
 | `pnpm --filter @internal/example-agent run build` | `eve build`. Compiles `.eve/` artifacts and bundles the host output to `.output/`. Runs offline and needs no model credential. Part of `pnpm build` and therefore of `pnpm check`. |
+| `pnpm --filter @internal/eve-fixture-agent run info` | The same diagnostic for the credential-free fixture agent. It should report `Compile ready` and exactly two tools. |
 | `pnpm --filter @internal/example-agent run dev` | `eve dev`. Starts the local dev server and opens eve's terminal UI. Interactive, and it *does* reach a model, so it needs a credential. Not part of any gate. |
 
 `eve` 0.63.0 ships **no `eve check` command**; `eve info` is the equivalent diagnostic, and it

@@ -76,6 +76,11 @@ describe("workspace dependency boundaries", () => {
     expect(packages.map((pkg) => pkg.name).sort()).toEqual([
       "@internal/config",
       "@internal/core",
+      // The credential-free `mockModel` fixture `EveAgentRuntime`'s contract
+      // tests run against (M1-T6). An eve app root must be its own package
+      // declaring `eve`, so it cannot live inside `packages/runtime-eve`;
+      // ADR-0028 records why that makes it an `apps/*` domain consumer.
+      "@internal/eve-fixture-agent",
       "@internal/example-agent",
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",

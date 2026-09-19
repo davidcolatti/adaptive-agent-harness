@@ -78,6 +78,8 @@ and related ADRs that motivated it.
 | [0025](0025-application-packages-may-author-eve-agents-directly.md) | Application packages may author `eve` agents directly | accepted |
 | [0026](0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md) | Harness errors serialize to a whitelisted, stack-free trace-safe shape | accepted |
 | [0027](0027-standard-schema-is-the-harness-schema-contract.md) | Standard Schema is the harness schema contract, declared structurally in core | accepted |
+| [0028](0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md) | `EveAgentRuntime` is a URL-only client that observes the eve event stream | accepted |
+| [0029](0029-canonical-json-and-sha-256-behavior-fingerprints.md) | Canonical JSON (RFC 8785-style) and `sha256:`-prefixed behavior fingerprints | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -110,3 +112,13 @@ than importing a schema library, so the package keeps zero dependencies while a 
 schemas in `zod`. It is grounded in the installed `zod@4.6.5` types
 (`zod/v4/core/standard-schema.d.ts`) and the published specification at
 <https://standardschema.dev>, and implemented in `packages/core/src/schema.ts`.
+
+Entry 0029 answers what a behavior fingerprint is, which M1-T9 was the first task to need: the
+harness owns an RFC 8785-style canonical JSON encoding and hashes it with SHA-256, emitting
+`sha256:<hex>` so the algorithm can change later without a stored value becoming ambiguous.
+AD-016 names "canonical JSON encoding used for fingerprints" as its first example of a choice that
+must be recorded rather than implied. It also records that the Node built-in `node:crypto` is
+permitted inside `@internal/core`, because a built-in adds nothing to `package.json`, the
+lockfile, or what `tests/architecture/boundaries.ts` can see, so the zero-dependency rule is
+unchanged. It is implemented in `packages/core/src/fingerprint.ts` and consumed by
+`packages/core/src/capabilities.ts`.

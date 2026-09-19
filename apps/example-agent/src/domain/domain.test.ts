@@ -65,7 +65,10 @@ describe("vendorTriage", () => {
       sop: "procurement-sop",
     });
     expect(job.budget.maxModelCalls).toBe(8);
-    expect(job.permissions).toEqual([{ toolId: "lookup_vendor_evidence", mode: "read" }]);
+    expect(job.permissions).toEqual([
+      { toolId: "lookup_vendor_evidence", mode: "read" },
+      { toolId: "load_skill", mode: "read" },
+    ]);
   });
 });
 

@@ -21,6 +21,9 @@
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@internal/core": "workspace:*"
+  },
   "devDependencies": {
     "@internal/config": "workspace:*",
     "vitest": "5.0.1"

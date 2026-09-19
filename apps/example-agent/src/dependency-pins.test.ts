@@ -47,12 +47,24 @@ function declaredDependencies(pkg: PackageManifest): [string, string][] {
   });
 }
 
-/** The third-party dependencies whose installed version this package pins. */
-const PINNED_DEPENDENCIES = Object.keys(manifest.dependencies ?? {});
+/**
+ * The third-party dependencies whose installed version this package pins.
+ *
+ * Workspace packages are excluded: they are declared `workspace:*`, which is
+ * not a version to pin and resolves to source rather than to a published
+ * artefact. ADR-0024 is about third-party framework versions.
+ */
+const PINNED_DEPENDENCIES = Object.keys(manifest.dependencies ?? {}).filter(
+  (name) => !name.startsWith("@internal/"),
+);
 
 describe("@internal/example-agent dependency pins", () => {
   it("declares the framework dependencies an authored eve project needs", () => {
     expect(PINNED_DEPENDENCIES.sort()).toEqual(["ai", "eve", "zod"]);
+  });
+
+  it("depends on the harness core, which is how the domain definition reaches it", () => {
+    expect(manifest.dependencies?.["@internal/core"]).toBe("workspace:*");
   });
 
   it.each(PINNED_DEPENDENCIES)("installs exactly the pinned version of %s", (name) => {

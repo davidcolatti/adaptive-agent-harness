@@ -77,6 +77,7 @@ and related ADRs that motivated it.
 | [0024](0024-framework-dependency-versioning-policy.md) | Framework dependency versioning policy | accepted |
 | [0025](0025-application-packages-may-author-eve-agents-directly.md) | Application packages may author `eve` agents directly | accepted |
 | [0026](0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md) | Harness errors serialize to a whitelisted, stack-free trace-safe shape | accepted |
+| [0027](0027-standard-schema-is-the-harness-schema-contract.md) | Standard Schema is the harness schema contract, declared structurally in core | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -102,3 +103,10 @@ Entry 0026 records what "trace-safe" means for the M1-T8 error taxonomy: seriali
 whitelist of `name`, `code`, `message`, `details` and a depth-bounded `cause`, stacks are excluded
 by default, and every failure carries a stable `code` that survives serialization and class
 renames. It is grounded in `docs/contracts/errors.md` and `packages/core/src/errors.ts`.
+
+Entry 0027 answers what `Schema<T>` is in the build plan's `DomainDefinition`, which M1-T3 had to
+settle: the harness adopts Standard Schema v1 and `@internal/core` declares it structurally rather
+than importing a schema library, so the package keeps zero dependencies while a domain authors its
+schemas in `zod`. It is grounded in the installed `zod@4.6.5` types
+(`zod/v4/core/standard-schema.d.ts`) and the published specification at
+<https://standardschema.dev>, and implemented in `packages/core/src/schema.ts`.

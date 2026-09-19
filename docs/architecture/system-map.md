@@ -6,6 +6,8 @@ related:
   - docs/milestones/build-plan.md
   - docs/decisions/README.md
   - docs/decisions/0025-application-packages-may-author-eve-agents-directly.md
+  - docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md
+  - docs/contracts/README.md
   - docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md
   - docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md
 implementation:
@@ -155,8 +157,11 @@ Five packages and one application exist. Everything else in the repository layou
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
   directory.
 - `packages/testing` (`@internal/testing`) is the test-helpers package required by M0-T4. It
-  contains exactly one real helper, `createFakeClock`, plus its test.
-- `packages/core` (`@internal/core`) holds the first two harness contracts, added by M1-T7 and
+  holds `createFakeClock` (M0-T4) and `createFakeAgentRuntime` (M1-T5), the scripted
+  `AgentRuntime` that lets a unit test replace `EveAgentRuntime` without either knowing. It is the
+  one library package that depends on `@internal/core`, which is library-to-library and therefore
+  unaffected by the boundary rule.
+- `packages/core` (`@internal/core`) holds the harness contracts added by M1-T3, M1-T5, M1-T7 and
   M1-T8. It is no longer the empty boundary Milestone 0 left behind.
 
   - The **execution context** (M1-T7): `ExecutionContext` plus `DomainRef`, `Budget`, `ToolGrant`
@@ -170,10 +175,22 @@ Five packages and one application exist. Everything else in the repository layou
     with, and a minimal `TraceEvent`/`TraceWriter` pair. `TraceWriter` is stated verbatim by
     M2-T4 and lives here only because the execution context has to hold one; **M2-T3 owns the
     full trace event schema and replaces `TraceEvent`**.
+  - The **schema boundary**, `Job` and `DomainDefinition` (M1-T3): `Schema<TOutput, TInput>` is a
+    harness-owned copy of the Standard Schema v1 interface, so a domain authors its schemas in
+    `zod` while this package imports nothing
+    ([ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md)).
+    `validateWith()` is the single point where a schema failure becomes a `ValidationError`.
+    `defineDomain()` validates a domain's id, version and schemas and returns a frozen
+    definition whose `createJob` stamps the domain reference and generates the job id. Documented
+    in [`../contracts/domain-definition.md`](../contracts/domain-definition.md) and
+    [`../contracts/job.md`](../contracts/job.md).
+  - The **agent runtime contract** (M1-T5): `AgentRuntime.run(job, context)` and the
+    `AgentExecution` union (`completed` / `failed` / `aborted`), carrying usage, runtime info and
+    optional metadata. No `eve` or AI SDK concept appears in it. Documented in
+    [`../contracts/agent-runtime.md`](../contracts/agent-runtime.md).
 
-  The rest of build plan section 5 is still to come: `Job` and `DomainDefinition` in M1-T3,
-  `AgentRuntime` in M1-T5, `CapabilityRegistry` in M1-T9. The package still declares no runtime
-  dependency and must keep none.
+  Of build plan section 5, `CapabilityRegistry` (M1-T9) and `DecisionEngine` (M3) are still to
+  come. The package still declares no runtime dependency and must keep none.
 - `packages/runtime-eve` (`@internal/runtime-eve`) and `packages/runtime-ai-sdk`
   (`@internal/runtime-ai-sdk`) were created by M1-T1 to hold the framework dependencies it
   installed: `eve@0.63.0`, `ai@7.0.107` and `zod@4.6.5` for the first,
@@ -196,6 +213,12 @@ Five packages and one application exist. Everything else in the repository layou
   under `agent/tools/`, and the frozen fixture data plus its pure lookup under `agent/lib/`. It
   declares `eve`, `ai` and `zod` at the same exact pins the adapters use.
 
+  M1-T3 added its other half, `src/domain/`: the `zod` input and output schemas, the invented
+  procurement SOP the fixture evals triage against, and the `defineDomain()` call that registers
+  `vendorTriage`. It therefore also depends on `@internal/core` (`workspace:*`). The two halves do
+  not cross: nothing under `agent/` imports the harness, nothing under `src/domain/` imports
+  `eve`, and `eve` compiles only `agent/`.
+
   It is **not** an adapter and **not** a harness package. It is a domain consumer, which is the
   distinction [ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md)
   records: an `apps/*` package may author agents with `eve`, while `@supabase/*`, `@vercel/*` and
@@ -215,12 +238,12 @@ plan's milestone sections.
 | Package | Status |
 | --- | --- |
 | `packages/config` | exists (Milestone 0) |
-| `packages/core` | exists (Milestone 0; contracts land from M1-T7/M1-T8 onward) |
-| `packages/testing` | exists (Milestone 0) |
+| `packages/core` | exists (Milestone 0; contracts from M1-T3/T5/T7/T8, registry in M1-T9) |
+| `packages/testing` | exists (Milestone 0; fake `AgentRuntime` added in M1-T5) |
 | `packages/runtime-ai-sdk` | exists (M1-T1, dependency boundary only; `AgentRuntime` is M1-T5) |
 | `packages/runtime-eve` | exists (M1-T1, dependency boundary only; `EveAgentRuntime` is M1-T6) |
 | `packages/registry` | planned (M1), capability registry, per M1-T9 |
-| `apps/example-agent` | exists (M1-T2, authored eve project; no harness call until M1-T4) |
+| `apps/example-agent` | exists (M1-T2 eve project plus the M1-T3 domain; no harness call until M1-T4) |
 | `packages/trace` | planned (M2) |
 | `packages/storage-supabase` | planned (M2) |
 | `packages/observability` | planned (M2) |
@@ -244,15 +267,19 @@ workspace packages are:
 - `packages/core/src/index.ts` (the named re-export barrel)
 - `packages/core/src/json.ts`, `context.ts`, `trace.ts`, `errors.ts` and their four co-located
   `*.test.ts` files (the M1-T7 and M1-T8 contracts described above)
+- `packages/core/src/schema.ts`, `job.ts`, `domain.ts`, `agent-runtime.ts` and the three
+  co-located `*.test.ts` files (`job.ts` is types only, exercised through `domain.test.ts`)
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
+- `packages/testing/src/fake-agent-runtime.ts` and `fake-agent-runtime.test.ts`
 - `packages/runtime-eve/src/index.ts` and `index.test.ts`
 - `packages/runtime-ai-sdk/src/index.ts` and `index.test.ts`
 - `apps/example-agent/agent/agent.ts`, `agent/tools/lookup_vendor_evidence.ts`,
   `agent/tools/web_search.ts` and `agent/tools/web_fetch.ts` (the last two disable eve's live web
-  defaults), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test, and
-  `src/dependency-pins.test.ts`
+  defaults), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test,
+  `src/domain/schemas.ts`, `src/domain/procurement-sop.ts`, `src/domain/index.ts` and
+  `src/domain/domain.test.ts`, and `src/dependency-pins.test.ts`
 
 The four files in the two adapter packages contain one type re-export and one dependency-pin test
 each. The example agent's files are authored `eve` definitions plus frozen fixture data: they are

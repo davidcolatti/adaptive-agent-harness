@@ -1972,3 +1972,453 @@ Not touched: `packages/core/**`, `docs/decisions/0026-*`,
 M1-T3 can register the vendor-triage domain against it:
 `apps/example-agent/agent/lib/vendor-evidence.ts` already defines the evidence
 shape a `defineDomain` input/output schema will have to describe.
+
+## 2026-09-19 17:35 — M1-T6 (research) — EveAgentRuntime: programmatic eve execution research checkpoint
+
+**Status:** started
+**Actor/session:** coding agent (research subagent)
+**Commit:** not committed
+
+### Goal
+
+Establish, from the installed `eve@0.63.0` and `ai@7.0.107` packages, how an
+`EveAgentRuntime` can run the `apps/example-agent` agent from TypeScript:
+in-process execution, structured output, model injection (including a test
+double), cancellation, run observation for tracing/usage, per-run tool policy,
+session/state isolation, execution-model constraints, the `agent` default tool,
+and what is not documented and must therefore be a harness-owned decision.
+Research only: no source code changes. Deliverable is
+`docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md`.
+
+### Implementation references
+
+- package/version: to be recorded in the `completed` entry.
+- installed docs read: in progress.
+- official docs/repos/examples read: in progress.
+- public types/exports inspected: in progress.
+- selected documented pattern: in progress.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- None yet.
+
+### Next exact step
+
+Read the installed `eve` docs and `.d.ts` surface, then write the research note.
+
+## 2026-09-19 17:38 — M1-T3, M1-T5 — `defineDomain()` and the `AgentRuntime` contract
+
+**Status:** started
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed
+
+### Goal
+
+Add the remaining M1 pieces of build plan section 5 that these two tasks own:
+`Job`, `DomainDefinition`, a schema abstraction that keeps `@internal/core`
+zero-dependency, `defineDomain()`, `AgentRuntime` and `AgentExecution` in
+`@internal/core`; a `FakeAgentRuntime` in `@internal/testing`; and the
+vendor-triage domain definition with real `zod` schemas in
+`apps/example-agent`. Out of scope: `createHarness()` (M1-T4), `EveAgentRuntime`
+(M1-T6), `CapabilityRegistry` (M1-T9).
+
+### Implementation references
+
+- package/version: `zod@4.6.5` (installed, resolved from `apps/example-agent`
+  via `require.resolve("zod/package.json")` to
+  `node_modules/.pnpm/zod@4.6.5/node_modules/zod/package.json`). `typescript@6.0.3`,
+  `vitest@5.0.1`, Node 24.21.0, pnpm 12.4.2.
+- installed docs read: `node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/standard-schema.d.ts`
+  (the full `StandardSchemaV1` interface: `~standard` with `version: 1`,
+  `vendor: string`, optional `types`, and
+  `validate: (value: unknown, options?) => Result<Output> | Promise<Result<Output>>`;
+  `Result` is `{ value }` or `{ issues: ReadonlyArray<Issue> }`; `Issue.path` is
+  `ReadonlyArray<PropertyKey | PathSegment>` where `PathSegment` is `{ key: PropertyKey }`),
+  and `.../zod/v4/core/schemas.d.ts` lines 106-112, where `$ZodType` declares
+  `"~standard": $ZodStandardSchema<this>`, i.e. every zod schema *is* a
+  Standard Schema.
+- official docs/repos/examples read: <https://standardschema.dev>, fetched
+  2026-09-19. Its published interface is character-for-character the same as the
+  copy zod ships, including the optional `types` and the
+  `PropertyKey | PathSegment` path element. Spec version is `1`.
+- public types/exports inspected: `zod`'s `~standard` at runtime, probed with
+  Node against the installed package: `version: 1`, `vendor: "zod"`, `validate`
+  returns **synchronously** for object schemas, and failure `path` arrays
+  contain bare `string`/`number` segments (not `{ key }` objects) — e.g.
+  `["b", 0, "c"]`. The harness still handles both forms, because the spec
+  permits both and another vendor may use the object form.
+- selected documented pattern: **Standard Schema v1, declared structurally in
+  core.** `@internal/core` owns a copy of the spec's interface as
+  `Schema<TOutput, TInput>` and never imports a schema library, so the
+  zero-dependency rule holds while domains author schemas in `zod`. Recorded as
+  ADR-0027.
+- anything not documented that must be harness-owned: the spec defines no error
+  type and no path normalization. `validateWith()` is harness-owned: it
+  normalizes both path forms to `ValidationIssue.path` (`(string | number)[]`)
+  and throws the existing `ValidationError`. `DomainEval` is a harness-owned M1
+  shape; M6-T5 owns evals. Job IDs use `crypto.randomUUID()` in M1; M2-T1 owns
+  the sortable ID scheme.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- None yet.
+
+### Next exact step
+
+Implement `packages/core/src/schema.ts`, `job.ts`, `domain.ts` and
+`agent-runtime.ts`, then the fake runtime and the example domain.
+
+## 2026-09-19 17:49 — M1-T6 (research) — EveAgentRuntime: programmatic eve execution research checkpoint (result)
+
+**Status:** completed
+**Actor/session:** coding agent (research subagent)
+**Commit:** not committed
+
+### Goal
+
+Answer, from the installed `eve@0.63.0` and `ai@7.0.107` only, how `EveAgentRuntime`
+can execute the example agent: in-process execution, structured output, model
+injection and test doubles, cancellation, run observation for tracing and usage,
+per-run tool policy, session/state isolation, execution-model constraints, the
+built-in `agent` tool, and what is undocumented and must be harness-owned.
+Research only; no source code written, nothing committed.
+
+### Implementation references
+
+- package/version: `eve` 0.63.0, `ai` 7.0.107, `zod` 4.6.5, pinned by
+  `packages/runtime-eve/package.json` and `apps/example-agent/package.json`.
+  Resolved with
+  `require.resolve('eve/package.json', { paths: ['apps/example-agent'] })` to
+  `node_modules/.pnpm/eve@0.63.0_ai@7.0.107_zod@4.6.5_/node_modules/eve`, and the
+  matching `ai` resolution to
+  `node_modules/.pnpm/ai@7.0.107_zod@4.6.5/node_modules/ai`.
+- installed docs read: `$EVE/docs/README.md`;
+  `concepts/{sessions-runs-and-streaming.md, execution-model-and-durability.mdx,
+  default-harness.md, built-in-tools.md, context-control.md, state.md,
+  security-model.md}`; `reference/{typescript-api.md, cli.md}`; `agent-config.md`;
+  `guides/client/{overview, messages, output-schema, streaming, continuations}.mdx`;
+  `guides/{session-context.md, hooks.md, dynamic-capabilities.md,
+  auth-and-route-protection.md, dev-tui.md}`;
+  `guides/instrumentation/{instrumentation, otel}.mdx`;
+  `guides/deployment/self-hosting.md`; `evals/{overview, targets, running}.mdx`;
+  `tools/human-in-the-loop.md`; `subagents/index.mdx`.
+- official docs/repos/examples read: none beyond the installed package. Under the
+  source-of-truth protocol §1 the lockfile-matched package wins, and its shipped
+  docs and declaration files settled every question asked.
+- public types/exports inspected: `$EVE/dist/src/index.d.ts`;
+  `public/index.d.ts`; `public/local-dev.d.ts`; `public/definitions/agent.d.ts`;
+  `shared/agent-definition.d.ts`; `client/{index, types, session, sessions,
+  message-response}.d.ts`; `protocol/message.d.ts`; `evals/{index, mock-model,
+  types}.d.ts`; `public/{hooks, instrumentation, context, ai, models}/index.d.ts`;
+  `public/{next, vercel, nuxt, sveltekit}/index.d.ts`;
+  `public/next/server.js`, `public/nuxt/dev-server.js`,
+  `public/sveltekit/dev-server.js`; `runtime/local-dev-capability.d.ts`;
+  `$AI/dist/index.d.ts`; `$AI/dist/test/index.d.ts`; both `package.json` export maps.
+- selected documented pattern: **`eve/client` over HTTP against a running eve
+  server.** `eve` 0.63.0 exposes no in-process run API; its own Next, Nuxt and
+  SvelteKit adapters spawn `eve dev --no-ui --port 0` or
+  `.output/server/index.mjs` as a child process
+  (`$EVE/dist/src/public/next/server.js`), and evals always target an HTTP URL
+  (`$EVE/docs/evals/targets.mdx`). One fresh session per job via
+  `client.sessions.create({ message, clientContext, outputSchema, signal })`;
+  structured result from `MessageResult.data` / the `result.completed` event;
+  cancellation via `MessageResponse.cancel()`; usage aggregated from
+  `step.completed.data.usage` (`costUsd`, `inputTokens`, `outputTokens`, cache
+  counters) across the turn's events. Full design, with each step marked
+  "documented (path)" or "harness-owned", in §12 of the research note.
+- anything not documented that must be harness-owned: obtaining and owning the
+  server URL; presenting `job.objective` and `job.input` as a turn (eve documents
+  no context slot for either; `clientContext` is the nearest fit);
+  per-run tool permission enforcement (`SendTurnOptions` has no tool field);
+  `Job.budget` enforcement (eve's `limits.*` are authored, per session, token and
+  cost only, and prompt a human on breach); the
+  `{ modelCalls, toolCalls, durationMs, costUsd? }` roll-up; the counting rule for
+  retried steps, which eve explicitly does not disambiguate; and the mapping from
+  eve failure codes to `AgentExecutionError`.
+
+### Work completed
+
+- Wrote `docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md`: 14
+  numbered sections answering the ten questions, plus a recommended
+  `EveAgentRuntime` design, a paste-ready `Implementation references` block for
+  the M1-T6 implementer, and eight open questions for the orchestrator.
+- Added the note's index entry to `docs/research/vercel/README.md`.
+- Key findings: no in-process execution (§1); per-turn `outputSchema` is
+  documented, server-validated and should replace text parsing (§2);
+  `defineAgent({ model })` accepts a `LanguageModel` and `mockModel()` from
+  `eve/evals` is the documented credential-free double, but it is authored into
+  the agent file rather than injected per run (§3); `MessageResponse.cancel()` is
+  run cancellation while `SendTurnOptions.signal` only aborts the HTTP request, so
+  `ExecutionContext.signal` needs two propagations (§4); `step.completed.data.usage`
+  carries `costUsd` only when AI Gateway served the call, and retried steps
+  re-emit events that no field disambiguates (§5); no caller-supplied tool policy
+  exists, with route-auth attributes plus a tool `approval` policy as the
+  documented composition and observation-plus-cancel as the M1 fallback (§6);
+  runs write to `.eve/.workflow-data` and there is no ephemeral test mode (§7);
+  the built-in `agent` tool spawns a full root-agent copy even with zero
+  subagents, so `defaultTools: false` is recommended for the example (§9).
+
+### Files changed
+
+- `docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` (new).
+- `docs/research/vercel/README.md` (one index entry appended).
+- `docs/progress/WORKLOG.md` (this entry and the `started` entry above).
+
+No source code, no `packages/*`, no `apps/*`, no contracts, no ADRs, no
+`current-state.md`. Not committed.
+
+### Verification
+
+- note reviewed against installed files, every cited path exists — PASS.
+  Checked by script: every `$EVE/...` and `$AI/...` path in the note resolved
+  against the pnpm-resolved package directories, and every repository-relative
+  path resolved against the working tree. 0 missing.
+- `pnpm --filter @internal/example-agent exec eve info --json` — PASS
+  (exit 0; tools `["bash","read_file","write_file","todo","load_skill",
+  "ask_question","task_cancel","agent","lookup_vendor_evidence"]`, unchanged
+  from M1-T2).
+- `pnpm check:handoff` — PASS (`check:handoff — OK`), run 17:48 after appending
+  this entry. Recording the first attempt too, because it teaches something about
+  running concurrently: at 17:47 the same command **FAILED** with
+  `[missing-decision-record] docs/progress/WORKLOG.md references decision record
+  0027, but no file starting with "0027-" exists in docs/decisions/`. The
+  reference belonged to the concurrent M1-T3/M1-T5 entry, which planned ADR-0027
+  before writing the file; `docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md`
+  landed between the two runs and the check went green. Nothing in this task
+  caused or fixed it. This entry references no decision record.
+- `pnpm exec biome format` on the three changed files — not applicable; Biome's
+  configuration ignores Markdown ("No files were processed in the specified
+  paths"). No formatting gate applies to this task's output.
+
+### Decisions / deviations
+
+- **No eve server was started and no turn was run.** The task scope allowed
+  read-only commands plus `eve info` and `eve build`, and a model-calling run
+  needs `AI_GATEWAY_API_KEY`, which is deliberately unset. §10 of the note records
+  this explicitly and gives the exact commands the M1-T6 implementer must run to
+  confirm that a `mockModel` fixture agent serves a turn offline. If it does not,
+  every end-to-end adapter test needs a credential.
+- **The note recommends consuming the `eve/client` event stream rather than
+  `eve/hooks` for M1 tracing**, which reads against the letter of ADR-0012's
+  "agent-runtime observation MUST go through `eve/hooks`". The argument (note §5)
+  is that it is the same documented event stream with the same envelope — eve's
+  own docs say so — and that a hook runs in the server process and cannot reach
+  the caller's `TraceWriter`. Raised as open question 8 rather than decided here;
+  the recommendation is a short ADR-0012 clarification.
+
+### Known issues / blockers
+
+- None from this task. (`pnpm check:handoff` passes; see Verification for the
+  transient ADR-0027 failure that resolved itself.)
+- Open questions for the orchestrator, in note §14: who owns the eve server
+  process; structured output vs text (couples to M1-T3's `Schema<T>`); whether a
+  `mockModel` agent serves a turn offline; whether to set `defaultTools: false`
+  on the example agent; one example app root or a second fixture root; whether
+  permission enforcement by observation satisfies M1; whether a run should
+  `reset()` its session; and the ADR-0012 reading above.
+
+### Next exact step
+
+Orchestrator reads
+`docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md` §12 and §14 and
+settles the eight open questions, in particular who owns the eve server process
+(question 1) and whether the example agent sets `defaultTools: false`
+(question 4), since both change M1-T6's scope. M1-T6 then pastes the §13
+`Implementation references` block into its own `started` entry.
+
+## 2026-09-19 17:55 — M1-T3, M1-T5 — `defineDomain()` and the `AgentRuntime` contract
+
+**Status:** completed
+**Actor/session:** coding agent (implementation subagent)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above (2026-09-19 17:38): `Job`, `DomainDefinition`, the
+schema abstraction, `defineDomain()`, `AgentRuntime` and `AgentExecution` in
+`@internal/core`; a `FakeAgentRuntime` in `@internal/testing`; and the
+vendor-triage domain definition with real `zod` schemas in
+`apps/example-agent`. Not in scope and not done: `createHarness()` (M1-T4),
+`EveAgentRuntime` (M1-T6), `CapabilityRegistry` (M1-T9).
+
+### Implementation references
+
+Recorded in full in the `started` entry. Summary of what was verified against
+the installed packages rather than assumed:
+
+- `zod@4.6.5`, resolved from `apps/example-agent` to
+  `node_modules/.pnpm/zod@4.6.5/node_modules/zod/`. Its
+  `v4/core/standard-schema.d.ts` declares `StandardSchemaV1` with `~standard`
+  carrying `version: 1`, `vendor: string`, optional `types`, and
+  `validate: (value, options?) => Result<Output> | Promise<Result<Output>>`;
+  `Issue.path` is `ReadonlyArray<PropertyKey | PathSegment>` with
+  `PathSegment = { key: PropertyKey }`. `v4/core/schemas.d.ts` lines 106-112
+  declare `"~standard": $ZodStandardSchema<this>` on `$ZodType`, so every zod
+  schema is one.
+- <https://standardschema.dev>, fetched 2026-09-19: identical interface, spec
+  version 1.
+- Probed at runtime against the installed package: `vendor: "zod"`, `validate`
+  answers synchronously for object schemas, and failure paths are bare
+  `string`/`number` segments (e.g. `["b", 0, "c"]`), never the `{ key }` form.
+  The harness handles both anyway, because the spec permits both.
+- `typescript@6.0.3`, `vitest@5.0.1`, Node 24.21.0, pnpm 12.4.2.
+
+### Work completed
+
+- **`@internal/core`, schema boundary (`src/schema.ts`).** `Schema<TOutput,
+  TInput = unknown>` plus `SchemaProps`, `SchemaTypes`, `SchemaIssue`,
+  `SchemaPathSegment`, `SchemaResult`/`SchemaSuccessResult`/
+  `SchemaFailureResult`, `InferSchemaInput`/`InferSchemaOutput`, `isSchema`,
+  `assertIsSchema` and `validateWith`. A harness-owned copy of Standard Schema
+  v1 with an attribution comment; core imports nothing. `validateWith` is the
+  single point where a schema failure becomes a `ValidationError`, normalizing
+  both path forms.
+- **`@internal/core`, `Job` (`src/job.ts`).** `Job<TInput, TOutput>` and
+  `JobContracts`, exactly build plan section 5, readonly throughout. `TOutput`
+  is phantom, carried by an optional `unique symbol`-keyed marker so
+  `AgentRuntime.run` can infer it; `JOB_OUTPUT_TYPE` is `declare`d (nothing is
+  emitted) and deliberately not re-exported from the barrel.
+- **`@internal/core`, `defineDomain()` (`src/domain.ts`).** `DomainDefinition`,
+  `DefineDomainConfig`, `CreateJobInput`, `DomainEval`, `defineDomain`.
+  Validates `id`, `version`, both schemas and `createJob`; returns a frozen
+  definition whose `createJob` stamps `domain`, generates `id`, checks the
+  domain's returned body, applies defaults and freezes the job.
+- **`@internal/core`, `AgentRuntime` (`src/agent-runtime.ts`).** `AgentRuntime`,
+  `AgentExecution` (discriminated union on `status`),
+  `CompletedAgentExecution`, `FailedAgentExecution`, `AbortedAgentExecution`,
+  `AgentExecutionUsage`. No `eve`/AI SDK concept in any of it.
+- **`@internal/testing`, `createFakeAgentRuntime()`
+  (`src/fake-agent-runtime.ts`).** Scripted `result` or `handler`, `calls`
+  recording, configurable `delayMs`, and abort handling on both an
+  already-aborted signal and one that fires mid-run. `@internal/core` added as
+  a `dependency` (`workspace:*`); lockfile updated.
+- **`apps/example-agent/src/domain/`.** `schemas.ts` (zod input/output, field
+  names matching `agent/instructions.md`), `procurement-sop.ts` (invented SOP),
+  `index.ts` (`vendorTriage = defineDomain({...})` with the job factory and two
+  fixture evals built from the `Northwind Ledger` and `Cobalt Harbor Logistics`
+  fixtures). `@internal/core` added as a dependency.
+- **Documentation.** ADR-0027, three contract docs, and updates to the
+  contracts README, decisions README, AGENTS.md, the examples README, the
+  system map and the milestone file.
+
+### Files changed
+
+- `packages/core/src/schema.ts`, `job.ts`, `domain.ts`, `agent-runtime.ts` (new)
+- `packages/core/src/schema.test.ts`, `domain.test.ts`, `agent-runtime.test.ts` (new)
+- `packages/core/src/index.ts` (barrel: new exports, header updated)
+- `packages/testing/src/fake-agent-runtime.ts`, `fake-agent-runtime.test.ts` (new)
+- `packages/testing/src/index.ts`, `packages/testing/package.json`
+- `apps/example-agent/src/domain/schemas.ts`, `procurement-sop.ts`, `index.ts`,
+  `domain.test.ts` (new)
+- `apps/example-agent/package.json`, `apps/example-agent/src/dependency-pins.test.ts`
+- `pnpm-lock.yaml`
+- `docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md` (new)
+- `docs/contracts/job.md`, `domain-definition.md`, `agent-runtime.md` (new)
+- `docs/contracts/README.md`, `docs/decisions/README.md`, `AGENTS.md`,
+  `docs/examples/README.md`, `docs/architecture/system-map.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md`
+- `docs/progress/WORKLOG.md`
+
+### Verification
+
+- `pnpm install --frozen-lockfile` — PASS (lockfile up to date after the two
+  new workspace dependencies).
+- `pnpm test:unit` — PASS. 17 files, 235 tests (was 12 files, 156 tests).
+- `pnpm check` — PASS, every stage: `format:check` (70 files), `lint`
+  (70 files), `typecheck` (5 packages), `test` (17 files, 235 tests), `build`
+  (5 tasks including `eve build`), `check:handoff` OK.
+- `pnpm --filter @internal/example-agent run info` — `Compile ready`,
+  `Diagnostics 0 errors, 0 warnings`, 1 skill, 9 tools. Unchanged by
+  `src/domain/`: eve compiles only `agent/`. (Note: `pnpm --filter ... info`
+  without `run` is pnpm's own `info` command and fails with a registry 404; the
+  script form is the one to use, as `docs/examples/README.md` already says.)
+- `packages/core/package.json` has no `dependencies` key at all — PASS.
+- `grep -rn ": any\|<any>\|as any" packages/core/src` — no matches — PASS.
+
+### Decisions / deviations
+
+- **ADR-0027, Standard Schema v1 declared structurally in core.** The material
+  decision; alternatives (depend on zod, per-library adapters, JSON Schema
+  strings) are recorded there.
+- **A `symbol` path segment is rendered with `String()`, not dropped.** The
+  task brief suggested dropping it. Dropping a middle segment silently produces
+  a path pointing at a different field, which is the kind of quiet corruption
+  this repository's own fixture module argues against; `"Symbol(k)"` keeps the
+  position honest and is still a `string`. Covered by a unit test.
+- **A malformed schema throws `ValidationError`, not `TypeError`**, with a
+  root-path issue, so every failure crossing a harness boundary has one type to
+  catch. Same for a schema whose `validate` throws (original kept in `cause`).
+- **A domain cannot state its own `domain` reference.** `CreateJobInput` is
+  `Job` minus `id` and `domain`; the mismatch the brief asked to assert against
+  is instead unstatable. Project decision.
+- **`createJob` does not validate input.** M1-T4 owns the single choke point.
+  Asserted by a test.
+- **`DomainEval` is `{ id, description, input, expect? }`**, where `expect`
+  throws to fail. M1 shape; M6 owns evals. Project decision.
+- **No `isAgentExecutionCompleted` guard.** `status === "completed"` narrows
+  natively, so the guard did not earn its place.
+- **Job ids are `crypto.randomUUID()`** in M1. M2-T1 replaces the scheme;
+  nothing may parse the current format.
+- **`defineDomain`'s id rule is deliberately lenient** (letters, digits, `.`,
+  `-`, `_`, starting alphanumeric). It bans whitespace, `/` and `@` so a
+  contract reference such as `vendor-triage.input@1.0.0` stays unambiguous.
+  `version` is strict: exactly `major.minor.patch`.
+- **One type assertion exists**, in `createFakeAgentRuntime`, converting a
+  scripted `AgentExecution` to `AgentExecution<TOutput>`. It is in
+  `@internal/testing`, not core, is confined to one named function, and is
+  itself an argument for the harness re-validating a claimed output.
+- **`apps/example-agent/src/dependency-pins.test.ts` was adjusted** to exclude
+  `@internal/*` from the pin assertions (a `workspace:*` range is not a version
+  to pin) and to assert the new `@internal/core` dependency instead.
+- `agent/instructions.md` and `agent/skills/triage-vendor.md` were **not**
+  edited: the schema field names were chosen to match what they already say.
+
+### Known issues / blockers
+
+- None. Two milestone acceptance criteria are met only at the schema level
+  ("input is validated", "one intentionally invalid output fails closed"); the
+  end-to-end versions need `createHarness()` (M1-T4), which is where the
+  criteria are actually claimed.
+- "Cancellation reaches the runtime" is proven for the contract and the fake.
+  That it reaches `eve` remains M1-T6's to prove.
+
+### Next exact step
+
+**M1-T4, `createHarness()`**. It now has everything it needs:
+`vendorTriage.inputSchema`/`outputSchema` and `validateWith()` for the two
+validation points, `vendorTriage.createJob()` for the job,
+`createExecutionContext()` for the context, and `createFakeAgentRuntime()` from
+`@internal/testing` to run against in tests without `eve`. M1-T6 and M1-T9 are
+independent of it and of each other.

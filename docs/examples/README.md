@@ -22,7 +22,58 @@ research-like while staying uncoupled from any future real domain.
 | `agent/tools/web_search.ts`, `agent/tools/web_fetch.ts` | `disableTool()` at eve's own slots, so the agent cannot reach the live web. |
 | `agent/lib/vendor-fixtures.ts` | Three fictional vendors and their frozen evidence documents. |
 | `agent/lib/vendor-evidence.ts` | The pure lookup the tool calls, plus its unit test. |
+| `src/domain/schemas.ts` | The `zod` input and output schemas, field names matching the instructions. |
+| `src/domain/procurement-sop.ts` | The invented SOP the fixture evals triage against. |
+| `src/domain/index.ts` | The `defineDomain()` call: `vendorTriage`, with its job factory and two fixture evals. |
 | `src/dependency-pins.test.ts` | ADR-0024's installed-version assertion for `eve`, `ai` and `zod`. |
+
+### The two halves, and the line between them
+
+`agent/` is authored for `eve`. `src/domain/` is authored for the harness.
+**Neither imports the other's framework**: nothing under `agent/` imports
+`@internal/core`, and nothing under `src/domain/` imports `eve`. That is what a
+real consuming domain repository looks like under
+[ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md):
+it authors an agent the normal way and runs it through the harness API.
+
+`eve` compiles only `agent/`, so `src/` is invisible to it; `eve info` reports
+the same 1 skill and 9 tools it did before the domain existed.
+
+### The domain definition
+
+`src/domain/index.ts` exports `vendorTriage`, built by `defineDomain()` (M1-T3):
+
+```ts
+export const vendorTriage = defineDomain({
+  id: "vendor-triage",
+  version: "1.0.0",
+  inputSchema: vendorTriageInputSchema,
+  outputSchema: vendorTriageOutputSchema,
+  createJob,
+  evals: [/* two fixture cases */],
+});
+```
+
+The schemas are plain `zod`. The harness never sees `zod`: `@internal/core`
+declares the Standard Schema shape structurally, so a `zod` schema satisfies
+`Schema<T>` with no adapter ([ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md)).
+The contract details are in
+[`docs/contracts/domain-definition.md`](../contracts/domain-definition.md).
+
+`createJob` produces a `vendor-triage` job with an objective naming the vendor,
+the three string contract references, a budget of 8 model calls, 8 tool calls
+and 120 seconds, and exactly one permission: `lookup_vendor_evidence` in `read`
+mode, matching the one tool the agent has.
+
+The two evals are built from the fixture vendors: `Northwind Ledger`, which is
+well documented and should not be escalated, and `Cobalt Harbor Logistics`,
+whose unverified banking-detail change must raise a risk flag and must not be
+waved through. **Nothing runs them yet**; M6 owns evals.
+
+`src/domain/domain.test.ts` validates real inputs and outputs through
+`validateWith()`, including an output that invents a decision the SOP does not
+allow. That is the schema-level form of Milestone 1's "one intentionally invalid
+output fails closed"; the end-to-end form arrives with `createHarness()`.
 
 Everything is deterministic and offline. The milestone's instruction is to use local fixture tools
 before adding live web research, so the fixture data is the whole evidence universe and the two
@@ -34,13 +85,17 @@ invented, and every website is a reserved `.example` domain.
 
 ### What it does not do yet
 
-**Nothing runs it.** As of M1-T2 the example is authored files plus a pure fixture module. It makes
-no model call, and the repository's tests make none either.
+**Nothing runs it.** As of M1-T3 the example is authored files, a pure fixture module and a
+registered domain definition. It makes no model call, and the repository's tests make none either.
 
-`createHarness()` arrives in M1-T4, and Milestone 1's acceptance criterion is that the example
-calls the harness API rather than the `eve` runtime directly. `pnpm example:run` belongs to that
-task. The example has no `defineDomain()` registration yet (M1-T3) and no capability manifest
-(M1-T9).
+How it will be run: `createHarness({ agentRuntime, storage })` arrives in M1-T4 and takes
+`{ domain: vendorTriage, input }`. It validates the input against `vendorTriage.inputSchema`,
+calls `vendorTriage.createJob(input)`, hands the job and an `ExecutionContext` to an
+[`AgentRuntime`](../contracts/agent-runtime.md), and re-validates the returned output against
+`vendorTriage.outputSchema` before returning it. The runtime is `EveAgentRuntime` (M1-T6) in
+practice and `createFakeAgentRuntime()` from `@internal/testing` in tests. `pnpm example:run`
+belongs to M1-T4, and so does the acceptance criterion that the example calls the harness API
+rather than the `eve` runtime directly. The example has no capability manifest yet (M1-T9).
 
 ### Running the discovery check
 

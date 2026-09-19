@@ -1,7 +1,7 @@
 # Milestone 1, Local Agent + Public Harness Boundary
 
-**Status:** in progress. M1-T1, M1-T2, M1-T7 and M1-T8 are `completed`; M1-T3 through M1-T6 and
-M1-T9 are `not started`.
+**Status:** in progress. M1-T1, M1-T2, M1-T3, M1-T5, M1-T7 and M1-T8 are `completed`; M1-T4,
+M1-T6 and M1-T9 are `not started`.
 
 **Goal (from the build plan):** run one neutral `eve` agent locally through the harness API. Do
 not add compilation yet.
@@ -90,7 +90,8 @@ in the repository. Read them before opening any M1 task.
 
 ## Tasks
 
-M1-T1, M1-T2, M1-T7 and M1-T8 are `completed`. M1-T3 through M1-T6 and M1-T9 are `not started`.
+M1-T1, M1-T2, M1-T3, M1-T5, M1-T7 and M1-T8 are `completed`. M1-T4, M1-T6 and M1-T9 are
+`not started`.
 
 ### M1-T1, Install AI SDK and `eve`
 
@@ -168,7 +169,7 @@ passes.
 
 ### M1-T3, `defineDomain()`
 
-**Status:** not started.
+**Status:** completed (2026-09-19).
 
 Implement the public `defineDomain()` API. Target shape from the plan:
 
@@ -182,6 +183,43 @@ export const vendorTriage = defineDomain({
   evals,
 });
 ```
+
+**Result.** `@internal/core` now has `Job`, `DomainDefinition`, `defineDomain()` and the schema
+boundary the build plan names but never defines, and `apps/example-agent/src/domain/` is the
+worked example: `zod` schemas, an invented procurement SOP, and the `defineDomain()` call above,
+character for character. The example agent therefore has both halves a consuming domain
+repository has, and neither crosses: nothing under `agent/` imports the harness, nothing under
+`src/domain/` imports `eve`, and `eve info` still reports `Compile ready`, 0 diagnostics, 1 skill
+and 9 tools.
+
+The one question the build plan left open was what `Schema<T>` is.
+[ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md) answers it:
+**Standard Schema v1, declared structurally in core.** `packages/core/src/schema.ts` holds a
+harness-owned copy of the specification's interface, so `@internal/core` keeps zero dependencies
+while a domain writes plain `zod` and it just fits, with no adapter and no registration. The
+installed `zod@4.6.5` declares `"~standard": $ZodStandardSchema<this>` on every schema type
+(`zod/v4/core/schemas.d.ts`), and the copy it ships of the specification
+(`zod/v4/core/standard-schema.d.ts`) is identical to the one published at
+<https://standardschema.dev>. `validateWith()` is the single point where a schema failure becomes
+a `ValidationError`, normalizing both path forms the specification allows; a `symbol` segment is
+rendered with `String()` rather than dropped, because dropping a middle segment would point the
+path at a different field.
+
+Three project decisions beyond the ADR, recorded in the WORKLOG rather than as separate ADRs:
+
+- **A domain cannot state its own `domain` reference.** Its `createJob` returns
+  `CreateJobInput<TInput>`, a `Job` minus `id` and `domain`, and `defineDomain()` stamps both.
+  Making the disagreement unstatable is stronger than validating it away.
+- **`createJob` does not validate its input.** Validation before execution belongs to
+  `createHarness()` (M1-T4), so there is one choke point rather than two. A unit test asserts it:
+  `createJob` succeeds even when the domain's `inputSchema` rejects everything.
+- **`DomainEval` is the smallest shape a fixture case needs** (`id`, `description`, `input`, and
+  an optional `expect` that throws to fail). M6 owns evals, and nothing runs these cases yet.
+
+Job ids come from `crypto.randomUUID()`; **M2-T1 replaces the scheme** and nothing may parse the
+current format. Contracts:
+[`../contracts/domain-definition.md`](../contracts/domain-definition.md) and
+[`../contracts/job.md`](../contracts/job.md). `pnpm check` passes.
 
 ### M1-T4, `createHarness()`
 
@@ -203,10 +241,39 @@ const result = await harness.run({
 
 ### M1-T5, AI SDK runtime contract
 
-**Status:** not started.
+**Status:** completed (2026-09-19).
 
 Implement the `AgentRuntime` contract. AI SDK concepts stay at this boundary and must not leak
 past it.
+
+**Result.** `packages/core/src/agent-runtime.ts` declares `AgentRuntime.run(job, context)`
+exactly as build plan section 5 states it, plus the `AgentExecution<TOutput>` result the plan
+names but does not define. It is a discriminated union on `status`, so "completed with no output"
+is not expressible: `completed` carries `output`, `failed` carries a `SerializedHarnessError`, and
+`aborted` carries neither. Every variant carries `usage` (the four dimensions `Budget` limits,
+with `costUsd` optional because a faked runtime genuinely has none), `runtime` and optional
+`metadata`. No type guard is exported, because `execution.status === "completed"` already narrows.
+
+Nothing from `eve` or the AI SDK appears in the type: no messages, no steps, no sessions, no
+tool-call transcript. Those reach the outside world as trace events (M2) or through `metadata`,
+which is the boundary ADR-0003 draws. Two obligations the signature cannot express are documented
+instead: an implementation must propagate `context.signal` and resolve `aborted` rather than
+hanging, and must not throw for an agent failure. A failure is returned rather than thrown because
+a failed run is a result with usage attached.
+
+`createFakeAgentRuntime()` in `@internal/testing` is the first implementation and the one that
+meets the acceptance criterion "a fake `AgentRuntime` can replace `EveAgentRuntime` in a unit
+test". It takes a fixed `result` or a `handler`, records every call as `{ job, context }`, and
+honours cancellation the way the contract requires: an already-aborted signal resolves `aborted`
+without consulting the handler at all, and a signal firing during the configurable `delayMs` does
+the same, with the call still recorded either way. That is the first proof in the repository that
+**cancellation reaches a runtime**; proving it reaches `eve` is M1-T6's. `@internal/testing` now
+depends on `@internal/core`, which is library-to-library and untouched by the boundary rule.
+
+The re-validation of a claimed output is deliberately **not** here: a runtime asserts its output
+type, it does not prove it, so `createHarness()` (M1-T4) re-validates against the domain's
+`outputSchema`. Contract: [`../contracts/agent-runtime.md`](../contracts/agent-runtime.md).
+`pnpm check` passes.
 
 ### M1-T6, Eve adapter
 
@@ -290,17 +357,24 @@ serializable manifest must not contain function bodies or secrets.
 
 ## Acceptance criteria
 
-From the build plan. None are met yet: M1-T1 installed the dependencies but built no runtime, and
-every criterion below needs M1-T2 or later.
+From the build plan. Two are met as of M1-T3/M1-T5, and one more is met at the schema level;
+every other needs M1-T4, M1-T6 or M1-T9.
 
-- `pnpm example:run` executes the neutral agent locally.
-- Input is validated before execution.
-- Output is validated before success.
-- Core imports neither `eve` nor Supabase.
-- The example calls the harness API rather than the `eve` runtime directly.
-- A fake `AgentRuntime` can replace `EveAgentRuntime` in a unit test.
-- Cancellation/abort signal reaches the runtime.
-- One intentionally invalid output fails closed.
+- `pnpm example:run` executes the neutral agent locally. **Not met** (M1-T4).
+- Input is validated before execution. **Not met** (M1-T4 owns the choke point); the schema and
+  its `ValidationError` exist and are tested.
+- Output is validated before success. **Not met** (M1-T4).
+- Core imports neither `eve` nor Supabase. **Met**, and enforced by the boundary test.
+  `@internal/core` still declares no dependency at all.
+- The example calls the harness API rather than the `eve` runtime directly. **Not met** (M1-T4).
+- A fake `AgentRuntime` can replace `EveAgentRuntime` in a unit test. **Met** by
+  `createFakeAgentRuntime()` (M1-T5), pending the real adapter to be replaced.
+- Cancellation/abort signal reaches the runtime. **Met for the contract and the fake** (M1-T5);
+  that it reaches `eve` is M1-T6's to prove.
+- One intentionally invalid output fails closed. **Met at the schema level**: an output inventing a
+  decision the SOP does not allow is rejected with the issue pointing at
+  `recommendation.decision` (`apps/example-agent/src/domain/domain.test.ts`). End to end through
+  the harness is M1-T4.
 - The example domain can serialize its capability manifest.
 - Duplicate capability ID/version registration fails.
 - The manifest contains module/export metadata but no executable source or secrets.

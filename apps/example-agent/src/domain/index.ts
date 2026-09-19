@@ -1,0 +1,104 @@
+import { type CreateJobInput, defineDomain } from "@internal/core";
+import { PROCUREMENT_SOP } from "./procurement-sop.js";
+import {
+  type VendorTriageInput,
+  vendorTriageInputSchema,
+  vendorTriageOutputSchema,
+} from "./schemas.js";
+
+/**
+ * The vendor-triage domain definition.
+ *
+ * This is the example's side of the harness boundary: the agent under `agent/`
+ * is authored for `eve`, and this file is what the harness is handed. Nothing
+ * here imports `eve`, and nothing under `agent/` imports the harness.
+ *
+ * **Nothing runs it yet.** `createHarness()` is M1-T4 and `EveAgentRuntime` is
+ * M1-T6; until both exist there is no `pnpm example:run`. What exists today is
+ * a registered domain whose schemas a unit test can validate against, including
+ * the Milestone 1 criterion that an intentionally invalid output fails closed.
+ */
+
+/** How many model calls one triage may make before the budget stops it. */
+const MAX_MODEL_CALLS = 8;
+
+/** How many tool calls one triage may make. */
+const MAX_TOOL_CALLS = 8;
+
+/** How long one triage may run, in milliseconds. */
+const MAX_DURATION_MS = 120_000;
+
+function createJob(input: VendorTriageInput): CreateJobInput<VendorTriageInput> {
+  return {
+    jobType: "vendor-triage",
+    objective: `Triage ${input.vendorName} against the supplied procurement SOP and recommend what should happen next.`,
+    input,
+    // String references, resolved by the capability registry in M1-T9. They are
+    // written by hand here because nothing yet resolves them, and a reference
+    // that names a schema is more honest than embedding one that cannot be
+    // serialized into a trace.
+    contracts: {
+      inputSchema: "vendor-triage.input@1.0.0",
+      outputSchema: "vendor-triage.output@1.0.0",
+      sop: "procurement-sop",
+    },
+    budget: {
+      maxModelCalls: MAX_MODEL_CALLS,
+      maxToolCalls: MAX_TOOL_CALLS,
+      maxDurationMs: MAX_DURATION_MS,
+    },
+    // The one tool the agent has. `read` because the tool reads frozen fixture
+    // data and changes nothing; the agent's own `approval: never()` and the
+    // pure `agent/lib/` module are the other two halves of that claim.
+    permissions: [{ toolId: "lookup_vendor_evidence", mode: "read" }],
+    metadata: { fixtureEvidenceOnly: true },
+  };
+}
+
+export const vendorTriage = defineDomain({
+  id: "vendor-triage",
+  version: "1.0.0",
+  inputSchema: vendorTriageInputSchema,
+  outputSchema: vendorTriageOutputSchema,
+  createJob,
+  evals: [
+    {
+      id: "northwind-ledger-well-documented",
+      description:
+        "A vendor whose evidence meets most of the SOP should not be escalated, and should cite what it rests on.",
+      input: {
+        vendorName: "Northwind Ledger",
+        procurementSop: PROCUREMENT_SOP,
+      },
+      expect(output) {
+        if (output.recommendation.decision === "escalate") {
+          throw new Error("a well-documented vendor should not be escalated");
+        }
+        if (output.evidence.length === 0) {
+          throw new Error("every triage must cite its evidence");
+        }
+      },
+    },
+    {
+      id: "cobalt-harbor-payment-change",
+      description:
+        "A vendor with an unverified banking-detail change must raise a risk flag and must not be waved through.",
+      input: {
+        vendorName: "Cobalt Harbor Logistics",
+        procurementSop: PROCUREMENT_SOP,
+      },
+      expect(output) {
+        if (output.riskFlags.length === 0) {
+          throw new Error("the payment-change evidence must raise at least one risk flag");
+        }
+        if (output.recommendation.decision === "proceed") {
+          throw new Error("no triage may recommend proceeding while a risk flag is open");
+        }
+      },
+    },
+  ],
+});
+
+export { PROCUREMENT_SOP } from "./procurement-sop.js";
+export type { VendorTriageInput, VendorTriageOutput } from "./schemas.js";
+export { vendorTriageInputSchema, vendorTriageOutputSchema } from "./schemas.js";

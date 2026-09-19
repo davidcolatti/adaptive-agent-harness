@@ -95,10 +95,11 @@ adaptive-agent-harness/
 │       └── src/
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
-│   ├── core/                    # harness core contracts; ExecutionContext + errors (M1-T7/T8)
-│   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; AgentRuntime lands in M1-T5
+│   ├── core/                    # harness core contracts; context, errors, schema,
+│   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
+│   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
 │   ├── runtime-eve/             # `eve` adapter; EveAgentRuntime lands in M1-T6
-│   └── testing/                 # shared test helpers
+│   └── testing/                 # shared test helpers; fake clock, fake AgentRuntime
 ├── docs/
 │   ├── README.md
 │   ├── context/current-state.md
@@ -109,7 +110,7 @@ adaptive-agent-harness/
 │   ├── architecture/system-map.md
 │   ├── contracts/README.md
 │   ├── concepts/README.md
-│   ├── decisions/               # 0000-template.md plus ADRs 0001-0026
+│   ├── decisions/               # 0000-template.md plus ADRs 0001-0027
 │   ├── development/
 │   │   ├── local-setup.md
 │   │   ├── commands.md
@@ -527,7 +528,10 @@ records that `apps/*` packages are domain consumers and may author `eve` agents
 directly, grounded in
 `docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md`. ADR-0026 records
 what "trace-safe" means for the M1-T8 error taxonomy: a whitelisted, stack-free
-serialization with a stable `code` discriminant. The next free number is 0027.
+serialization with a stable `code` discriminant. ADR-0027 records the M1-T3
+schema contract: Standard Schema v1, declared structurally in `@internal/core`
+so the package keeps zero dependencies while domains author schemas in `zod`.
+The next free number is 0028.
 
 ## Scope discipline
 
@@ -555,8 +559,9 @@ stayed intentionally empty (`export {}`) through Milestone 0 rather than
 inventing placeholder abstractions early, and began filling only when M1-T7 and
 M1-T8 had a real contract to put there. The same rule still applies to what is
 not yet written: `TraceEvent` in core is a five-field M1 placeholder because
-M2-T3 owns the real schema, and no `Job`, `AgentRuntime` or registry type
-exists until the task that needs it.
+M2-T3 owns the real schema, `DomainEval` is the smallest shape a fixture case
+needs because M6 owns evals, and no capability-registry type exists until
+M1-T9 needs it.
 
 ## Git discipline
 

@@ -17,4 +17,14 @@ convention `docs/research/vercel/YYYY-MM-DD-<slug>.md` and covering findings abo
   eve's optional default tools (including the live web tools this fixture domain disables), the
   exact `eve info` and `eve build` output, and the questions M1-T4 and M1-T6 still have to answer.
 
+- [`2026-09-19-m1-eve-programmatic-execution.md`](2026-09-19-m1-eve-programmatic-execution.md):
+  the M1-T6 research checkpoint, answering how a TypeScript caller drives an `eve` agent. Records
+  that `eve` 0.63.0 exposes no in-process run API and that `eve/client` over HTTP against a running
+  server is the documented surface (eve's own Next/Nuxt/SvelteKit adapters spawn one as a child
+  process); covers per-turn `outputSchema`, `mockModel` as the credential-free test double, turn
+  cancellation through `MessageResponse.cancel()`, the `step.completed` usage and cost fields the
+  harness must aggregate itself, why per-run tool permissions and `Job.budget` have no eve
+  equivalent, what a run writes under `.eve/`, the built-in `agent` tool's cost at zero subagents,
+  and a recommended `EveAgentRuntime` design with every step marked documented or harness-owned.
+
 The Workflow SDK and `@vercel/sandbox` are still not installed, so no note covers them yet.

@@ -1,7 +1,7 @@
 # Milestone 2, Job, Trace, Supabase, and Run Ledger
 
-**Status:** M2-T1 through M2-T4 are `completed`; M2-T8, M2-T9 and M2-T11 are `in_progress`; M2-T5,
-M2-T6, M2-T7 and M2-T10 are `not started`.
+**Status:** M2-T1 through M2-T4, M2-T8, M2-T9 and M2-T11 are `completed`; M2-T5, M2-T6 and M2-T7
+are `in_progress`; M2-T10 is `not started`.
 
 **Goal (from the build plan):** make every execution reproducible enough to inspect and later
 replay.
@@ -294,7 +294,7 @@ Use a buffered writer locally but preserve event order.
 
 ### M2-T5, Supabase schema
 
-**Status:** not started.
+**Status:** in_progress.
 
 Initial tables:
 
@@ -319,7 +319,7 @@ metadata in columns and versioned payloads in JSONB.
 
 ### M2-T6, Migrations
 
-**Status:** not started.
+**Status:** in_progress.
 
 All schema changes are SQL migrations committed to Git.
 
@@ -327,7 +327,7 @@ Never mutate production-like schema manually from the dashboard without generati
 
 ### M2-T7, Outcome ledger
 
-**Status:** not started.
+**Status:** in_progress.
 
 One query-friendly row per run:
 

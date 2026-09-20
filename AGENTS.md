@@ -101,6 +101,7 @@ adaptive-agent-harness/
 │   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
 │   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
+│   ├── storage-supabase/        # Supabase adapter (declared adapter); generated database.types.ts (M2-T11)
 │   ├── testing/                 # shared test helpers; fake clock, fake AgentRuntime
 │   └── trace/                   # buffered order-preserving TraceWriter + sinks (M2-T4)
 ├── docs/
@@ -132,6 +133,7 @@ adaptive-agent-harness/
 ├── scripts/
 │   ├── verify-handoff.ts
 │   └── verify-handoff.test.ts
+├── supabase/                    # config.toml, migrations/, seed.sql (M2-T11)
 ├── tests/architecture/          # package-boundary rules and test
 ├── tests/toolchain/
 ├── package.json, pnpm-workspace.yaml, turbo.json, biome.json,
@@ -143,12 +145,10 @@ yet built (**planned**):
 
 ```
 apps/playground/                                              (planned, unscheduled)
-packages/storage-supabase/                                    (planned, M2)
 packages/decision-jev/                                        (planned, M3)
 packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)
 packages/observability/                                       (planned)
-supabase/migrations/, supabase/seed.sql                       (planned, M2)
 ```
 
 Per-topic architecture docs (`runtime.md`, `workflow-ir.md`, ...) and the
@@ -252,6 +252,10 @@ Every root script (`package.json`):
 | `pnpm example:run:mock` | The same path against `apps/eve-fixture-agent`, whose model is eve's `mockModel`. No credential. |
 | `pnpm check` | The single local quality gate: `format:check && lint && typecheck && test && build && check:handoff`, in that order. |
 | `pnpm prepare` | `husky`; installs git hooks (`.husky/pre-commit`, `.husky/pre-push`). |
+| `pnpm supabase:start` | `supabase start`; starts the local Supabase stack in Docker. |
+| `pnpm supabase:stop` | `supabase stop`; stops the containers, keeping the data volume. |
+| `pnpm supabase:reset` | `supabase db reset`; the reproducibility gate: applies committed migrations, then `supabase/seed.sql`, from an empty database. |
+| `pnpm supabase:types` | Regenerates `packages/storage-supabase/src/database.types.ts` from the running local database (shell redirection; a failed generation truncates the file). |
 
 Per-package scripts run the same way everywhere else in the workspace:
 `pnpm --filter <package-name> <script>`, e.g.
@@ -277,7 +281,10 @@ Per-package scripts run the same way everywhere else in the workspace:
 `engines.node` in `package.json` is declarative only: pnpm 12.4.2 does not
 fail installs on the project's own `engines` field (verified, see
 `docs/research/tooling/2026-09-19-m0-toolchain-verification.md`); the Node
-pin is enforced by `.node-version`/`.nvmrc` locally and by CI.
+pin is enforced by `.node-version`/`.nvmrc` locally and by CI. The Supabase CLI
+is pinned the same way (`supabase` in root `devDependencies`, asserted by
+`tests/toolchain/supabase-cli-pin.test.ts`), and Docker must be running for
+every `pnpm supabase:*` command.
 
 ## Definition of done and testing requirements
 
@@ -556,9 +563,18 @@ eve-to-taxonomy mapping, and the buffered writer's ordering and failure
 semantics. ADR-0032 records M2-T2: jobs are deeply immutable as far as they are
 JSON-representable, the effective job built by `createHarness()` is the job,
 creation time is derived from the UUIDv7 id, and `parseJob()` is the strict read
-boundary.
-ADR numbers 0033, 0034 and 0035 are reserved for the in-flight M2-T11, M2-T8 and
-M2-T9 tasks; the next free number after those is 0036.
+boundary. ADR-0033 records M2-T11: the Supabase CLI is a pinned root dev
+dependency driven only through `pnpm supabase:*`, `supabase db reset` is the
+reproducibility gate, and the generated `database.types.ts` is committed and
+drift-checked by the `supabase-types` CI job. ADR-0034 records M2-T8: the
+behavior fingerprint is component-wise (instructions, SOP, skills, tools,
+model, schemas, workflow IR, policy; scheme 1), supplied by the domain through
+`DomainDefinition.behavior`, and resolved by `createHarness()` before
+`run.started`. ADR-0035 records M2-T9: redaction is a `TraceWriter` decorator
+placed above the buffer, with field-path, secret-pattern, header and
+tool-sanitizer rules and `[REDACTED:<rule>]` tokens.
+ADR number 0036 is reserved for the in-flight M2-T5/T6/T7 storage task; the
+next free number after it is 0037.
 
 ## Scope discipline
 

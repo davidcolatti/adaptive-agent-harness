@@ -3686,7 +3686,7 @@ the Milestone 1 handoff, commit, and record the SHA.
 
 **Status:** completed
 **Actor/session:** coding agent (documentation subagent)
-**Commit:** not committed
+**Commit:** `02b1261`
 
 ### Goal
 
@@ -3757,7 +3757,7 @@ and M2-T4 can proceed in parallel; M2-T5 through M2-T10 wait on M2-T11 (local Su
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, M2-T1 implementer)
-**Commit:** not committed
+**Commit:** `02b1261`
 
 ### Goal
 
@@ -3854,7 +3854,7 @@ ripple, write ADR-0030 and the contract docs, then run the verification chain.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, M2-T1 implementer)
-**Commit:** not committed
+**Commit:** `02b1261`
 
 ### Goal
 
@@ -4052,7 +4052,7 @@ M2-T5 onward still need a local Supabase (M2-T11 first).
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
-**Commit:** not committed
+**Commit:** `5721f7d`
 
 ### Goal
 
@@ -4123,7 +4123,7 @@ ADR-0032; then verify.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
-**Commit:** not committed
+**Commit:** `5721f7d`
 
 ### Goal
 
@@ -4227,7 +4227,7 @@ Write the taxonomy, `TraceEvent` and `TraceRecorder` in `packages/core/src/trace
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
-**Commit:** not committed
+**Commit:** `5721f7d`
 
 ### Goal
 
@@ -4407,7 +4407,7 @@ Supabase first.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
-**Commit:** not committed
+**Commit:** `5721f7d`
 
 ### Goal
 
@@ -4563,7 +4563,7 @@ attempt becomes a row, which is the question `TraceEvent.attempt` deliberately l
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent, concurrent M2 session)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 
@@ -4672,7 +4672,7 @@ the four scripts, then run the reproducibility sequence (`start`, `reset`, `type
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under a Fable orchestrator)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 
@@ -4737,7 +4737,7 @@ and give the example app a real descriptor.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, M2-T9 implementation session)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 
@@ -4801,7 +4801,7 @@ Implement `packages/trace/src/redaction.ts` and `redacting-trace-writer.ts`, wir
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent, concurrent M2 session)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 
@@ -5021,7 +5021,7 @@ pnpm supabase:start && pnpm supabase:reset
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, M2-T9 implementation session)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 
@@ -5176,7 +5176,7 @@ land first.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent under a Fable orchestrator)
-**Commit:** not committed
+**Commit:** `62548d6`
 
 ### Goal
 

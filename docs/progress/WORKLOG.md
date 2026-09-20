@@ -5325,7 +5325,7 @@ task recorded rather than answered.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, 1M context), delegated by the Fable orchestrator
-**Commit:** not committed
+**Commit:** `1b16a1a`
 
 ### Goal
 
@@ -5448,7 +5448,7 @@ adapter, the storage trace sink and the harness wiring.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, 1M context), delegated by the Fable orchestrator
-**Commit:** not committed
+**Commit:** `1b16a1a`
 
 ### Goal
 
@@ -5667,7 +5667,7 @@ record a run made with no database leaves.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, 1M context), on review feedback from the orchestrator
-**Commit:** not committed
+**Commit:** `1b16a1a`
 
 ### Goal
 

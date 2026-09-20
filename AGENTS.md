@@ -133,7 +133,10 @@ adaptive-agent-harness/
 ├── scripts/
 │   ├── verify-handoff.ts
 │   └── verify-handoff.test.ts
-├── supabase/                    # config.toml, migrations/, seed.sql (M2-T11)
+├── supabase/
+│   ├── config.toml
+│   ├── migrations/              # five SQL migrations, thirteen tables (M2-T5/T6)
+│   └── seed.sql
 ├── tests/architecture/          # package-boundary rules and test
 ├── tests/toolchain/
 ├── package.json, pnpm-workspace.yaml, turbo.json, biome.json,
@@ -209,7 +212,8 @@ API rather than the `eve` runtime.
 - **No silent dependency additions.** Verify against actual docs/types, pin
   to an exact version (no `^`/`~`), justify in a WORKLOG entry, and add an ADR
   if it is a material choice.
-- **No direct database access outside `packages/storage-supabase`** (M2).
+- **No direct database access outside `packages/storage-supabase`**, which
+  implements the `Storage` port from `@internal/core`.
 - **No direct model calls outside runtime/decision adapter packages**:
   `runtime-ai-sdk`, `runtime-eve`, `decision-jev` (M1/M3). No harness package
   calls a model provider or `eve` directly. An `apps/*` domain package authors
@@ -572,9 +576,16 @@ model, schemas, workflow IR, policy; scheme 1), supplied by the domain through
 `DomainDefinition.behavior`, and resolved by `createHarness()` before
 `run.started`. ADR-0035 records M2-T9: redaction is a `TraceWriter` decorator
 placed above the buffer, with field-path, secret-pattern, header and
-tool-sanitizer rules and `[REDACTED:<rule>]` tokens.
-ADR number 0036 is reserved for the in-flight M2-T5/T6/T7 storage task; the
-next free number after it is 0037.
+tool-sanitizer rules and `[REDACTED:<rule>]` tokens. ADR-0036 records
+M2-T5/T6/T7: `Storage` is a port in `@internal/core` with eight async methods
+and keyset paging, implemented by `@internal/storage-supabase` over a pinned
+`@supabase/supabase-js`; the plan's thirteen tables are five SQL migrations
+with `uuid` ids (bytewise ordering verified to equal textual UUIDv7 order),
+RLS enabled with no policies, `runs` as the outcome ledger with no attempts
+table, and trace inserts idempotent on `(run_id, sequence)`; a configured
+store that fails makes `harness.run()` throw `StorageError`.
+ADR number 0037 is reserved for the in-flight M2-T10 inspector task; the next
+free number after it is 0038.
 
 ## Scope discipline
 

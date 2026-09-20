@@ -1,7 +1,6 @@
 # Milestone 2, Job, Trace, Supabase, and Run Ledger
 
-**Status:** M2-T1 through M2-T4, M2-T8, M2-T9 and M2-T11 are `completed`; M2-T5, M2-T6 and M2-T7
-are `in_progress`; M2-T10 is `not started`.
+**Status:** M2-T1 through M2-T9 and M2-T11 are `completed`; M2-T10 is `in_progress`.
 
 **Goal (from the build plan):** make every execution reproducible enough to inspect and later
 replay.
@@ -592,7 +591,7 @@ from [`../contracts/errors.md`](../contracts/errors.md).
 
 ### M2-T10, Local run inspector
 
-**Status:** not started.
+**Status:** in_progress.
 
 CLI:
 

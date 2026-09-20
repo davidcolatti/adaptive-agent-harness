@@ -1,6 +1,8 @@
 import {
+  canTransition,
   DEFAULT_RUN_PAGE_SIZE,
   DEFAULT_TRACE_PAGE_SIZE,
+  DEFAULT_WORKFLOW_VERSION_PAGE_SIZE,
   type Job,
   type JobId,
   type JsonObject,
@@ -9,6 +11,9 @@ import {
   parseJob,
   parseRunRecord,
   parseTraceEvent,
+  parseWorkflowPromotionRecord,
+  parseWorkflowRecord,
+  parseWorkflowVersionRecord,
   type RunFilter,
   type RunFinish,
   type RunId,
@@ -17,12 +22,20 @@ import {
   type RunRecord,
   type RunStart,
   resolvePageLimit,
+  type SetWorkflowVersionStatusInput,
   type Storage,
   StorageError,
   type TraceCursor,
   type TraceEvent,
   type TracePage,
   ValidationError,
+  type WorkflowPromotionRecord,
+  type WorkflowRecord,
+  type WorkflowVersionFilter,
+  type WorkflowVersionId,
+  type WorkflowVersionListCursor,
+  type WorkflowVersionPage,
+  type WorkflowVersionRecord,
 } from "@internal/core";
 import { createRedactor, DEFAULT_REDACTION_POLICY, type RedactionPolicy } from "@internal/trace";
 import { createClient, type PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
@@ -102,6 +115,9 @@ type RunRow = Database["public"]["Tables"]["runs"]["Row"];
 type RunInsert = Database["public"]["Tables"]["runs"]["Insert"];
 type TraceEventRow = Database["public"]["Tables"]["trace_events"]["Row"];
 type TraceEventInsert = Database["public"]["Tables"]["trace_events"]["Insert"];
+type WorkflowRow = Database["public"]["Tables"]["workflow_definitions"]["Row"];
+type WorkflowVersionRow = Database["public"]["Tables"]["workflow_versions"]["Row"];
+type WorkflowPromotionRow = Database["public"]["Tables"]["workflow_promotions"]["Row"];
 
 /**
  * Turn a `PostgrestError` into a {@link StorageError}.
@@ -203,6 +219,53 @@ function readRunRecord(row: RunRow): RunRecord {
  * A row is untrusted input even though this adapter wrote it: the schema can be
  * migrated and a row can be edited by hand.
  */
+/** Turn a `workflow_definitions` row into the record the port promises. */
+function readWorkflowRecord(row: WorkflowRow): WorkflowRecord {
+  return parseWorkflowRecord({
+    id: row.id,
+    domainId: row.domain_id,
+    domainVersion: row.domain_version,
+    workflowKey: row.workflow_key,
+    jobType: row.job_type,
+    createdAt: isoTimestamp(row.created_at),
+  });
+}
+
+/**
+ * Turn a `workflow_versions` row into a {@link WorkflowVersionRecord}, or throw.
+ *
+ * The two denormalized columns, `domain_id` and `job_type`, are deliberately
+ * **not** read: they exist so the router can filter and page one table, and the
+ * authoritative copies are inside `compatibility`, derived from the IR. Reading
+ * the columns instead would make a row that had drifted look consistent.
+ */
+function readWorkflowVersionRecord(row: WorkflowVersionRow): WorkflowVersionRecord {
+  return parseWorkflowVersionRecord({
+    id: row.id,
+    workflowId: row.workflow_id,
+    definition: row.definition,
+    fingerprint: row.fingerprint,
+    status: row.status,
+    compatibility: row.compatibility,
+    createdAt: isoTimestamp(row.created_at),
+    statusChangedAt: isoTimestamp(row.status_changed_at),
+    metadata: readJsonObject(row.metadata) ?? {},
+  });
+}
+
+/** Turn a `workflow_promotions` row into a {@link WorkflowPromotionRecord}. */
+function readWorkflowPromotionRecord(row: WorkflowPromotionRow): WorkflowPromotionRecord {
+  return parseWorkflowPromotionRecord({
+    id: row.id,
+    workflowVersionId: row.workflow_version_id,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    actor: row.actor,
+    reason: row.reason,
+    createdAt: isoTimestamp(row.created_at),
+  });
+}
+
 function readTraceEvent(row: TraceEventRow): TraceEvent {
   return parseTraceEvent({
     id: row.id,
@@ -289,9 +352,9 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
    * could correct: it is `(id, version)` plus the organization scope, and
    * merging would rewrite the row on every single run for no change.
    */
-  async function saveDomain(job: Job): Promise<void> {
+  async function saveDomain(id: string, version: string, operation: string): Promise<void> {
     const { error } = await client.from("domains").upsert(
-      { id: job.domain.id, version: job.domain.version },
+      { id, version },
       {
         onConflict: "id,version",
         ignoreDuplicates: true,
@@ -299,7 +362,7 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
     );
 
     if (error !== null) {
-      throw failed("saveJob", error, { table: "domains", domainId: job.domain.id });
+      throw failed(operation, error, { table: "domains", domainId: id });
     }
   }
 
@@ -320,7 +383,7 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
       // The domain first: `jobs` has a foreign key to it, so the other order
       // fails with a constraint violation on the very first run of a new
       // domain, which is the common case rather than an edge one.
-      await saveDomain(job);
+      await saveDomain(job.domain.id, job.domain.version, "saveJob");
 
       const { error } = await client.from("jobs").upsert(
         {
@@ -560,6 +623,275 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
         events: rows.map(readTraceEvent),
         nextCursor: hasMore ? (rows.at(-1)?.sequence ?? null) : null,
       };
+    },
+
+    // The workflow registry (M5-T1). ADR-0043 records the model; the columns
+    // are `supabase/migrations/20260920202604_workflow_registry_columns.sql`.
+
+    async saveWorkflow(record: WorkflowRecord): Promise<WorkflowRecord> {
+      // The domain first, exactly as `saveJob` does it: `workflow_definitions`
+      // has a foreign key to `domains`, and a workflow may be registered for a
+      // domain that has not run anything yet.
+      await saveDomain(record.domainId, record.domainVersion, "saveWorkflow");
+
+      const { error } = await client.from("workflow_definitions").upsert(
+        {
+          id: record.id,
+          domain_id: record.domainId,
+          domain_version: record.domainVersion,
+          workflow_key: record.workflowKey,
+          job_type: record.jobType,
+          created_at: record.createdAt,
+        },
+        // `ignoreDuplicates` rather than a merge, because re-registering a
+        // workflow is the normal case and the row carries nothing a later
+        // registration could correct. Merging would rewrite the row -- and its
+        // `id` -- on every new version, and the id is what versions hang off.
+        { onConflict: "domain_id,workflow_key", ignoreDuplicates: true },
+      );
+
+      if (error !== null) {
+        throw failed("saveWorkflow", error, {
+          table: "workflow_definitions",
+          domainId: record.domainId,
+          workflowKey: record.workflowKey,
+        });
+      }
+
+      // Read back by the natural key rather than by `record.id`: when the key
+      // was already taken the surviving row carries the *original* id, and that
+      // is the id the caller must use.
+      const { data, error: readError } = await client
+        .from("workflow_definitions")
+        .select("*")
+        .eq("domain_id", record.domainId)
+        .eq("workflow_key", record.workflowKey)
+        .maybeSingle();
+
+      if (readError !== null) {
+        throw failed("saveWorkflow", readError, {
+          table: "workflow_definitions",
+          domainId: record.domainId,
+          workflowKey: record.workflowKey,
+        });
+      }
+
+      if (data === null) {
+        throw new StorageError(
+          `supabase storage: \`saveWorkflow\` wrote no row for \`${record.domainId}/${record.workflowKey}\``,
+          {
+            details: {
+              operation: "saveWorkflow",
+              domainId: record.domainId,
+              workflowKey: record.workflowKey,
+            },
+          },
+        );
+      }
+
+      return readWorkflowRecord(data);
+    },
+
+    async saveWorkflowVersion(record: WorkflowVersionRecord): Promise<WorkflowVersionRecord> {
+      // A plain insert, not an upsert. `(workflow_id, fingerprint)` is unique,
+      // and registering byte-identical IR twice must fail loudly: the
+      // fingerprint is the version's identity, and two rows for one behavior
+      // would make the promotion ledger ambiguous about which one a run used.
+      const { data, error } = await client
+        .from("workflow_versions")
+        .insert({
+          id: record.id,
+          workflow_id: record.workflowId,
+          domain_id: record.compatibility.domainId,
+          job_type: record.compatibility.jobType,
+          fingerprint: record.fingerprint,
+          status: record.status,
+          definition: asJson(record.definition as unknown as JsonValue),
+          compatibility: asJson(record.compatibility as unknown as JsonValue),
+          metadata: asJson(record.metadata),
+          created_at: record.createdAt,
+          status_changed_at: record.statusChangedAt,
+        })
+        .select("*")
+        .single();
+
+      if (error !== null) {
+        throw failed("saveWorkflowVersion", error, {
+          table: "workflow_versions",
+          versionId: record.id,
+          workflowId: record.workflowId,
+          fingerprint: record.fingerprint,
+        });
+      }
+
+      return readWorkflowVersionRecord(data);
+    },
+
+    async getWorkflowVersion(id: WorkflowVersionId): Promise<WorkflowVersionRecord | null> {
+      const { data, error } = await client
+        .from("workflow_versions")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (error !== null) {
+        throw failed("getWorkflowVersion", error, { table: "workflow_versions", versionId: id });
+      }
+
+      return data === null ? null : readWorkflowVersionRecord(data);
+    },
+
+    async listWorkflowVersions(
+      filter: WorkflowVersionFilter = {},
+      cursor: WorkflowVersionListCursor = {},
+    ): Promise<WorkflowVersionPage> {
+      const limit = resolvePageLimit(cursor.limit, DEFAULT_WORKFLOW_VERSION_PAGE_SIZE);
+
+      let query = client.from("workflow_versions").select("*");
+
+      if (filter.domainId !== undefined) {
+        query = query.eq("domain_id", filter.domainId);
+      }
+      if (filter.jobType !== undefined) {
+        query = query.eq("job_type", filter.jobType);
+      }
+      if (filter.status !== undefined) {
+        query = query.eq("status", filter.status);
+      }
+      if (filter.workflowId !== undefined) {
+        query = query.eq("workflow_id", filter.workflowId);
+      }
+      if (cursor.after !== undefined) {
+        query = query.lt("id", cursor.after);
+      }
+
+      const { data, error } = await query.order("id", { ascending: false }).limit(limit + 1);
+
+      if (error !== null) {
+        throw failed("listWorkflowVersions", error, { table: "workflow_versions" });
+      }
+
+      const rows = data.slice(0, limit);
+      const hasMore = data.length > limit;
+
+      return {
+        versions: rows.map(readWorkflowVersionRecord),
+        nextCursor: hasMore ? (parseEntityId("workflow-version", rows.at(-1)?.id) ?? null) : null,
+      };
+    },
+
+    async setWorkflowVersionStatus(
+      input: SetWorkflowVersionStatusInput,
+    ): Promise<WorkflowVersionRecord> {
+      if (!canTransition(input.from, input.to)) {
+        throw new ValidationError(
+          `supabase storage: \`${input.from}\` cannot transition to \`${input.to}\``,
+          {
+            issues: [
+              { path: ["to"], message: `\`${input.from}\` cannot transition to \`${input.to}\`` },
+            ],
+          },
+        );
+      }
+
+      // The compare-and-set, in one statement: the `eq("status", input.from)`
+      // is what makes two processes promoting the same version unable to both
+      // succeed, without a transaction and without a read-then-write race.
+      const { data, error } = await client
+        .from("workflow_versions")
+        .update({ status: input.to, status_changed_at: input.changedAt })
+        .eq("id", input.versionId)
+        .eq("status", input.from)
+        .select("*")
+        .maybeSingle();
+
+      if (error !== null) {
+        throw failed("setWorkflowVersionStatus", error, {
+          table: "workflow_versions",
+          versionId: input.versionId,
+        });
+      }
+
+      if (data === null) {
+        // Matching nothing is not a database failure, so PostgREST reports
+        // success with no row. Read the version back to say *which* of the two
+        // causes it was, because "no such version" and "somebody else moved it
+        // first" need different responses from a caller.
+        const { data: current, error: readError } = await client
+          .from("workflow_versions")
+          .select("status")
+          .eq("id", input.versionId)
+          .maybeSingle();
+
+        if (readError !== null) {
+          throw failed("setWorkflowVersionStatus", readError, {
+            table: "workflow_versions",
+            versionId: input.versionId,
+          });
+        }
+
+        throw new StorageError(
+          current === null
+            ? `supabase storage: \`setWorkflowVersionStatus\` found no workflow version \`${input.versionId}\``
+            : `supabase storage: workflow version \`${input.versionId}\` is \`${current.status}\`, not \`${input.from}\``,
+          {
+            details: {
+              operation: "setWorkflowVersionStatus",
+              versionId: input.versionId,
+              expected: input.from,
+              actual: current?.status ?? null,
+            },
+          },
+        );
+      }
+
+      // The ledger row is appended **after** the status moved, so a row exists
+      // only for a transition that actually happened. PostgREST gives no
+      // transaction across the two statements, so the failure mode is a status
+      // change whose ledger row is missing; it raises here rather than being
+      // swallowed, and it is visible afterwards as a version whose status does
+      // not match its last promotion.
+      const { error: ledgerError } = await client.from("workflow_promotions").insert({
+        id: input.promotionId,
+        workflow_version_id: input.versionId,
+        from_status: input.from,
+        to_status: input.to,
+        actor: input.actor,
+        reason: input.reason,
+        created_at: input.changedAt,
+      });
+
+      if (ledgerError !== null) {
+        throw failed("setWorkflowVersionStatus", ledgerError, {
+          table: "workflow_promotions",
+          versionId: input.versionId,
+          promotionId: input.promotionId,
+        });
+      }
+
+      return readWorkflowVersionRecord(data);
+    },
+
+    async listWorkflowPromotions(
+      versionId: WorkflowVersionId,
+    ): Promise<readonly WorkflowPromotionRecord[]> {
+      // Ascending, unlike every other list here: this is the narrative of how a
+      // version reached its current status, and a narrative read backwards is
+      // not one.
+      const { data, error } = await client
+        .from("workflow_promotions")
+        .select("*")
+        .eq("workflow_version_id", versionId)
+        .order("id", { ascending: true });
+
+      if (error !== null) {
+        throw failed("listWorkflowPromotions", error, {
+          table: "workflow_promotions",
+          versionId,
+        });
+      }
+
+      return data.map(readWorkflowPromotionRecord);
     },
   };
 }

@@ -88,6 +88,54 @@ export type {
 } from "./context.js";
 export { createExecutionContext, HARNESS_RUNTIME_INFO } from "./context.js";
 
+// The decision contract (M3-T1, M3-T4, M3-T5, M3-T6; ADR-0009, ADR-0042).
+// Questions, the `DecisionEngine` port, confidence bands and the deterministic
+// policy API. Core declares the contract; `@internal/decision-jev` implements
+// the engine over the AI SDK's experimental evaluation API and is the only
+// package that may see it.
+export type {
+  AnswerFor,
+  Band,
+  BooleanCriteria,
+  BooleanDecisionAnswer,
+  BooleanQuestion,
+  ChoiceDecisionAnswer,
+  ChoiceQuestion,
+  ConfidenceBands,
+  DecisionAnswer,
+  DecisionAnswerBase,
+  DecisionEngine,
+  DecisionModelRef,
+  DecisionRequest,
+  DecisionResult,
+  DecisionUsage,
+  DefinePolicyConfig,
+  DerivableAnswer,
+  Policy,
+  PolicyDecision,
+  PolicyOutcome,
+  Question,
+  QuestionBase,
+  QuestionKind,
+  QuestionSet,
+  ScoreDecisionAnswer,
+  ScoreQuestion,
+  ScoreRange,
+} from "./decision.js";
+export {
+  BANDS,
+  bandFor,
+  bandForConfidence,
+  defineConfidenceBands,
+  definePolicy,
+  defineQuestion,
+  defineQuestionSet,
+  deriveConfidence,
+  policyFingerprint,
+  QUESTION_KINDS,
+  scoreRange,
+} from "./decision.js";
+
 // Domain definition (M1-T3).
 export type {
   CreateJobInput,
@@ -229,13 +277,18 @@ export type {
   RunRecord,
   RunStart,
   RunStatus,
+  SetWorkflowVersionStatusInput,
   Storage,
   TraceCursor,
   TracePage,
+  WorkflowVersionFilter,
+  WorkflowVersionListCursor,
+  WorkflowVersionPage,
 } from "./storage.js";
 export {
   DEFAULT_RUN_PAGE_SIZE,
   DEFAULT_TRACE_PAGE_SIZE,
+  DEFAULT_WORKFLOW_VERSION_PAGE_SIZE,
   isRunStatus,
   MAX_PAGE_SIZE,
   parseRunRecord,
@@ -339,3 +392,36 @@ export {
   NODE_TYPES,
   RESERVED_NODE_TYPES,
 } from "./workflow-nodes.js";
+
+// The workflow registry model (M5-T1) and the compatibility selector (M5-T2;
+// ADR-0043). Core declares the statuses, the transition table, what a version
+// declares about the jobs it can handle, and the pure function that picks one;
+// `@internal/registry` is the service that stores and promotes them, the same
+// split `@internal/trace` and `@internal/workflow` follow.
+export type {
+  CompiledWorkflowLike,
+  DescribeWorkflowCompatibilityOptions,
+  WorkflowCompatibility,
+  WorkflowPromotionRecord,
+  WorkflowRecord,
+  WorkflowRejection,
+  WorkflowRejectionReason,
+  WorkflowSelection,
+  WorkflowSelectionEnvironment,
+  WorkflowStatus,
+  WorkflowVersionRecord,
+} from "./workflow-registry.js";
+export {
+  canTransition,
+  collectRequiredCapabilities,
+  compareExactVersions,
+  describeWorkflowCompatibility,
+  isWorkflowStatus,
+  parseWorkflowPromotionRecord,
+  parseWorkflowRecord,
+  parseWorkflowVersionRecord,
+  selectCompatibleWorkflow,
+  WORKFLOW_REJECTION_REASONS,
+  WORKFLOW_STATUS_TRANSITIONS,
+  WORKFLOW_STATUSES,
+} from "./workflow-registry.js";

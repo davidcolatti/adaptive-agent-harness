@@ -27,4 +27,14 @@ convention `docs/research/vercel/YYYY-MM-DD-<slug>.md` and covering findings abo
   equivalent, what a run writes under `.eve/`, the built-in `agent` tool's cost at zero subagents,
   and a recommended `EveAgentRuntime` design with every step marked documented or harness-owned.
 
+- [`2026-09-20-m3-ai-sdk-evaluate.md`](2026-09-20-m3-ai-sdk-evaluate.md): the M3-T1/M3-T2 research
+  checkpoint, answering what the installed AI SDK evaluation API actually provides. Covers the three
+  question kinds and their criteria and answer shapes, when a probability distribution is present
+  and when it is optional, the SDK's own statement that no portable confidence measure exists, the
+  absence of any cost field (which constrains M3-T3), the four documented ways to name an
+  evaluation model and `@ai-sdk/gateway`'s confirmation that Jev is `typesafe-ai/jev`, the
+  before-any-I/O unsupported-question-kind error, two facts read from the compiled `evaluate`
+  implementation because the types leave them open, batching by shared state, and the explicit list
+  of what Milestone 3 must own because the API does not provide it.
+
 The Workflow SDK and `@vercel/sandbox` are still not installed, so no note covers them yet.

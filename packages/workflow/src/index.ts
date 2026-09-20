@@ -90,7 +90,9 @@ export type {
   ArtifactSaveInput,
   ArtifactStorePort,
   CompletedWorkflowRun,
+  CreateDecisionPortOptions,
   CreateWorkflowRuntimeOptions,
+  DecisionNodeOutput,
   EscalatedWorkflowRun,
   FailedWorkflowRun,
   InMemoryArtifact,
@@ -99,6 +101,7 @@ export type {
   NodeExecutionRecord,
   ProtectedEffectRecord,
   ProtectedEffectStore,
+  QuestionRegistry,
   SavedArtifact,
   WorkflowDecisionPort,
   WorkflowDecisionRequest,
@@ -107,6 +110,9 @@ export type {
 } from "./runtime/index.js";
 export {
   attemptIdempotencyKey,
+  // The bridge from `WorkflowDecisionPort` to M3's `DecisionEngine` (M3-T2).
+  // A `jev` node names a question; this is what looks one up and answers it.
+  createDecisionPort,
   createInMemoryArtifactStore,
   createInMemoryProtectedEffectStore,
   createWorkflowRuntime,

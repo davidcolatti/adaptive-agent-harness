@@ -273,6 +273,22 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
 
+  packages/decision-jev:
+    dependencies:
+      '@internal/core':
+        specifier: workspace:*
+        version: link:../core
+      ai:
+        specifier: 7.0.107
+        version: 7.0.107(zod@4.6.5)
+    devDependencies:
+      '@internal/config':
+        specifier: workspace:*
+        version: link:../config
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
+
   packages/observability:
     dependencies:
       '@internal/core':
@@ -284,6 +300,25 @@ importers:
       '@internal/trace':
         specifier: workspace:*
         version: link:../trace
+    devDependencies:
+      '@internal/config':
+        specifier: workspace:*
+        version: link:../config
+      '@internal/testing':
+        specifier: workspace:*
+        version: link:../testing
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
+
+  packages/registry:
+    dependencies:
+      '@internal/core':
+        specifier: workspace:*
+        version: link:../core
+      '@internal/workflow':
+        specifier: workspace:*
+        version: link:../workflow
     devDependencies:
       '@internal/config':
         specifier: workspace:*

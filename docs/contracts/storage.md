@@ -1,19 +1,22 @@
 ---
 status: active
 owner: core
-last_verified: 2026-09-19
+last_verified: 2026-09-20
 related:
   - docs/milestones/build-plan.md
   - docs/contracts/harness.md
+  - docs/contracts/workflow-registry.md
   - docs/contracts/job.md
   - docs/contracts/trace-event.md
   - docs/contracts/identifiers.md
   - docs/contracts/redaction.md
   - docs/decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md
   - docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md
+  - docs/decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md
   - docs/runbooks/supabase-local.md
 implementation:
   - packages/core
+  - packages/registry
   - packages/storage-supabase
   - packages/testing
   - packages/trace
@@ -27,6 +30,12 @@ implementation:
 (M2-T7). The schema behind it is the thirteen tables in
 `supabase/migrations/` (M2-T5, M2-T6). [ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md)
 records why it is shaped this way.
+
+M5-T1 added a second half: six methods for the **workflow registry**, and the real columns on the
+three registry tables. It is on this port rather than on a second one because a run's ledger row
+already carries `workflowVersionId`, and a registry behind its own port would be a second thing to
+configure against the same database. What those methods mean is
+[`workflow-registry.md`](workflow-registry.md).
 
 ```ts
 const storage = createSupabaseStorage({
@@ -82,6 +91,12 @@ implementations exist and both run the same contract suite:
 | `listRuns(filter?, cursor?)` | Runs newest first, filtered and paged. |
 | `appendTraceEvents(events)` | Append a batch. Idempotent on `(runId, sequence)`. |
 | `getTrace(runId, cursor?)` | One run's trace in `sequence` order, paged. |
+| `saveWorkflow(record)` | **M5.** Upsert by `(domainId, workflowKey)` and return the row that now exists, which carries the original `WorkflowId` when the key was taken. Upserts the domain too. |
+| `saveWorkflowVersion(record)` | **M5.** Plain insert. A duplicate `(workflowId, fingerprint)` rejects loudly. |
+| `getWorkflowVersion(id)` | **M5.** One version, through `parseWorkflowVersionRecord()`, or `null`. |
+| `listWorkflowVersions(filter?, cursor?)` | **M5.** Versions newest first, filtered and keyset-paged. |
+| `setWorkflowVersionStatus(input)` | **M5.** One transition, applied as a compare-and-set, plus its promotion ledger row. |
+| `listWorkflowPromotions(versionId)` | **M5.** One version's history, oldest first, unpaged. |
 
 Every method is `async` and rejects with `StorageError` (cause preserved) when
 the store fails, or `ValidationError` when the caller passed something the port
@@ -96,7 +111,12 @@ append-only ledger silently skips or repeats rows whenever a run starts
 mid-pagination; a keyset cursor over a sortable id cannot. Both return
 `nextCursor: null` on the last page rather than omitting the field.
 
-`DEFAULT_RUN_PAGE_SIZE` is 50 and `DEFAULT_TRACE_PAGE_SIZE` is 500.
+`listWorkflowVersions` pages the same way, newest first, with a `WorkflowVersionId` cursor.
+`listWorkflowPromotions` is the one list that is neither newest-first nor paged: it is the
+narrative of how a version reached its status, and the transition table bounds it.
+
+`DEFAULT_RUN_PAGE_SIZE` is 50, `DEFAULT_WORKFLOW_VERSION_PAGE_SIZE` is 50 and
+`DEFAULT_TRACE_PAGE_SIZE` is 500.
 `MAX_PAGE_SIZE` is 1000, matching `max_rows` in `supabase/config.toml`; a larger
 `limit` is a `ValidationError` rather than a silent truncation, because a short
 page looks exactly like the end of the data.
@@ -243,16 +263,22 @@ with **no policies**.
 | `runs` | M2 | the ledger columns above; unique `(job_id, attempt)`; FKs to `jobs`, `domains`, `workflow_versions` |
 | `trace_events` | M2 | `id`, `run_id` FK, `attempt`, `sequence`, `occurred_at`, `type`, `parent_id` self-FK, `node`, `version`, `behavior_fingerprint`, `payload`/`usage`/`error` jsonb; unique `(run_id, sequence)` |
 | `artifacts` | M5 | `id`, `run_id` FK, `payload jsonb` |
-| `workflow_definitions` | M4 | `id`, domain FK, `payload jsonb` |
-| `workflow_versions` | M4 | `id`, `workflow_id` FK, `payload jsonb` |
-| `workflow_promotions` | M6 | `id`, `workflow_version_id` FK, `payload jsonb` |
+| `workflow_definitions` | M2 shape, **M5 columns** | `id`, domain FK, `workflow_key`, `job_type`; unique `(domain_id, workflow_key)` |
+| `workflow_versions` | M2 shape, **M5 columns** | `id`, `workflow_id` FK, `domain_id`, `job_type`, `fingerprint`, `status`, `definition jsonb`, `compatibility jsonb`, `status_changed_at`, `metadata jsonb`; unique `(workflow_id, fingerprint)` |
+| `workflow_promotions` | M2 shape, **M5 columns** | `id`, `workflow_version_id` FK, `from_status`, `to_status`, `actor`, `reason` |
 | `decisions` | M3 | `id`, `run_id` FK, `payload jsonb` |
 | `eval_runs` | M6 | `id`, domain FK, `payload jsonb` |
 | `eval_results` | M6 | `id`, `eval_run_id` FK, `payload jsonb` |
 | `learning_runs` | M7 | `id`, domain FK, `payload jsonb` |
 | `compiler_runs` | M8 | `id`, domain FK, `payload jsonb` |
 
-The nine later-milestone tables carry their **minimal keyed shape only**:
+The three workflow registry tables were created in that minimal shape by M2-T5 and filled by M5-T1
+in a **new** migration, `..._workflow_registry_columns.sql`, which also drops their `payload jsonb`
+placeholder. What the columns mean is
+[`workflow-registry.md`](workflow-registry.md) and
+[ADR-0043](../decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md).
+
+The six remaining later-milestone tables carry their **minimal keyed shape only**:
 identity, the foreign keys that fix how they relate, a timestamp and one
 `payload jsonb`, plus a comment naming the milestone that fills them. Their
 columns are not invented here.
@@ -320,7 +346,10 @@ than as a half-working setup that fails at the first query.
 
 - `packages/storage-supabase/src/storage.contract.test.ts` is the **contract
   suite**: one set of assertions, run against the in-memory implementation
-  always and against Supabase when the two variables are set. It is in the
+  always and against Supabase when the two variables are set. M5-T1 extended it
+  with the registry cases — round trip, list filtering and keyset paging,
+  duplicate fingerprint rejected, illegal transition rejected, the
+  compare-and-set, and the promotion ledger. It is in the
   `contract` project rather than `integration` because its purpose is proving
   two implementations of one port behave identically, which is that project's
   definition; it would be pointless against only one of them.

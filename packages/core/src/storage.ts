@@ -2,10 +2,23 @@ import type { DomainRef, RuntimeInfo } from "./context.js";
 import { type SerializedHarnessError, ValidationError, type ValidationIssue } from "./errors.js";
 import { deepFreeze } from "./freeze.js";
 import { collectRefIssues, throwIfIssues } from "./identifiers.js";
-import { type JobId, parseEntityId, type RunId, type WorkflowVersionId } from "./ids.js";
+import {
+  type JobId,
+  type PromotionId,
+  parseEntityId,
+  type RunId,
+  type WorkflowId,
+  type WorkflowVersionId,
+} from "./ids.js";
 import type { Job } from "./job.js";
 import { isJsonObject, isPlainObject } from "./json.js";
 import type { TraceEvent } from "./trace.js";
+import type {
+  WorkflowPromotionRecord,
+  WorkflowRecord,
+  WorkflowStatus,
+  WorkflowVersionRecord,
+} from "./workflow-registry.js";
 
 /**
  * The `Storage` port (M2-T5) and the outcome ledger row (M2-T7). **ADR-0036**
@@ -315,6 +328,90 @@ export const DEFAULT_TRACE_PAGE_SIZE = 500;
 export const MAX_PAGE_SIZE = 1000;
 
 /**
+ * Which workflow versions {@link Storage.listWorkflowVersions} returns.
+ *
+ * Every field is optional and an absent field is "any", not "none". The two
+ * that matter to the router are `domainId` and `jobType`: "every active version
+ * that could serve this job" is exactly `{ domainId, jobType, status: "active" }`,
+ * and it is the only query M5-T3 makes on the hot path.
+ */
+export interface WorkflowVersionFilter {
+  /** Only versions of workflows in this domain. */
+  readonly domainId?: string;
+  /** Only versions handling this job type. */
+  readonly jobType?: string;
+  /** Only versions in this state. */
+  readonly status?: WorkflowStatus;
+  /** Only versions of this workflow, which is how one workflow's history is read. */
+  readonly workflowId?: WorkflowId;
+}
+
+/**
+ * Where a {@link Storage.listWorkflowVersions} page starts, and how big it is.
+ *
+ * Keyset, exactly as {@link RunListCursor} is, and for the same reason: the
+ * cursor is a {@link WorkflowVersionId}, versions come back newest first, and
+ * `after` means "strictly older than this version". Newest first is also the
+ * order the selector's tie-break wants, so a router that takes the first page
+ * and stops still sees the version that would have won.
+ */
+export interface WorkflowVersionListCursor {
+  /** Return versions strictly older than this one. Absent starts at the newest. */
+  readonly after?: WorkflowVersionId;
+  /** How many rows at most. Defaults to {@link DEFAULT_WORKFLOW_VERSION_PAGE_SIZE}. */
+  readonly limit?: number;
+}
+
+/** One page of {@link WorkflowVersionRecord}s, newest first. */
+export interface WorkflowVersionPage {
+  /** The rows, ordered by version id descending. */
+  readonly versions: readonly WorkflowVersionRecord[];
+  /** The `after` value for the next page, or `null` when this page is the last. */
+  readonly nextCursor: WorkflowVersionId | null;
+}
+
+/**
+ * What {@link Storage.setWorkflowVersionStatus} is given: one transition,
+ * stated in full.
+ *
+ * `from` is **required**, and that is the whole design. The call is a
+ * compare-and-set: it applies only while the version is still in `from`, so two
+ * processes promoting the same version cannot both succeed, and a promotion
+ * decided against a status that has since changed fails instead of overwriting
+ * whatever happened in between. A store with no transactions across two
+ * statements still gets the guarantee that matters, because the conditional
+ * update is one statement.
+ *
+ * `actor` is required for the reason AD-005 exists: promotion is human-invoked,
+ * so every row in the ledger names who invoked it.
+ */
+export interface SetWorkflowVersionStatusInput {
+  /** The version to move. */
+  readonly versionId: WorkflowVersionId;
+  /** The status it must currently be in. */
+  readonly from: WorkflowStatus;
+  /** The status to move it to. Must satisfy `canTransition(from, to)`. */
+  readonly to: WorkflowStatus;
+  /** Who is moving it. A person, a script, a CI job: something answerable. */
+  readonly actor: string;
+  /** Why, in their words, or `null`. */
+  readonly reason: string | null;
+  /**
+   * The id of the ledger row this transition writes.
+   *
+   * Supplied by the caller rather than minted here, because ids are
+   * harness-minted UUIDv7 with no database default (ADR-0030) and because a
+   * caller that already recorded the promotion it intends can reconcile it.
+   */
+  readonly promotionId: PromotionId;
+  /** When the transition happened, as an ISO 8601 string. */
+  readonly changedAt: string;
+}
+
+/** How many versions {@link Storage.listWorkflowVersions} returns by default. */
+export const DEFAULT_WORKFLOW_VERSION_PAGE_SIZE = 50;
+
+/**
  * Durable storage for jobs, runs and traces.
  *
  * Implemented by `createSupabaseStorage()` in `@internal/storage-supabase` and
@@ -381,6 +478,75 @@ export interface Storage {
   appendTraceEvents(events: readonly TraceEvent[]): Promise<void>;
   /** Read one run's trace in `sequence` order, paged. */
   getTrace(runId: RunId, cursor?: TraceCursor): Promise<TracePage>;
+
+  // The workflow registry (M5-T1). `workflow_definitions`,
+  // `workflow_versions` and `workflow_promotions` existed as minimal keyed
+  // placeholders from M2-T5; these six methods are what fills them. They are
+  // on the same port rather than on a second one because a run's ledger row
+  // already carries `workflowVersionId`, and a registry behind a different
+  // port would be a second thing to configure for the same database.
+  // ADR-0043 records the model; `docs/contracts/workflow-registry.md`
+  // documents it.
+
+  /**
+   * Register a workflow, or return the one already registered under the same
+   * `(domainId, workflowKey)`.
+   *
+   * **Idempotent by `(domainId, workflowKey)`**, and it returns the row that
+   * now exists rather than nothing: when the key was already taken, the
+   * returned record carries the *original* {@link WorkflowId}, which is the id
+   * the caller must hang versions off. Re-registering a workflow is the normal
+   * case — every new version of `vendor-triage` does it — so a conflict here is
+   * a fact, not an error.
+   *
+   * It also upserts the domain the workflow belongs to, the same way
+   * {@link Storage.saveJob} does, so registering a workflow for a domain that
+   * has run nothing yet works.
+   */
+  saveWorkflow(record: WorkflowRecord): Promise<WorkflowRecord>;
+  /**
+   * Insert one version of a workflow.
+   *
+   * A plain insert. `(workflowId, fingerprint)` is unique, so registering
+   * byte-identical IR twice **rejects loudly** rather than producing a second
+   * row: the fingerprint is the version's identity (north-star invariant 4),
+   * and two rows for one behavior would make the promotion ledger ambiguous
+   * about which one a run used.
+   */
+  saveWorkflowVersion(record: WorkflowVersionRecord): Promise<WorkflowVersionRecord>;
+  /** Read one version, through `parseWorkflowVersionRecord()`, or `null`. */
+  getWorkflowVersion(id: WorkflowVersionId): Promise<WorkflowVersionRecord | null>;
+  /** List versions newest first, filtered and paged. */
+  listWorkflowVersions(
+    filter?: WorkflowVersionFilter,
+    cursor?: WorkflowVersionListCursor,
+  ): Promise<WorkflowVersionPage>;
+  /**
+   * Move one version from one status to another, and record it.
+   *
+   * Two things happen together, and both are required for the result to mean
+   * anything:
+   *
+   * 1. the status changes **only if** the version is still in `from` and
+   *    `canTransition(from, to)` is true — an illegal transition is a
+   *    `ValidationError`, and a lost race is a `StorageError`;
+   * 2. a {@link WorkflowPromotionRecord} is appended for the change, so the
+   *    history of a version is a ledger rather than a column that remembers
+   *    only the last move.
+   *
+   * Returns the updated version.
+   */
+  setWorkflowVersionStatus(input: SetWorkflowVersionStatusInput): Promise<WorkflowVersionRecord>;
+  /**
+   * Read one version's promotion history, oldest first.
+   *
+   * Oldest first rather than newest, unlike every other list here: this is a
+   * narrative of how a version reached its current status, and a narrative read
+   * backwards is not one. It is unpaged because the list is bounded by the
+   * transition table — a version can change status at most a handful of times
+   * before reaching a terminal state.
+   */
+  listWorkflowPromotions(versionId: WorkflowVersionId): Promise<readonly WorkflowPromotionRecord[]>;
 }
 
 /**

@@ -889,7 +889,35 @@ function createRecordingStorage(options: RecordingStorageOptions = {}): Recordin
       enter("getTrace");
       return Promise.resolve({ events: [], nextCursor: null });
     },
+
+    // The workflow-registry half of the port (M5-T1). `harness.run()` calls
+    // none of it, so this fixture implements it by refusing rather than by
+    // pretending: a test that started reaching the registry through the harness
+    // would fail loudly here instead of silently observing empty results.
+    saveWorkflow(): Promise<never> {
+      return unsupported("saveWorkflow");
+    },
+    saveWorkflowVersion(): Promise<never> {
+      return unsupported("saveWorkflowVersion");
+    },
+    getWorkflowVersion(): Promise<never> {
+      return unsupported("getWorkflowVersion");
+    },
+    listWorkflowVersions(): Promise<never> {
+      return unsupported("listWorkflowVersions");
+    },
+    setWorkflowVersionStatus(): Promise<never> {
+      return unsupported("setWorkflowVersionStatus");
+    },
+    listWorkflowPromotions(): Promise<never> {
+      return unsupported("listWorkflowPromotions");
+    },
   };
+}
+
+/** Refuse a `Storage` method this fixture deliberately does not implement. */
+function unsupported(operation: string): never {
+  throw new StorageError(`storage: \`${operation}\` is not used by \`harness.run()\``);
 }
 
 describe("harness.run: storage", () => {

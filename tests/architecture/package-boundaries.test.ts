@@ -76,6 +76,10 @@ describe("workspace dependency boundaries", () => {
     expect(packages.map((pkg) => pkg.name).sort()).toEqual([
       "@internal/config",
       "@internal/core",
+      // The Jev `DecisionEngine` (M3-T2). A declared adapter, and the only
+      // package allowed to see the AI SDK's experimental evaluation API; the
+      // decision contract it implements lives in `@internal/core`.
+      "@internal/decision-jev",
       // The credential-free `mockModel` fixture `EveAgentRuntime`'s contract
       // tests run against (M1-T6). An eve app root must be its own package
       // declaring `eve`, so it cannot live inside `packages/runtime-eve`;
@@ -87,6 +91,11 @@ describe("workspace dependency boundaries", () => {
       // real database only by depending on `@internal/storage-supabase`, from
       // its `bin` entry point alone. ADR-0037.
       "@internal/observability",
+      // The workflow registry service (M5-T1, M5-T2). A harness package, not an
+      // adapter: it registers, promotes and resolves compiled workflow versions
+      // through the `Storage` port and core's pure selector, so it carries the
+      // same bans `@internal/core` does. ADR-0043.
+      "@internal/registry",
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",
       // The Supabase storage adapter (M2-T11). It holds only the generated

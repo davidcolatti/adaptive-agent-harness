@@ -466,21 +466,24 @@ export type Database = {
           domain_id: string
           domain_version: string
           id: string
-          payload: Json
+          job_type: string
+          workflow_key: string
         }
         Insert: {
           created_at?: string
           domain_id: string
           domain_version: string
           id: string
-          payload?: Json
+          job_type: string
+          workflow_key: string
         }
         Update: {
           created_at?: string
           domain_id?: string
           domain_version?: string
           id?: string
-          payload?: Json
+          job_type?: string
+          workflow_key?: string
         }
         Relationships: [
           {
@@ -494,21 +497,30 @@ export type Database = {
       }
       workflow_promotions: {
         Row: {
+          actor: string
           created_at: string
+          from_status: string
           id: string
-          payload: Json
+          reason: string | null
+          to_status: string
           workflow_version_id: string
         }
         Insert: {
+          actor: string
           created_at?: string
+          from_status: string
           id: string
-          payload?: Json
+          reason?: string | null
+          to_status: string
           workflow_version_id: string
         }
         Update: {
+          actor?: string
           created_at?: string
+          from_status?: string
           id?: string
-          payload?: Json
+          reason?: string | null
+          to_status?: string
           workflow_version_id?: string
         }
         Relationships: [
@@ -523,21 +535,42 @@ export type Database = {
       }
       workflow_versions: {
         Row: {
+          compatibility: Json
           created_at: string
+          definition: Json
+          domain_id: string
+          fingerprint: string
           id: string
-          payload: Json
+          job_type: string
+          metadata: Json
+          status: string
+          status_changed_at: string
           workflow_id: string
         }
         Insert: {
+          compatibility: Json
           created_at?: string
+          definition: Json
+          domain_id: string
+          fingerprint: string
           id: string
-          payload?: Json
+          job_type: string
+          metadata?: Json
+          status: string
+          status_changed_at: string
           workflow_id: string
         }
         Update: {
+          compatibility?: Json
           created_at?: string
+          definition?: Json
+          domain_id?: string
+          fingerprint?: string
           id?: string
-          payload?: Json
+          job_type?: string
+          metadata?: Json
+          status?: string
+          status_changed_at?: string
           workflow_id?: string
         }
         Relationships: [

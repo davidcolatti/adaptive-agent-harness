@@ -121,6 +121,14 @@ export const BOUNDARY_RULES: BoundaryRules = {
     // that is how the CLI reaches a real database without becoming the second
     // place in the repository that talks to one. ADR-0037 records it.
     "@internal/observability": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
+    // `@internal/registry` (M5-T1) sits under `workflow` in the dependency
+    // diagram. It is **not** an adapter: it registers, promotes and resolves
+    // compiled workflow versions through the `Storage` port and core's pure
+    // selector, and touches no database and no model provider itself, so the
+    // same bans core carries apply here. "No domain package may mutate harness
+    // registry tables directly" (build plan section 4) is what this package
+    // exists to make unnecessary. ADR-0043 records it.
+    "@internal/registry": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
     // `@internal/workflow` (M4-T1) sits directly under `core` in the dependency
     // diagram, beside `trace` and the runtime adapters. It is **not** an
     // adapter: it owns IR validation, the typed DSL and the local deterministic

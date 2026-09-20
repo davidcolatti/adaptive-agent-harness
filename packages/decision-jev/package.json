@@ -1,0 +1,32 @@
+{
+  "name": "@internal/decision-jev",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Jev DecisionEngine: the AI SDK's experimental evaluation API, isolated behind the harness decision contract.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@internal/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@internal/core": "workspace:*",
+    "ai": "7.0.107"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

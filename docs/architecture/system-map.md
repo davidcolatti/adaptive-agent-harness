@@ -30,6 +30,7 @@ implementation:
   - packages/config
   - packages/runtime-eve
   - packages/runtime-ai-sdk
+  - packages/registry
   - packages/storage-supabase
   - packages/trace
   - packages/workflow
@@ -361,6 +362,21 @@ Nine packages and two applications exist. Everything else in the repository layo
   database client in. Recorded in
   [ADR-0037](../decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md),
   operated per [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md).
+- `packages/registry` (`@internal/registry`) was created by M5-T1/M5-T2 and holds the workflow
+  registry service: `createWorkflowRegistry({ storage, clock })`, with `register()`, `promote()`,
+  `retire()`, `findActive()` and `resolve()`. It sits under `workflow` in the dependency diagram
+  and is **not** an adapter: it registers, promotes and resolves compiled workflow versions
+  through the `Storage` port and core's pure `selectCompatibleWorkflow()`, and touches no database
+  and no model provider itself, so it carries the same bans `packages/core` does in
+  `tests/architecture/boundaries.ts`. The **model** — the seven statuses, the transition table,
+  `WorkflowCompatibility`, the three records with their parse boundaries, and the selector — lives
+  in `packages/core/src/workflow-registry.ts`, because it is a contract with no I/O; this is the
+  same split `packages/trace` and `packages/workflow` already make
+  ([ADR-0043](../decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md)).
+  "No domain package may mutate harness registry tables directly" (build plan section 4) is what
+  this package exists to make unnecessary. Documented in
+  [`../contracts/workflow-registry.md`](../contracts/workflow-registry.md).
+
 - `packages/workflow` (`@internal/workflow`) was created by M4-T1 and will hold everything that
   *does* something with the workflow IR: `compileWorkflow()` (graph validation and capability
   resolution, M4-T4/M4-T9), the typed DSL (M4-T5) and the local deterministic interpreter (M4-T6).
@@ -397,13 +413,13 @@ plan's milestone sections.
 | `packages/testing` | exists (Milestone 0; fake `AgentRuntime` added in M1-T5) |
 | `packages/runtime-ai-sdk` | exists (M1-T1, dependency boundary only; `AgentRuntime` is M1-T5) |
 | `packages/runtime-eve` | exists (M1-T1 dependency boundary; `EveAgentRuntime` and the `./testing` dev-server helper added in M1-T6) |
-| `packages/registry` | planned (M5), **workflow** registry; the *capability* registry is in `packages/core` (M1-T9) |
+| `packages/registry` | exists (M5-T1, M5-T2): `createWorkflowRegistry()` — register, promote, retire, `findActive()` and `resolve()`. The **workflow** registry; the *capability* registry is in `packages/core` (M1-T9), as is this one's model and its pure selector (ADR-0043) |
 | `apps/example-agent` | exists (M1-T2 eve project, M1-T3 domain, M1-T9 capabilities, M1-T6 `src/run.ts`; runs through `createHarness()` with either runtime) |
 | `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
 | `packages/trace` | exists (M2-T4, M2-T9): `createBufferedTraceWriter()`, `TraceSink`, the in-memory and JSONL sinks, and the redaction layer above them |
 | `packages/storage-supabase` | exists (M2-T11 generated types; M2-T5 `createSupabaseStorage()`) |
 | `packages/observability` | exists (M2-T10): `inspectRun()`, `renderRunInspection()`, the JSONL trace source, and the `harness` CLI |
-| `packages/decision-jev` | planned (M3) |
+| `packages/decision-jev` | exists (M3-T2): `createJevDecisionEngine()` over the AI SDK's `experimental_evaluate`, plus `JEV_GATEWAY_MODEL_ID`. A declared adapter, and the **only** package that may see the experimental evaluation API (ADR-0042); the decision contract it implements is in `packages/core` |
 | `packages/workflow` | exists (M4-T1 scaffold): `CompiledWorkflow`, the result type `compileWorkflow()` (M4-T4/T9) produces and the local runtime (M4-T6) consumes. Validation, the typed DSL and the interpreter land here next |
 | `packages/replay` | planned (M6) |
 | `packages/evals` | planned (M6) |

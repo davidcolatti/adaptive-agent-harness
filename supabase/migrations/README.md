@@ -17,6 +17,20 @@ is load-bearing because of the foreign keys between them:
 | `..._trace_events_and_artifacts.sql` | `trace_events`, `artifacts` |
 | `..._later_milestone_tables.sql` | `decisions`, `eval_runs`, `eval_results`, `learning_runs`, `compiler_runs` |
 
+## What M5 added
+
+One further migration fills the workflow registry tables the M2 file created as minimal keyed
+placeholders:
+
+| Migration | Tables |
+| --- | --- |
+| `..._workflow_registry_columns.sql` | `workflow_definitions`, `workflow_versions`, `workflow_promotions` (real columns; the `payload jsonb` placeholder dropped) |
+
+The M2 migration is **not** edited. A migration is a fact about what was applied, and rewriting one
+makes the committed history stop describing any database that ever existed. What the new columns
+mean is [ADR-0043](../../docs/decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md)
+and [`../../docs/contracts/workflow-registry.md`](../../docs/contracts/workflow-registry.md).
+
 The workflow tables come before `runs` because the ledger carries a `workflow_version_id` foreign
 key, and the CLI's timestamps are second-resolution, so two migrations created in the same second
 sort by name instead. If you create several at once, check the resulting order rather than assuming

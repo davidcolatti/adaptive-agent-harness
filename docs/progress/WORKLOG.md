@@ -7857,3 +7857,469 @@ Start Milestone 5 (Workflow Registry, Router, and Fallback), the critical path, 
 status file from the build plan in the M4 file's shape. Milestone 3 (Jev) is blocked only by M2
 (already complete) and may start beside M5 at any point; M5's Jev-dependent parts need M3 to have
 landed by the time they are reached.
+
+## 2026-09-20 12:00 — M5-T1/M5-T2 — Workflow registry model, compatibility selector, and the registry half of the Storage port
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, concurrent-implementer session)
+**Commit:** not committed
+
+### Goal
+
+Build Milestone 5's first two tasks and the persistence they need: the workflow status model with
+its explicit transition table (M5-T1), the compatibility declaration and the pure deterministic
+selector over it (M5-T2), the workflow-registry extension of the `Storage` port with its Supabase
+and in-memory implementations, one new migration filling the M2 placeholder registry tables, and a
+new `@internal/registry` package holding the service that ties them together. M5-T3..T7 (router,
+fallback, escalation, circuit breaker) are a later task and are not touched here.
+
+### Implementation references
+
+- package/version: `@supabase/supabase-js` 2.116.0 (`packages/storage-supabase/package.json`,
+  matching `pnpm-lock.yaml`); Supabase CLI 2.117.0 (root `devDependencies`, `pnpm exec supabase
+  --version`); Node 24.21.0; pnpm 12.4.2.
+- installed docs read: `node_modules/@supabase/postgrest-js` public types for the `insert` /
+  `upsert` / `update` / `select` builders already used by `supabase-storage.ts`; the generated
+  `packages/storage-supabase/src/database.types.ts` for the row/insert shapes the new columns
+  produce.
+- official docs/repos/examples read: none newly required — this task adds no Supabase API surface
+  beyond the builders `createSupabaseStorage()` already uses, and the only new external artefact is
+  SQL applied by the pinned CLI.
+- public types/exports inspected: `Database["public"]["Tables"]["workflow_definitions"|
+  "workflow_versions"|"workflow_promotions"]` (regenerated after the migration), `PostgrestError`.
+- selected documented pattern: the existing adapter pattern in `supabase-storage.ts` — explicit
+  column mapping, `{ data, error }` checked on every call through `failed()`, plain `insert` where a
+  duplicate must fail loudly and `upsert(..., { onConflict })` where it must not, keyset paging with
+  `limit + 1`.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (in progress)
+
+### Decisions / deviations
+
+- (in progress)
+
+### Known issues / blockers
+
+- (in progress)
+
+### Next exact step
+
+Implement `packages/core/src/workflow-registry.ts`.
+
+## 2026-09-20 12:05 — M3-T1/T2/T4/T5/T6 — Decision contract, confidence bands, policy API, and the Jev adapter
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, orchestrated implementer session)
+**Commit:** not committed
+
+### Goal
+
+Build the first half of Milestone 3: the question contract (M3-T1), the
+`DecisionEngine` port and `JevDecisionEngine` over the AI SDK evaluation API
+(M3-T2), the deterministic policy API (M3-T4), per-question confidence bands
+(M3-T5) and batch-by-shared-state (M3-T6). M3-T3 (persistence), M3-T7
+(`verify`) and M3-T8/T9 (fixtures) are other agents' tasks and are out of scope.
+
+### Implementation references
+
+- **package/version:** `ai@7.0.107` (resolved at
+  `node_modules/.pnpm/ai@7.0.107_zod@4.6.5/node_modules/ai`, matching
+  `pnpm-lock.yaml` and `packages/runtime-ai-sdk/package.json`);
+  `@ai-sdk/provider@4.0.17` and `@ai-sdk/gateway@4.0.87`, both transitive
+  dependencies of `ai` and therefore not added to any manifest.
+- **installed docs read:**
+  - `ai/docs/07-reference/01-ai-sdk-core/14-evaluate.mdx` — `experimental_evaluate()`
+    parameters, result fields, provider specification, errors and model resolution.
+  - `ai/docs/03-ai-sdk-core/32-evaluation.mdx` — the full evaluation guide: the
+    three question types and their criteria/answer shapes, provider models
+    (`typeSafeAi.evaluationModel('jev-latest')`), model aliases and registries,
+    default-provider strings through AI Gateway, probabilities and confidence,
+    errors and cancellation, and scope.
+  - `ai/docs/07-reference/05-ai-sdk-errors/ai-evaluation-unsupported-question-type-error.mdx`
+    — `Experimental_EvaluationUnsupportedQuestionTypeError` properties
+    (`questionId`, `questionType`, `provider`, `modelId`) and the marker-based
+    `isInstance` check.
+  - `ai/docs/07-reference/01-ai-sdk-core/42-custom-provider.mdx` and
+    `40-provider-registry.mdx` — `customProvider({ evaluationModels })` and
+    `registry.evaluationModel('provider:model')` as the two documented ways to
+    name an evaluation model without a bare string.
+- **official docs/repos/examples read:** none beyond the installed package. The
+  installed docs are the lockfile-matched source and they cover the whole API
+  surface this task needs, so the precedence list stops at level 1/2.
+  `examples/ai-functions/src/evaluate` is referenced by the installed guide but
+  is not shipped inside `node_modules`.
+- **public types/exports inspected:**
+  - `ai/dist/index.d.ts` lines 7606-7654: `EvaluationModel = string |
+    Experimental_EvaluationModelV4`, `EvaluationQuestion =
+    Experimental_EvaluationModelV4Question`, the conditional
+    `EvaluationAnswer<QUESTION>`, `EvaluationResult<QUESTIONS>` and the
+    `evaluate` declaration itself (exported as `experimental_evaluate`).
+  - `@ai-sdk/provider/dist/index.d.ts` lines 2254-2340:
+    `EvaluationModelV4Input`, `EvaluationModelV4Question` (the three-case union),
+    `EvaluationModelV4CallOptions`, `EvaluationModelV4Answer`,
+    `EvaluationModelV4Result` and `EvaluationModelV4` itself with
+    `specificationVersion: 'v4'`, `provider`, `modelId`,
+    `supportedQuestionTypes` and `doEvaluate`.
+  - `@ai-sdk/gateway/dist/index.d.ts` line 7:
+    `type GatewayEvaluationModelId = 'typesafe-ai/jev' | (string & {})`, and
+    lines 982/986, `evaluation()`/`evaluationModel()` on the Gateway provider.
+    This is the authoritative spelling of the Jev model id; the build plan's
+    `typesafe-ai/jev` is confirmed by the installed types.
+  - `ai/dist/test/index.d.ts` line 59 and its export map:
+    `Experimental_EvaluationMockModelV4`, a documented test double implementing
+    `Experimental_EvaluationModelV4` and shipped from `ai/test`.
+- **selected documented pattern:** `experimental_evaluate({ model, state,
+  questions, maxRetries, abortSignal, headers, providerOptions })` with a
+  `Record<string, Experimental_EvaluationQuestion>` built from the harness's own
+  `QuestionSet`, one call per shared state (which is exactly M3-T6's batch
+  semantics, and the only batching the API offers: "Evaluation currently returns
+  one complete result for one shared state"). The model is an
+  `Experimental_EvaluationModel`, i.e. either a v4 model instance from a
+  provider or registry or a string id resolved through AI Gateway, for which
+  `JEV_GATEWAY_MODEL_ID = "typesafe-ai/jev"` is provided as a named constant.
+  Unit tests drive `Experimental_EvaluationMockModelV4` from `ai/test` rather
+  than a hand-written object, because the installed package ships the double.
+- **not documented, therefore harness-owned:** the installed evaluation API
+  exposes **no cost field** anywhere (`usage` is token counts only, and
+  `EvaluationModelV4Result` has no cost), so `DecisionUsage.costUsd` is `null`
+  until a provider surfaces one; **no portable confidence**, so the mapping from
+  a probability distribution to a single `confidence` number is a harness
+  choice recorded in ADR-0042; and no notion of a question registry, versioning
+  or bands, all of which are harness contracts.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- No AI Gateway credential is available in this session, so the live Jev test is
+  written and tagged but cannot be executed here.
+
+### Next exact step
+
+Implement `packages/core/src/decision.ts`, then `packages/decision-jev`.
+
+## 2026-09-20 16:45 — M3-T1/T2/T4/T5/T6 — Decision contract, confidence bands, policy API, and the Jev adapter
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, orchestrated implementer session)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. M3-T3 (persistence), M3-T7 (`verify`) and M3-T8/T9
+(fixtures) remain other agents' tasks.
+
+### Implementation references
+
+See the `started` entry above; nothing in it changed during implementation.
+Two facts were added to it by reading `ai/dist/index.js` lines 14548-14609,
+because the declaration files leave them open and both shape the adapter:
+`response.modelId` falls back to the resolved `model.modelId`, and the provider
+name is **not** in the result at all, so a caller who passed a model-id string
+never learns it.
+
+### Work completed
+
+- **`packages/core/src/decision.ts` (M3-T1, M3-T4, M3-T5, M3-T6).** Questions
+  (`BooleanQuestion`, `ChoiceQuestion`, `ScoreQuestion`) with versioned identity
+  and `defineQuestion()`/`defineQuestionSet()` as the validating boundary; the
+  `DecisionEngine` port exactly as build plan section 5 states it;
+  `DecisionRequest`/`DecisionResult` with a typed `AnswerFor<Q>` per question;
+  `ConfidenceBands` with `bandFor()`/`bandForConfidence()`; `deriveConfidence()`;
+  `definePolicy()`, `PolicyOutcome` and `policyFingerprint()`. Zero dependencies,
+  exported by name from `index.ts`.
+- **`packages/decision-jev` (M3-T2), a new declared adapter.** `package.json`,
+  both tsconfigs, `createJevDecisionEngine()` over `experimental_evaluate`,
+  `JEV_GATEWAY_MODEL_ID`, `DEFAULT_STRING_MODEL_PROVIDER`. Dependencies:
+  `@internal/core` and `ai@7.0.107`, nothing else.
+- **`packages/testing/src/fake-decision-engine.ts`.**
+  `createFakeDecisionEngine({ script, failWith, ... })`, scripted per question
+  id or `id@version`, recording calls, deriving confidence through the same core
+  function the real adapter uses.
+- **`packages/workflow/src/runtime/decision-port.ts`.** `createDecisionPort()`
+  bridging a `DecisionEngine` to M4's `WorkflowDecisionPort`, with the
+  `{ answer, confidence, band, distribution, decisionId }` node output.
+  `workflow-runtime.ts` and `ports.ts` were **not** touched.
+- **Docs.** `docs/contracts/decision-engine.md` (new, flipped from planned in
+  `docs/contracts/README.md`), ADR-0042 plus its row and prose in
+  `docs/decisions/README.md`, the research note plus its entry in
+  `docs/research/vercel/README.md`, the `packages/decision-jev` row in
+  `docs/architecture/system-map.md`, and the five task sections in the M3
+  status file.
+
+### Files changed
+
+- `packages/core/src/decision.ts` (new), `packages/core/src/decision.test.ts` (new)
+- `packages/core/src/index.ts` (one export block added)
+- `packages/decision-jev/package.json`, `tsconfig.json`, `tsconfig.build.json` (new)
+- `packages/decision-jev/src/index.ts` (new)
+- `packages/decision-jev/src/jev-decision-engine.ts` (new)
+- `packages/decision-jev/src/jev-decision-engine.test.ts` (new)
+- `packages/decision-jev/src/jev-decision-engine.integration.test.ts` (new, `live:jev`)
+- `packages/testing/src/fake-decision-engine.ts` (new), `fake-decision-engine.test.ts` (new)
+- `packages/testing/src/index.ts` (one export block added)
+- `packages/workflow/src/runtime/decision-port.ts` (new), `decision-port.test.ts` (new)
+- `packages/workflow/src/runtime/index.ts`, `packages/workflow/src/index.ts` (exports added)
+- `tests/architecture/package-boundaries.test.ts` (one entry: `@internal/decision-jev`)
+- `pnpm-lock.yaml` (the new workspace package)
+- `docs/contracts/decision-engine.md` (new), `docs/contracts/README.md`
+- `docs/decisions/0042-the-decision-contract-is-core-the-experimental-evaluation-api-is-the-adapter.md` (new)
+- `docs/decisions/README.md`
+- `docs/research/vercel/2026-09-20-m3-ai-sdk-evaluate.md` (new), `docs/research/vercel/README.md`
+- `docs/architecture/system-map.md` (one row)
+- `docs/milestones/m3-jev-as-a-first-class-decision-primitive.md` (M3-T1/T2/T4/T5/T6)
+
+### Verification
+
+- `node --version` -> `v24.21.0`, `pnpm --version` -> `12.4.2` — PASS
+- `pnpm vitest run --project unit packages/core/src/decision.test.ts` — PASS (49 tests)
+- `pnpm vitest run --project unit packages/decision-jev` — PASS (28 tests)
+- `pnpm vitest run --project unit packages/testing/src/fake-decision-engine.test.ts` — PASS (13 tests)
+- `pnpm vitest run --project unit packages/workflow/src/runtime/decision-port.test.ts` — PASS (10 tests)
+- `pnpm vitest run --project integration packages/decision-jev` — PASS (1 skipped, with the
+  printed `[live:jev]` reason: neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set)
+- `pnpm --filter @internal/core typecheck` — PASS
+- `pnpm --filter @internal/decision-jev typecheck` — PASS
+- `pnpm --filter @internal/testing typecheck` — PASS
+- `pnpm --filter @internal/workflow typecheck` — PASS
+- `pnpm exec tsc --noEmit -p tsconfig.json` (scripts/tests/config) — PASS
+- `pnpm format:check` — PASS
+- `pnpm lint` — PASS
+- `pnpm test` — PASS (1370 passed, 57 skipped, 74 files, all four projects)
+- `pnpm build` — PASS (12/12 tasks)
+- `pnpm check` — PASS
+
+### Decisions / deviations
+
+Recorded in full in ADR-0042. The ones worth naming here:
+
+- **Trace emission belongs to the caller, not the engine.** The brief allowed
+  either. The workflow runtime already opens the `decision.*` span around a
+  `jev` node, and one `evaluate` call may answer several questions that no single
+  node span describes, so an engine that also emitted would double-count every
+  Jev call in `pnpm harness run show`. `DecisionRequest.context` is therefore
+  cancellation and provenance only.
+- **Confidence is harness-owned, defined once in core.** The installed API
+  exposes no portable measure and says so. The rule is the probability mass on
+  the answer given; for a score, the mass within half a level. AD-016 choice,
+  recorded in the ADR.
+- **Banding fails closed twice**: `null` confidence is `human-review`, and so is
+  any answer to a question with no bands. An uncalibrated question has no
+  threshold to clear.
+- **`ScoreQuestion` declares `levels`, not `min`/`max`.** The brief allowed
+  "a documented scale"; the AI SDK's ordered level list is both the aligned
+  choice and the one a calibration fixture can check. `scoreRange()` exposes the
+  `[0, levels.length - 1]` range.
+- **Three naming divergences from the AI SDK** (`kind`/`type`,
+  `prompt`/`instructions`, `choices` + `choiceDescriptions` vs one `criteria`
+  map), each for a reason internal to this repository, tabulated in ADR-0042.
+- **`@ai-sdk/gateway` was not added.** It is already a transitive dependency of
+  `ai`, and `experimental_evaluate` resolves a bare model-id string through it,
+  so `typesafe-ai/jev` costs no new pin. ADR-0024's policy applies and was not
+  triggered.
+- **Unit tests use `Experimental_EvaluationMockModelV4` from `ai/test`** rather
+  than a hand-written fake object. The installed package ships the double and the
+  guide names it, so the adapter is exercised against the same type a real
+  provider satisfies — including the SDK's own answer validation, which caught a
+  wrong score fixture during development (a score must equal its distribution's
+  probability-weighted mean).
+
+### Known issues / blockers
+
+- **The live test has not been run.** No AI Gateway credential exists in this
+  environment, so `packages/decision-jev/src/jev-decision-engine.integration.test.ts`
+  skips. Nothing in this task has touched a real model.
+- **`usage.costUsd` is always `null`.** The installed evaluation API exposes no
+  cost anywhere — `experimental_evaluate`'s `usage` is token counts only, and
+  the provider-level `EvaluationModelV4Result` has no cost field. M3-T3's
+  build-plan evidence list names cost, so it must persist the null rather than
+  omit the column or estimate a figure.
+- **Where a workflow's question registry comes from is not decided.** A question
+  is deliberately not a `CapabilityKind`, so `createDecisionPort()` takes one
+  from its caller. M5 owns the answer when a workflow is registered.
+- During this task, concurrent work on Milestone 5 briefly broke `pnpm lint`,
+  `pnpm format:check` and the `typecheck` and `package-boundaries` stages on
+  files this task does not own (`packages/core/src/storage.ts`,
+  `packages/core/src/workflow-registry.*`, `packages/registry/`,
+  `packages/testing/src/in-memory-storage.ts`). All were resolved by that agent
+  before the final `pnpm check`.
+- One `pnpm check` run failed in
+  `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts` with "a dev
+  server is already running for this eve agent". That is a **resource
+  collision, not a code failure**: the fixture agent's dev server binds one
+  port, and two agents running `pnpm check` at the same time contend for it.
+  Re-running the contract suite alone passed (7/7), and the next full
+  `pnpm check` passed. Worth knowing for anyone running the gate concurrently.
+
+### Next exact step
+
+M3-T3: persist the decision evidence. `DecisionResult` is JSON-representable and
+already carries every field the build plan's list names except `cost` (see
+above) and the consuming policy version, which is `PolicyOutcome.policy` and is
+stored beside the result rather than inside it (ADR-0009). Extend the `Storage`
+port and add the migration for the `decisions` table.
+
+## 2026-09-20 16:40 — M5-T1/M5-T2 — Workflow registry model, compatibility selector, and the registry half of the Storage port
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, concurrent-implementer session)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. M5-T1 (registry model, statuses and transition table), M5-T2
+(compatibility declaration and the pure selector), the workflow-registry extension of the `Storage`
+port with both implementations, one new migration, and the new `@internal/registry` package.
+M5-T3..T7 are a later task and are untouched.
+
+### Implementation references
+
+As the `started` entry above. Installed versions confirmed during the work: `@supabase/supabase-js`
+2.116.0, Supabase CLI 2.117.0, Node 24.21.0, pnpm 12.4.2. No new third-party dependency was added.
+
+### Work completed
+
+- **Core model (M5-T1).** `packages/core/src/workflow-registry.ts`: `WORKFLOW_STATUSES`,
+  `isWorkflowStatus()`, `WORKFLOW_STATUS_TRANSITIONS` as an explicit table, `canTransition()`;
+  `WorkflowRecord`, `WorkflowVersionRecord`, `WorkflowPromotionRecord` with
+  `parseWorkflowRecord()`, `parseWorkflowVersionRecord()` and `parseWorkflowPromotionRecord()` as
+  strict read boundaries in the `parseRunRecord()` style.
+- **Core selector (M5-T2).** `WorkflowCompatibility`, `collectRequiredCapabilities()`,
+  `describeWorkflowCompatibility()`, `compareExactVersions()`, `WORKFLOW_REJECTION_REASONS` and
+  `selectCompatibleWorkflow()`, all pure. Nine ordered checks, nine closed rejection reasons,
+  newest-id tie-break, and the workflow's `id` never consulted.
+- **`Storage` port.** Six methods appended: `saveWorkflow`, `saveWorkflowVersion`,
+  `getWorkflowVersion`, `listWorkflowVersions`, `setWorkflowVersionStatus`,
+  `listWorkflowPromotions`, plus `WorkflowVersionFilter`, `WorkflowVersionListCursor`,
+  `WorkflowVersionPage`, `SetWorkflowVersionStatusInput` and
+  `DEFAULT_WORKFLOW_VERSION_PAGE_SIZE`.
+- **Migration.** `supabase/migrations/20260920202604_workflow_registry_columns.sql` gives the three
+  M2 placeholder tables their real columns, drops their unused `payload jsonb`, adds the status
+  check constraints, the two unique constraints and two routing indexes. The M2 migration is not
+  edited. `database.types.ts` regenerated.
+- **Both implementations.** `createSupabaseStorage()` and `createInMemoryStorage()`, with the
+  shared contract suite extended by thirteen registry cases.
+- **`packages/registry`.** New `@internal/registry` package: `createWorkflowRegistry()` with
+  `register()`, `promote()`, `retire()`, `findActive()` and `resolve()`; added to
+  `tests/architecture/boundaries.ts` with core's bans and to the exhaustive package list.
+- **Docs.** ADR-0043, `docs/contracts/workflow-registry.md`, rows and paragraphs in
+  `docs/contracts/README.md`, `docs/decisions/README.md`, `docs/architecture/system-map.md`,
+  `supabase/migrations/README.md`, an update to `docs/contracts/storage.md`, and the M5-T1/M5-T2
+  `**Result.**` paragraphs in the milestone status file.
+
+### Files changed
+
+- `packages/core/src/workflow-registry.ts` — new; the model and the selector.
+- `packages/core/src/workflow-registry.test.ts` — new; 45 cases.
+- `packages/core/src/storage.ts` — six methods and four types appended to the port.
+- `packages/core/src/index.ts` — the new public surface.
+- `packages/core/src/harness.test.ts` — the recording `Storage` fixture refuses the six new methods.
+- `packages/testing/src/in-memory-storage.ts` — the registry half, with the three uniqueness rules.
+- `packages/storage-supabase/src/supabase-storage.ts` — the registry half; `saveDomain()` now takes
+  `(id, version, operation)` so `saveWorkflow` can reuse it.
+- `packages/storage-supabase/src/storage.contract.test.ts` — thirteen registry cases.
+- `packages/storage-supabase/src/database.types.ts` — regenerated (never hand-edited).
+- `packages/trace/src/storage-sink.test.ts` — the two `Storage` stubs refuse the six new methods.
+- `packages/registry/` — new package: `package.json`, both tsconfigs, `src/index.ts`,
+  `src/workflow-registry.ts`, `src/workflow-registry.test.ts` (14 cases).
+- `supabase/migrations/20260920202604_workflow_registry_columns.sql` — new.
+- `supabase/migrations/README.md`, `docs/contracts/README.md`, `docs/contracts/storage.md`,
+  `docs/contracts/workflow-registry.md` (new), `docs/decisions/README.md`,
+  `docs/decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md`
+  (new), `docs/architecture/system-map.md`,
+  `docs/milestones/m5-workflow-registry-router-and-fallback.md`.
+- `tests/architecture/boundaries.ts`, `tests/architecture/package-boundaries.test.ts`.
+- `pnpm-lock.yaml` — the new workspace package.
+
+### Verification
+
+- `pnpm supabase:reset` — PASS (all six migrations applied from an empty database, twice).
+- `pnpm supabase:types` — PASS; run twice in a row, the second run produced a byte-identical file
+  (`diff` silent), and a reset-then-regenerate reproduced the same file again.
+- `pnpm vitest run --project unit packages/core/src/workflow-registry.test.ts` — PASS (45 tests).
+- `pnpm vitest run --project unit packages/registry/src/workflow-registry.test.ts` — PASS (14).
+- `pnpm vitest run --project unit tests/architecture/package-boundaries.test.ts` — PASS (16).
+- `pnpm vitest run --project contract packages/storage-supabase/src/storage.contract.test.ts`
+  with `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` exported from `.env.local` — PASS, **71 tests,
+  0 skipped**: the Supabase leg ran for real against local Postgres 17.6, not skipped.
+- `pnpm test` (all four projects, Supabase configured) — PASS: 1440 passed, 1 skipped, 74 files.
+- `pnpm check` (format:check, lint, typecheck, test, build, check:handoff) — PASS.
+
+### Decisions / deviations
+
+- **`saveWorkflow` returns the `WorkflowRecord`** rather than `void`. `(domainId, workflowKey)` is
+  unique and re-registering is the normal case, so the caller needs the *surviving* row's
+  `WorkflowId` to hang the new version off. The alternative was a sixth lookup method.
+- **`listWorkflowPromotions` was added** to the port. The brief's five methods make the promotion
+  ledger unobservable, and the contract suite's "promotion history" case needs to read it.
+- **`SetWorkflowVersionStatusInput` carries `changedAt` and a required `promotionId`.** Ids are
+  harness-minted with no database default (ADR-0030), and the timestamp comes from the caller's
+  clock so tests and the registry's injected clock agree.
+- **`WorkflowVersionRecord` has no `canonicalJson` field.** It is derivable from `definition`, and
+  a stored second copy could disagree with it. `parseWorkflowVersionRecord()` instead *recomputes*
+  the fingerprint and rejects a row whose digest and IR disagree. Recorded in ADR-0043.
+- **`workflow_versions` carries denormalized `domain_id` and `job_type` columns**, beyond the
+  brief's column list. The router's only hot-path query is "every active version for this domain
+  and job type", and the alternative was PostgREST embedded-resource filtering through
+  `workflow_definitions`, which would break the single-table keyset paging every other list on the
+  port uses. ADR-0036's own rule is that stable indexed metadata lives in columns. The adapter
+  reads the record's domain and job type from `compatibility`, never from the columns.
+- **The `payload jsonb` placeholder is dropped** from all three tables rather than left beside the
+  real columns. Nothing ever wrote it.
+- **`describeWorkflowCompatibility(compiled, { sop, … })` takes an options argument.** The IR does
+  not carry an SOP, so it cannot be derived; it is required rather than defaulted.
+- **`describeWorkflowCompatibility` takes a structural `{ definition }`** rather than importing
+  `CompiledWorkflow`, because `@internal/workflow` depends on core and not the reverse. A
+  `CompiledWorkflow` is assignable to it.
+- **Status change and ledger row are two statements**, not one transaction: PostgREST offers none
+  across two tables. The compare-and-set is one statement, the ledger append follows, and a failed
+  append raises rather than being swallowed. Documented in the ADR and the contract.
+- `docs/contracts/README.md`'s "Fourteen contracts are implemented" sentence was bumped to
+  "Fifteen" for the registry contract; the concurrent M3 session bumped it again to "Sixteen" for
+  `decision-engine.md`, which is the current, correct value.
+
+### Known issues / blockers
+
+- The status change and its promotion row are not atomic (above). The residual failure mode is
+  visible — a version whose status disagrees with its last promotion — and raises a `StorageError`.
+- `shadow` and `canary` are legal statuses the selector refuses; nothing gives them behaviour until
+  M5-T3 and M6.
+- A `jev` node's `question` is still not validated at registration. M4-T9 deferred that to M5 and
+  M3 together; the registry does not do it today, and it needs M3's question contract.
+- One transient failure was seen mid-session in
+  `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts` ("an eve dev server is already
+  running"), from a stale dev server left by a concurrent session's test run. It passed on the
+  immediate re-run and on every run since; nothing in this task touches that package.
+
+### Next exact step
+
+M5-T3 through M5-T7 (router, fallback contract, full-agent escalation, fallback context handoff,
+circuit breaker), against the ADR number the milestone status file pre-assigns to them. The router
+calls
+`registry.resolve(job, { manifest, harnessVersion })` and routes on
+`selection.kind === "match"`, recording `selection.rejections` when it is `"none"`;
+`runs.workflow_version_id` takes `selection.version.id`.

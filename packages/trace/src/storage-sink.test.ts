@@ -52,6 +52,14 @@ function createStubStorage(fail?: unknown): StubStorage {
     getJob: unused,
     listRuns: unused,
     getTrace: unused,
+    // The workflow-registry half of the port (M5-T1). A trace sink must never
+    // reach it, so it refuses rather than pretending.
+    saveWorkflow: unused,
+    saveWorkflowVersion: unused,
+    getWorkflowVersion: unused,
+    listWorkflowVersions: unused,
+    setWorkflowVersionStatus: unused,
+    listWorkflowPromotions: unused,
   };
 }
 
@@ -197,6 +205,12 @@ describe("createStorageTraceSink", () => {
       getJob: unused,
       listRuns: unused,
       getTrace: unused,
+      saveWorkflow: unused,
+      saveWorkflowVersion: unused,
+      getWorkflowVersion: unused,
+      listWorkflowVersions: unused,
+      setWorkflowVersionStatus: unused,
+      listWorkflowPromotions: unused,
     };
 
     const writer = createBufferedTraceWriter({ sink: createStorageTraceSink({ storage }) });

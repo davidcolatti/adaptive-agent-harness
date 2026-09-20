@@ -92,6 +92,7 @@ and related ADRs that motivated it.
 | [0039](0039-workflow-validation-is-a-graph-model-with-one-owner-per-node.md) | Workflow validation is a graph model with one owner per node, and schema compatibility is reference equality | accepted |
 | [0040](0040-the-local-workflow-runtime-interprets-a-compiled-workflow-and-escalates-rather-than-fails.md) | The local workflow runtime interprets a `CompiledWorkflow`, records into the run's trace, and escalates rather than fails | accepted |
 | [0041](0041-the-typed-dsl-is-a-wiring-front-end-that-parses-its-own-ir.md) | The typed DSL is a wiring front end that parses its own IR | accepted |
+| [0042](0042-the-decision-contract-is-core-the-experimental-evaluation-api-is-the-adapter.md) | The decision contract is a core contract; the experimental evaluation API is an adapter | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -269,3 +270,63 @@ adapter. What the inspector cannot show in Milestone 2 is the run's **output val
 rather than printing a blank: nothing persists one, and the `artifacts` table is where M5 will put
 it. Implemented in `packages/observability/src/`, `packages/core/src/trace.ts` and
 `packages/trace/src/jsonl-source.ts`, and operated per `docs/runbooks/inspecting-a-run.md`.
+
+Entry 0042 records M3-T1/M3-T2/M3-T4/M3-T5/M3-T6, the decision primitive, and it is the same
+core/behavior split ADR-0038 made for the workflow IR: `@internal/core` declares questions, the
+`DecisionEngine` port, confidence bands and the policy API with no dependency, and
+`@internal/decision-jev` is the **only** place the AI SDK's experimental evaluation API may appear,
+because the installed guide says in as many words that it "may change in patch releases". The
+decisions that needed making were the ones the API does not make. A question is versioned, because
+answers to a reworded question are not comparable evidence; naming follows the AI SDK except in
+three recorded places (`kind` for `type`, `prompt` for `instructions`, an ordered `choices` list
+beside optional descriptions instead of one `criteria` map), each for a reason internal to this
+repository. Confidence is **harness-owned**, defined once in core as the probability mass on the
+answer given, because the installed guide states that the SDK "does not promise calibration across
+providers" and that a provider's own statistic "is not ... a portable confidence measure"; that
+statistic is still carried verbatim in `providerMetadata`, and never adopted. Bands are per
+question with no global default (M3-T5 forbids one), and they fail closed twice over: a `null`
+confidence is `human-review`, and so is any answer to a question nobody has calibrated. A policy is
+a pure, versioned function object whose thresholds are exposed as JSON and hashed, which turns
+ADR-0009's "thresholds are versioned and replayable" into a test that parses a stored result from
+JSON and routes it through two threshold versions with no engine present. Absence is recorded
+rather than filled in: a missing distribution is `null` and never synthesized, and `usage.costUsd`
+is `null` because the evaluation API exposes no cost anywhere — which M3-T3 must persist as a null
+rather than omit. The engine emits **no** trace events, because `workflow-runtime.ts` already opens
+the `decision.*` span around a `jev` node and a batch call answering three questions corresponds to
+no single node span. Jev is reached as the model-id string `typesafe-ai/jev`, the id
+`@ai-sdk/gateway` enumerates, with no new dependency added, because `ai` already depends on the
+Gateway and resolves the string itself. Implemented in `packages/core/src/decision.ts`,
+`packages/decision-jev/src/jev-decision-engine.ts`,
+`packages/workflow/src/runtime/decision-port.ts` and
+`packages/testing/src/fake-decision-engine.ts`, documented in `docs/contracts/decision-engine.md`,
+and grounded in `docs/research/vercel/2026-09-20-m3-ai-sdk-evaluate.md`.
+
+Entry 0043 records M5-T1/M5-T2, the workflow registry model and the compatibility selector over it.
+The build plan gives seven statuses and no edges between them, so the edges are this project's
+choice and are written as a table rather than inferred from a chain of conditionals: `draft` is
+proposed or thrown away, a `candidate` may take any of the three exposure levels a human chooses,
+`shadow` and `canary` may widen or stop, `active` exits only to `retired`, and `retired` and
+`rejected` are terminal with no way back into `draft` — a version's identity is its IR fingerprint,
+so "reworked" means a new version. AD-005 is made structural rather than remembered: every method
+that moves a status takes an `actor`, and nothing in the harness can promote itself. What a version
+declares is **derived** from its compiled IR rather than authored, so it cannot claim compatibility
+the workflow does not have; the one field the IR cannot supply is the SOP identifier, which is
+passed at registration. `selectCompatibleWorkflow()` is pure and applies nine exact checks in a
+fixed order — status, domain, job type, both schemas, every pinned capability at its exact version
+(AD-015), the SOP, its fingerprint when both sides have one, and the minimum harness version —
+reporting the first failure as one of nine closed rejection reasons, and **never consulting the
+workflow's name**, which is M5-T2's own prohibition enforced rather than intended. When more than
+one active version matches, the newest `WorkflowVersionId` wins, stated because "registry lookup is
+deterministic" is an acceptance criterion and a store's row order is not a contract. Promotions are
+an append-only ledger, and `setWorkflowVersionStatus()` is a compare-and-set, so two promoters
+cannot both succeed. `(workflowId, fingerprint)` is unique and the read boundary **recomputes** the
+digest from the stored IR, so one behaviour cannot become two versions and a hand-edited payload
+cannot win a tie-break. The types and the selector live in `packages/core/src/workflow-registry.ts`
+and the service in `packages/registry`, the split ADR-0038 already made for the IR. The three
+registry tables M2-T5 created as placeholders are filled by a **new** migration,
+`supabase/migrations/20260920202604_workflow_registry_columns.sql`, with `domain_id` and `job_type`
+denormalized onto `workflow_versions` so the router's one hot-path query stays a single-table
+keyset read. Implemented in `packages/core/src/workflow-registry.ts` and `storage.ts`,
+`packages/registry/src/`, `packages/storage-supabase/src/supabase-storage.ts` and
+`packages/testing/src/in-memory-storage.ts`, and documented in
+`docs/contracts/workflow-registry.md`.

@@ -42,17 +42,20 @@ layout still plans, with their target milestone and a one-line summary.
 | `storage.md` | active (M2-T5, M2-T6, M2-T7) | The `Storage` port the harness persists through, the outcome ledger row it writes, the thirteen-table Supabase schema behind it, and the sink that drains a run's trace into it. |
 | `workflow-ir.md` | active (M4-T1, M4-T2) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics: the definition, the eleven node types and five control shapes, the `Binding` data-flow model, `parseWorkflowDefinition()` and the workflow fingerprint. |
 | `workflow-dsl.md` | active (M4-T5) | The typed TypeScript builder that authors a workflow: `workflow()`, a method per node type, nested sub-graph callbacks, `.goto()` for rejoining, the defaults it applies and the edges and schemas it derives. It compiles to the IR and parses its own output. |
-| `decision-engine.md` | planned (M3) | The `DecisionEngine` interface for bounded probabilistic judgments, implemented first by Jev. |
+| `workflow-registry.md` | active (M5-T1, M5-T2) | The workflow registry: the seven statuses and the transition table between them, what a version declares about the jobs it can handle, the exact-match compatibility selector with its nine ordered checks and typed rejection reasons, the three records and their parse boundaries, the six `Storage` methods and the promotion ledger. |
+| `decision-engine.md` | active (M3-T1, M3-T2, M3-T4, M3-T5, M3-T6) | Bounded probabilistic judgment: the three question kinds with their versioned identity, the `DecisionEngine` port and its complete JSON-representable result, the harness-owned confidence derivation, per-question confidence bands that fail closed, and the deterministic policy API a stored result replays through. |
 | `promotion-policy.md` | planned (M6) | The quality/regression/false-auto/fallback thresholds a candidate workflow must clear before promotion. |
 
-Fourteen contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
+Sixteen contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
 and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime` with `AgentExecution`
 (M1-T5), `createHarness()` (M1-T4), the capability registry with its serializable manifest
 (M1-T9), the entity identifier scheme (M2-T1), the trace event with its recorder and writer
 (M2-T3, M2-T4), the behavior fingerprint (M2-T8), trace redaction (M2-T9), and the `Storage` port with its outcome ledger
-(M2-T5, M2-T6, M2-T7), the workflow IR with its node contracts (M4-T1, M4-T2), and the typed
-workflow DSL over it (M4-T5). All live in
-`packages/core` except two behavior halves. The trace's is `packages/trace`: the buffered writer, the JSONL sinks and the
+(M2-T5, M2-T6, M2-T7), the workflow IR with its node contracts (M4-T1, M4-T2), the typed
+workflow DSL over it (M4-T5), the workflow registry with its compatibility selector
+(M5-T1, M5-T2), and the decision engine with its questions, bands and policies (M3-T1, M3-T2,
+M3-T4, M3-T5, M3-T6). All live in
+`packages/core` except their behavior halves. The trace's is `packages/trace`: the buffered writer, the JSONL sinks and the
 redaction pass above them, kept out of core so that core owns no storage decision and touches no
 `node:fs`. The workflow's is `packages/workflow`: graph validation, the typed DSL and the local
 deterministic runtime, kept out of core for the same reason, so core declares the IR contract and
@@ -78,8 +81,17 @@ UUIDv7 with a monotonic counter, owned by the harness rather than taken from Nod
 documented in `identifiers.md`. `Job.id`, `ExecutionContext.runId`/`jobId` and `TraceEvent.runId`
 carry it today; the other nine brands exist as types with no field yet.
 
-Of build plan section 5, `DecisionEngine` (M3) is still to come; `WorkflowNode`, the control shapes
-and `FallbackContext` arrived with M4-T1/M4-T2 and are `workflow-ir.md`. `job.md` is **finalized** as of M2-T2, recorded in
+Build plan section 5's contracts are now all declared. `WorkflowNode`, the control shapes and
+`FallbackContext` arrived with M4-T1/M4-T2 and are `workflow-ir.md`; `DecisionEngine` arrived with
+M3 and is `decision-engine.md`. The decision contract's behavior half is `packages/decision-jev`,
+split out for the usual reason and for one more: the AI SDK's evaluation API is experimental, and
+its own documentation says it "may change in patch releases", so it is confined to a single adapter
+file
+([ADR-0042](../decisions/0042-the-decision-contract-is-core-the-experimental-evaluation-api-is-the-adapter.md)).
+Two of that contract's properties are worth knowing before reading it: confidence is
+**harness-owned**, because the installed API exposes no portable measure and says so plainly, and
+banding **fails closed** both when confidence is missing and when a question has never been
+calibrated. `job.md` is **finalized** as of M2-T2, recorded in
 [ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md): the
 field list is unchanged, immutability is deep rather than one level, the job the runtime receives
 is the job, creation time is derived from the `JobId` rather than stored in a `createdAt` field, an
@@ -96,3 +108,14 @@ the outcome is written **after** the trace is flushed, so a `completed` row neve
 evidence. Every storage failure leaves `harness.run()` as a `StorageError` rather than becoming a
 result. Recorded in
 [ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md).
+
+The **workflow registry** is where Milestone 5's routing decision becomes decidable from data.
+`workflow-registry.md` states the seven statuses and the explicit table of edges between them, what
+a version declares about the jobs it can handle, and the exact-match selector that picks one. Two
+properties carry the weight. Promotion is human-invoked, so every method that moves a status takes
+an actor and nothing in the harness can promote itself (AD-005); and a version's identity is its IR
+fingerprint, so registering the same behaviour twice is a conflict and the read boundary recomputes
+the digest rather than trusting the stored one. The model and the pure selector live in
+`packages/core`; the service that needs a `Storage` and a `CompiledWorkflow` lives in
+`packages/registry`, the same split the trace and the workflow packages already make. Recorded in
+[ADR-0043](../decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md).

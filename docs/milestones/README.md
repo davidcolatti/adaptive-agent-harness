@@ -73,9 +73,11 @@ M12 Hardening + Autonomous Optimization
 | M0, Repository Foundation | complete | [m0-repository-foundation.md](m0-repository-foundation.md) |
 | M1, Local Agent + Public Harness Boundary | complete (snapshot: [../progress/milestones/m1.md](../progress/milestones/m1.md)) | [m1-local-agent-and-public-harness-boundary.md](m1-local-agent-and-public-harness-boundary.md) |
 | M2, Job, Trace, Supabase, and Run Ledger | complete (snapshot: [../progress/milestones/m2.md](../progress/milestones/m2.md)) | [m2-job-trace-supabase-and-run-ledger.md](m2-job-trace-supabase-and-run-ledger.md) |
+| M3, Jev as a First-Class Decision Primitive | in progress | [m3-jev-as-a-first-class-decision-primitive.md](m3-jev-as-a-first-class-decision-primitive.md) |
 | M4, Workflow IR, DSL, and Local Deterministic Runtime | complete (snapshot: [../progress/milestones/m4.md](../progress/milestones/m4.md)) | [m4-workflow-ir-dsl-and-local-deterministic-runtime.md](m4-workflow-ir-dsl-and-local-deterministic-runtime.md) |
+| M5, Workflow Registry, Router, and Fallback | in progress | [m5-workflow-registry-router-and-fallback.md](m5-workflow-registry-router-and-fallback.md) |
 
-Later milestones (M3 and M5 onward) get their own status file when that milestone starts. Creating them
+Later milestones (M6 onward) get their own status file when that milestone starts. Creating them
 in advance would mean copying task lists out of the build plan with nothing verified behind them,
 which is exactly the kind of stale documentation the plan's documentation rules warn against. The
 build plan already holds the full task list for every milestone; read it there until the milestone

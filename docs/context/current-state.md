@@ -4,17 +4,22 @@
 > session. History lives in `docs/progress/WORKLOG.md`; frozen milestone
 > records live in `docs/progress/milestones/`.
 
-**Last updated:** 2026-09-20 (Milestone 4 complete)
-**Current milestone:** M4 is complete. Next is **M5, Workflow Registry,
-Router, and Fallback** (the critical path), whose build-plan "Blocked By"
-section names exactly one dependency: M4, which is now done. **M3, Jev**, is
-still unblocked and can start now, on its own or beside M5; M5's own `jev`
-node registration boundary and Jev-dependent routing need M3 to have landed
-by the time that part of M5 is reached, even though M5 does not formally
-block on it.
-**Current task:** Not started. First create the status file for whichever of
-M5 or M3 starts next, from `docs/milestones/build-plan.md`, in the M4 status
-file's shape (`docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`).
+**Last updated:** 2026-09-20 (Milestones 3 and 5 started)
+**Current milestone:** M4 is complete. **M3, Jev** and **M5, Workflow
+Registry, Router, and Fallback** are both in progress, in parallel. M5 is the
+critical path, whose build-plan "Blocked By" section names exactly one
+dependency: M4, which is now done. M3 was blocked only by M2, also done. M5's
+own `jev`-node registration boundary and Jev-dependent routing need M3 to
+have landed by the time that part of M5 is reached, even though M5 does not
+formally block on it.
+**Current task:** Phase A, running in parallel: M3-T1, M3-T2, M3-T4, M3-T5,
+M3-T6 (`m3-core`: the question contract in core, `packages/decision-jev` over
+the AI SDK's `experimental_evaluate`, a fake engine in testing, and a
+decision-port bridge in `packages/workflow`), and M5-T1, M5-T2 (`m5-registry`:
+the registry model and compatibility selector in core, the `Storage` port
+extension for workflow versions/promotions with a new migration, and the new
+`packages/registry`). Later phases: `m5-router` (M5-T3 through M5-T7) and
+`m3-persist` (M3-T3, M3-T7, M3-T8, M3-T9).
 **Last commit SHA:** `c1572f1` (fix: inspector zero-Jev note only when no Jev call); before it `e461297` (M4-T10: hand-authored vendor-triage workflow,
 fixture decision port, `--workflow` demo, and the M4 acceptance evidence).
 This handoff's docs commit is `c109d0a`. Earlier M4: `0562ac8` (docs:
@@ -430,15 +435,14 @@ Architecture: `docs/architecture/runtime.md`,
 
 ## Exact next task
 
-Milestone 4 is complete and closed out. The next task is creating the status
-file for whichever of **M5** or **M3** starts next
-(`docs/milestones/m5-workflow-registry-router-and-fallback.md` or
-`docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`), from
-`docs/milestones/build-plan.md`, in the M4 status file's shape. M5 is the
-critical path and is unblocked (its build-plan "Blocked By" names only M4);
-M3 is also unblocked and can run beside it, and is needed before M5 reaches
-its `jev`-node registration and routing. If both run concurrently, coordinate
-on shared files (`AGENTS.md`, `docs/context/current-state.md`,
+Both status files now exist —
+`docs/milestones/m3-jev-as-a-first-class-decision-primitive.md` and
+`docs/milestones/m5-workflow-registry-router-and-fallback.md` — and Phase A is
+in progress: M3-T1/T2/T4/T5/T6 and M5-T1/T2, in parallel, per "Current task"
+above. M3-T3 is sequenced to start only after M5-T1/T2 land, since both touch
+the `Storage` port and a migration. After Phase A, `m5-router` (M5-T3 through
+M5-T7) and `m3-persist` (M3-T3, M3-T7, M3-T8, M3-T9) are next. Coordinate on
+shared files (`AGENTS.md`, `docs/context/current-state.md`,
 `docs/milestones/README.md`) the way M3 and M4 were meant to.
 
 ## Exact first command for the next agent

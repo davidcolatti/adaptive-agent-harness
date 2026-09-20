@@ -8,6 +8,13 @@ export type { BindingItem, BindingScope } from "./bindings.js";
 export { asJsonValue, evaluateBinding, readPath } from "./bindings.js";
 export type { BudgetLedger, BudgetTotals } from "./budget.js";
 export { createBudgetLedger, narrowBudget } from "./budget.js";
+// The bridge from `WorkflowDecisionPort` to M3's `DecisionEngine` (M3-T2).
+export type {
+  CreateDecisionPortOptions,
+  DecisionNodeOutput,
+  QuestionRegistry,
+} from "./decision-port.js";
+export { createDecisionPort } from "./decision-port.js";
 export { assertGrantsWithinJob, assertToolGranted, requiredMode } from "./grants.js";
 export type { IdempotencyCoordinates } from "./idempotency.js";
 export { attemptIdempotencyKey, NO_ITEM_INDEX, protectionIdempotencyKey } from "./idempotency.js";

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Build configuration: emits dist/ and deliberately does NOT enable the
+  // "@internal/source" condition, so a package compiles against its
+  // dependencies' built .d.ts files. That is why turbo's `build` task depends
+  // on `^build`.
+  "extends": "@internal/config/tsconfig.package.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

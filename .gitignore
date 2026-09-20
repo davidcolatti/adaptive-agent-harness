@@ -35,3 +35,14 @@ Thumbs.db
 # Local harness run evidence (JSONL traces; M2-T4). One file per run under
 # an app root; the durable store arrives with M2-T5.
 .harness/
+
+# Local Supabase (M2-T11). `supabase/.gitignore`, written by `supabase init`,
+# already covers these; they are repeated here so the rule survives that file
+# being regenerated, and so the whole ignore policy is readable in one place.
+# `.temp/` holds the CLI's version-check cache, `.branches/` its preview-branch
+# state. Local URLs and keys live in a git-ignored env file, never in a tracked
+# one; see `docs/runbooks/supabase-local.md`.
+supabase/.temp/
+supabase/.branches/
+.env.local
+.env*.local

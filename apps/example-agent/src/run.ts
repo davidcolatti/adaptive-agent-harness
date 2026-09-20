@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { createHarness, type HarnessRunResult } from "@internal/core";
 import { EveAgentRuntime } from "@internal/runtime-eve";
 import { type EveDevServer, startEveDevServer } from "@internal/runtime-eve/testing";
-import { createBufferedTraceWriter, createJsonlDirectoryTraceSink } from "@internal/trace";
+import {
+  createBufferedTraceWriter,
+  createJsonlDirectoryTraceSink,
+  createRedactingTraceWriter,
+} from "@internal/trace";
 import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/index.js";
 
 /**
@@ -16,8 +20,9 @@ import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/
  *
  * 1. start an `eve` server for an authored agent;
  * 2. build an `EveAgentRuntime` pointed at it;
- * 3. `createHarness({ agentRuntime, trace })`, where `trace` is the buffered
- *    writer draining into a JSONL file per run (M2-T4);
+ * 3. `createHarness({ agentRuntime, trace })`, where `trace` is the redacting
+ *    writer (M2-T9) over the buffered writer draining into a JSONL file per run
+ *    (M2-T4);
  * 4. `harness.run({ domain: vendorTriage, input })`;
  * 5. print the result and the trace path, and stop the server.
  *
@@ -182,7 +187,13 @@ async function main(): Promise<number> {
         // request structured output for.
         domains: [vendorTriage],
       }),
-      trace: createBufferedTraceWriter({ sink: traces }),
+      // Redaction (M2-T9) wraps the buffered writer rather than the sink, so an
+      // unredacted event never reaches the buffer, let alone the file. The default
+      // policy applies; adapter payloads are identity-only today, so a healthy run
+      // produces a trace with no redaction token in it at all.
+      trace: createRedactingTraceWriter({
+        writer: createBufferedTraceWriter({ sink: traces }),
+      }),
     });
 
     const result = await harness.run({ domain: vendorTriage, input: INPUT });

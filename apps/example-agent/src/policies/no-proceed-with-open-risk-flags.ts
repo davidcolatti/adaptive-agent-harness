@@ -14,6 +14,25 @@ import type { VendorTriageOutput } from "../domain/schemas.js";
  * `VendorTriageOutput` gets an answer.
  */
 
+/**
+ * The thresholds this policy applies, as data.
+ *
+ * ADR-0009 separates judgment from policy so that the organization can change
+ * what it does about a risk without retraining or re-prompting anything.
+ * Changing a threshold is therefore a behavior change that touches no
+ * instruction and no SOP, which is exactly the case M2-T8's behavior
+ * fingerprint has to catch — and it is one of the three the M2 acceptance
+ * criterion names. `src/behavior.ts` hashes this object, and the function below
+ * reads it, so the value that is fingerprinted is the value that is enforced.
+ */
+export const NO_PROCEED_WITH_OPEN_RISK_FLAGS_THRESHOLDS = {
+  /**
+   * How many open risk flags an unconditional `proceed` may carry. Zero: any
+   * open flag rules `proceed` out.
+   */
+  maxOpenRiskFlagsForProceed: 0,
+} as const;
+
 /** What a policy says about an output. */
 export interface PolicyDecision {
   /** Whether the output is allowed to stand as written. */
@@ -42,11 +61,11 @@ export function noProceedWithOpenRiskFlags(output: VendorTriageOutput): PolicyDe
     return { allowed: true };
   }
 
-  if (output.riskFlags.length === 0) {
+  const count = output.riskFlags.length;
+
+  if (count <= NO_PROCEED_WITH_OPEN_RISK_FLAGS_THRESHOLDS.maxOpenRiskFlagsForProceed) {
     return { allowed: true };
   }
-
-  const count = output.riskFlags.length;
 
   return {
     allowed: false,

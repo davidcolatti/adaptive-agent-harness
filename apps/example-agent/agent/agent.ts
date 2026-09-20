@@ -1,7 +1,16 @@
 import { defineAgent } from "eve";
+import { EXAMPLE_AGENT_CONFIG } from "./lib/agent-config.js";
 
 /**
  * Runtime configuration for the vendor-triage example agent.
+ *
+ * **The configuration itself lives in `agent/lib/agent-config.ts`** (M2-T8).
+ * It is one constant so that this file and `src/behavior.ts`, which hashes the
+ * model configuration into the run's behavior fingerprint, cannot disagree
+ * about what the agent is configured with. `agent/lib/` is eve's documented
+ * import-only slot for shared authored code
+ * (`eve/docs/reference/agent-files.md`). Everything below still describes what
+ * that constant sets and why.
  *
  * `agent.ts` is optional in `eve`, but `model` is required once the file exists
  * (`eve/docs/agent-config.md`, "Set the model"). `model` accepts an AI Gateway
@@ -44,7 +53,4 @@ import { defineAgent } from "eve";
  * police its tool calls. Removing it is what makes the harness's accounting
  * true rather than approximate.
  */
-export default defineAgent({
-  defaultTools: false,
-  model: process.env.EXAMPLE_AGENT_MODEL ?? "openai/gpt-5.6-luna-fast",
-});
+export default defineAgent(EXAMPLE_AGENT_CONFIG);

@@ -1,4 +1,5 @@
 import { type CreateJobInput, defineDomain } from "@internal/core";
+import { loadVendorTriageBehavior } from "../behavior.js";
 import { PROCUREMENT_SOP } from "./procurement-sop.js";
 import {
   type VendorTriageInput,
@@ -76,6 +77,13 @@ export const vendorTriage = defineDomain({
   inputSchema: vendorTriageInputSchema,
   outputSchema: vendorTriageOutputSchema,
   createJob,
+  // What this domain's behavior is made of (M2-T8, ADR-0034). The harness
+  // resolves it once per run, before `run.started`, and stamps the resulting
+  // `sha256:` fingerprint on every trace event and on the run result. It is a
+  // loader rather than a literal because gathering it means reading
+  // `agent/instructions.md` and `agent/skills/`, and because reading them per
+  // run is what makes an edit between two runs show up as a changed behavior.
+  behavior: loadVendorTriageBehavior,
   evals: [
     {
       id: "northwind-ledger-well-documented",

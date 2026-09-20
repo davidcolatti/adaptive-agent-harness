@@ -84,6 +84,11 @@ describe("workspace dependency boundaries", () => {
       "@internal/example-agent",
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",
+      // The Supabase storage adapter (M2-T11). It holds only the generated
+      // `database.types.ts` so far; the `Storage` port and the Supabase
+      // `TraceSink` are M2-T5. It was already in `adapterPackages` before it
+      // existed, so no rule needed adding when the package appeared.
+      "@internal/storage-supabase",
       "@internal/testing",
       // The buffered trace writer and its local sinks (M2-T4). A harness
       // package, not an adapter: it carries the same bans `@internal/core`

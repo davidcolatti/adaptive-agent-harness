@@ -1,7 +1,8 @@
 # Local setup
 
-How to get this repository running on a new machine. Milestone 0 has no services, no containers
-and no secrets, so the whole setup is three commands after the clone.
+How to get this repository running on a new machine. Clone, install, `pnpm check`, and everything
+in the repository works except the local database. That one needs Docker, and is covered under
+"Docker, for the local database" below.
 
 ## Prerequisites
 
@@ -55,10 +56,50 @@ Either route is fine as long as `pnpm --version` prints `12.4.2`. Do not use a d
 pnpm 12 reads its settings from `pnpm-workspace.yaml` rather than `.npmrc`, and this repository
 relies on that.
 
+## Docker, for the local database
+
+**Docker is required for Milestone 2 onward, and for nothing else.** `pnpm install`, `pnpm check`
+and `pnpm example:run:mock` all work without it. Only the four `pnpm supabase:*` scripts need a
+running Docker daemon, because the local Supabase stack is a set of containers.
+
+Install Docker Desktop (or any Docker daemon) and confirm it works before the first start:
+
+```sh
+docker run --rm hello-world
+```
+
+The Supabase CLI itself is **not** a prerequisite. It is pinned in the root `package.json` at an
+exact version and installed by `pnpm install`, so `pnpm supabase:start` runs the version this
+repository states rather than whatever happens to be on your `PATH`. If you have a Homebrew or
+npm-global `supabase`, leave it alone and never invoke it here; a different CLI version produces a
+different database and different generated types from identical committed files. That is
+[ADR-0033](../decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md).
+
+The first start pulls about a dozen container images and takes several minutes. Later starts take
+seconds:
+
+```sh
+pnpm supabase:start
+```
+
+It binds ports 54320 to 54324, 54327 and 8083 (and 54329 when the connection pooler is enabled,
+which it is not). None of those collides with `eve dev` (port 2000 by default) or `eve start`
+(3000). Stop the stack when you are done, which keeps the data volume:
+
+```sh
+pnpm supabase:stop
+```
+
+`supabase start` prints local URLs and keys on the way up. **Never commit them or paste them into
+a document**, not even the well-known local demo keys. The runbook,
+[`../runbooks/supabase-local.md`](../runbooks/supabase-local.md), has the supported way to capture
+them into a git-ignored `.env.local`, plus what to do when a port collides, when Docker is down,
+and when the stack needs wiping.
+
 ## What you do not need
 
-Milestone 0 needs **no Docker, no Supabase and no environment variables**. There is nothing to
-start and nothing to copy before `pnpm install` works.
+Nothing else. There is nothing to start and nothing to copy before `pnpm install` works, and
+`pnpm check` needs neither Docker nor a credential.
 
 `.env.example` exists so the variable names are discoverable early, and every line in it is
 commented out for exactly that reason. It records:
@@ -69,7 +110,8 @@ commented out for exactly that reason. It records:
   never exposed to a client or an agent tool).
 
 Copy `.env.example` to `.env` and fill values in when the milestone that introduces them starts.
-`.env` is never committed.
+Local Supabase values go in `.env.local` instead, which the runbook generates for you. Neither
+file is ever committed.
 
 ### What needs a model credential, and what does not
 

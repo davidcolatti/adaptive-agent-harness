@@ -5,8 +5,14 @@ commands to run, in order, to accomplish something a human or coding agent needs
 This is distinct from `docs/architecture/`, which explains how the system works rather than what
 to type to operate it.
 
-No runbooks beyond the standard development workflow are needed in Milestone 0. The two below
-cover everything a contributor needs to verify the repository and recover from a failed git hook.
+The two general runbooks below cover verifying the repository and recovering from a failed git
+hook. Per-topic runbooks are added by the milestone that introduces the thing being operated.
+
+## Index
+
+| Runbook | What it covers |
+| --- | --- |
+| [`supabase-local.md`](supabase-local.md) | The local Supabase lifecycle (start, stop, reset, regenerate types), port collisions, a wedged stack, a Docker daemon that is down, and how to wipe volumes. Added by M2-T11. |
 
 ## Runbook: verify the repository
 
@@ -41,7 +47,6 @@ emergency. If you do, log the justification in `docs/progress/WORKLOG.md` in the
 
 ## Runbooks later milestones must add
 
-- Local Supabase lifecycle (start/stop/reset/types), Milestone 2.
 - Run inspector (`pnpm harness run show <run-id>`), Milestone 2.
 - Promotion runbook (how a human reviews and approves a candidate workflow for production),
   Milestone 9.

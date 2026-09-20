@@ -8,6 +8,8 @@ related:
   - docs/contracts/errors.md
   - docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md
   - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
+  - docs/decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md
+  - docs/contracts/behavior-fingerprint.md
   - docs/examples/README.md
 implementation:
   - packages/core
@@ -35,11 +37,13 @@ interface DomainDefinition<TInput = unknown, TOutput = unknown> {
   readonly outputSchema: Schema<TOutput>;
   createJob(input: TInput): Job<TInput, TOutput>;
   readonly evals: readonly DomainEval<TInput, TOutput>[];
+  readonly behavior?: BehaviorSource;
 }
 ```
 
-Build plan section 5 states this shape. The only addition is that `evals` is
-always present, defaulting to the empty list rather than being absent.
+Build plan section 5 states this shape. Two additions: `evals` is always
+present, defaulting to the empty list rather than being absent, and `behavior`
+is what M2-T8 added.
 
 ## The schema contract
 
@@ -117,6 +121,7 @@ All of it throws `ValidationError` with an issue naming the offending field.
 | `version` | Exactly `major.minor.patch`, no leading zeros. No ranges, pre-release tags or build metadata. | A range would make "which version produced this trace" unanswerable, and a promoted workflow pins an exact version (ADR-0015). Nothing in the harness yet defines an ordering for pre-release tags. |
 | `inputSchema`, `outputSchema` | Publish a well-formed `~standard`. | A domain that hands over something that is not a schema fails at registration rather than at its first validation. |
 | `createJob` | Is a function. | Same reason. |
+| `behavior` | If present, is a descriptor or a function. | Shape only. What a descriptor must *contain* is `createBehaviorFingerprint`'s rule, and for the loader form there is nothing to inspect until a run calls it. |
 
 ### What it returns
 
@@ -168,6 +173,33 @@ The wrapper then:
    to keep mutating one of those should return a copy. See
    [the job contract](job.md) for where the depth stops.
 
+### `behavior`: what the domain's behavior is made of
+
+```ts
+export const vendorTriage = defineDomain({
+  // ...
+  behavior: loadVendorTriageBehavior, // () => Promise<BehaviorDescriptor>
+});
+```
+
+Optional. It is either a `BehaviorDescriptor` or a function returning one,
+usually async, because gathering one means reading files.
+`createHarness()` resolves it **once per run, before `run.started`**, hashes it,
+and stamps the resulting `sha256:` composite on every trace event and on the run
+result. `defineDomain()` never calls it.
+
+**The domain supplies this because only the domain can.**
+[ADR-0028](../decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md)
+makes the eve adapter a URL-only client that never reads an agent's files, and
+[ADR-0025](../decisions/0025-application-packages-may-author-eve-agents-directly.md)
+makes the application the author of that agent.
+
+Omitting it is allowed and records `null`, never a placeholder digest — but it
+costs the domain everything built on the fingerprint: replay comparability (M6),
+learning batch selection (M7), and the "did the behavior change?" question the
+run ledger exists to answer.
+[`behavior-fingerprint.md`](behavior-fingerprint.md) is the full contract.
+
 ### What it deliberately does not do
 
 **`createJob` does not validate its input.** Validation before execution is
@@ -208,7 +240,9 @@ cases yet.**
 `apps/example-agent/src/domain/` is the vendor-triage domain: `schemas.ts`
 (the `zod` input and output schemas, field names matching
 `agent/instructions.md`), `procurement-sop.ts` (the SOP the fixture evals pass
-in) and `index.ts` (the `defineDomain()` call). See
+in), `index.ts` (the `defineDomain()` call) and, a level up, `behavior.ts`
+(the `BehaviorSource` that gathers the instructions, skills, tools, schemas,
+model configuration and policy thresholds it runs under). See
 [the examples map](../examples/README.md).
 
 ## Open for later milestones

@@ -10,6 +10,8 @@ related:
   - docs/contracts/errors.md
   - docs/contracts/job.md
   - docs/contracts/trace-event.md
+  - docs/contracts/behavior-fingerprint.md
+  - docs/decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md
   - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
 implementation:
   - packages/core
@@ -109,13 +111,19 @@ metadata a runtime reads.
    so runs sort in start order and a run id works as a ledger cursor. `attempt`
    is `1`: there are no retries yet, and a counter that never moves is honest
    about that. See [identifiers.md](identifiers.md).
-4. **Build the [`ExecutionContext`](execution-context.md)** from the job, the
+4. **Fingerprint the behavior**, if the domain declares a `behavior` source:
+   resolve it and hash it, before any event is recorded, so every event of the
+   run carries the same value (M2-T8, [behavior-fingerprint.md](behavior-fingerprint.md)).
+   This is the second point at which `run()` **throws** rather than returning a
+   result, for the same reason as step 1: the run has not started, so there is
+   nothing to report a failure against.
+5. **Build the [`ExecutionContext`](execution-context.md)** from the job, the
    trace writer and the signal. It deliberately does not name a runtime; see
    "Which runtime the context reports" below.
-5. **Emit `run.started`**, then run, then emit exactly one terminal event and
+6. **Emit `run.started`**, then run, then emit exactly one terminal event and
    `flush()`.
-6. **Call `agentRuntime.run(job, context)`** inside a `try`/`catch`.
-7. **Validate the output** when the execution completed.
+7. **Call `agentRuntime.run(job, context)`** inside a `try`/`catch`.
+8. **Validate the output** when the execution completed.
 
 ### The effective job is the job
 
@@ -195,17 +203,22 @@ readonly domain: DomainRef;
 readonly attempt: number;
 readonly usage: AgentExecutionUsage;
 readonly runtime: RuntimeInfo;
+readonly behaviorFingerprint: BehaviorFingerprint | null;
 ```
 
 `usage` and `runtime` are on every variant because a failed or cancelled
 attempt still cost something, and what it cost has to be reportable next to why
-it stopped. For the two outcomes the harness produces without reaching an
+it stopped. `behaviorFingerprint` is on every variant because a failed run has
+to stay comparable to a successful one; it is `null` only when the domain
+declares no behavior source. For the two outcomes the harness produces without reaching an
 adapter (a pre-aborted signal, and a runtime that threw) `usage` is zero and
 `runtime` is `HARNESS_RUNTIME_INFO`.
 
 `harness.run()` **does not throw for a failed run**, for the same reason
-`AgentRuntime.run()` does not. The one thing it throws for is a caller bug: an
-input the domain's schema rejects.
+`AgentRuntime.run()` does not. It throws in exactly two cases, and both happen
+while the run is still being prepared: an input the domain's schema rejects, and
+a `domain.behavior` source that throws or produces a descriptor
+`createBehaviorFingerprint` rejects.
 
 ## Which runtime the context reports
 
@@ -255,9 +268,35 @@ Every `run.*` event has `parentId: null`: a run is identified by its `runId` and
 needs no pointer to itself. The adapter's `agent.started` points at
 `run.started` instead, and everything inside the turn hangs off that.
 
-`behaviorFingerprint` is `null` on every event the harness writes today. M2-T8
-is what computes one; a fabricated value would break every comparison built on
-it.
+`run.started`'s payload also carries `behavior` — the component digests of the
+run's behavior fingerprint — when the domain declares a behavior source. See
+"The behavior fingerprint" below.
+
+### The behavior fingerprint
+
+If the domain declares a `behavior` source
+([`domain-definition.md`](domain-definition.md)), `run()` resolves it **once,
+before `run.started`**, and:
+
+- every event of the run carries the composite in
+  `TraceEvent.behaviorFingerprint`;
+- the full `BehaviorFingerprint` is on the result, on the base, so every
+  variant carries it — including `failed`, because a failed run must stay
+  comparable;
+- `run.started`'s payload carries `behavior: { scheme, algorithm, components }`,
+  all `sha256:` strings, so a stored trace alone can say which component
+  changed.
+
+Resolving before the first event is what makes "every event of a run carries the
+same fingerprint" true: an edit made while a run is in flight cannot split one
+run across two behaviors.
+
+A domain that declares none records `null` everywhere, and **no placeholder
+digest is ever substituted**. A descriptor that cannot be gathered throws out of
+`run()` rather than degrading to `null`; see "What it does, in order" above.
+[`behavior-fingerprint.md`](behavior-fingerprint.md) is the contract, and
+[ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md)
+the decision.
 
 ### A flush failure is a failed call, not a failed run
 
@@ -289,8 +328,8 @@ scripted runtime, trace writer and clock inline instead. Do not add
 - **M1-T6** supplies `EveAgentRuntime` as the `agentRuntime`, and
   `apps/example-agent/src/run.ts` plus `pnpm example:run` call this API.
 - **M2** adds the `storage` option and makes budgets enforced rather than
-  declarative. The sortable ID scheme landed in M2-T1 and the trace taxonomy in
-  M2-T3; `behaviorFingerprint` waits for M2-T8.
+  declarative. The sortable ID scheme landed in M2-T1, the trace taxonomy in
+  M2-T3, and the behavior fingerprint in M2-T8.
 - **Retries** do not exist. `attempt` is always `1`; retry policy has no owner
   yet.
 - **The execution router** (build plan section 2, "workflow match / no match")

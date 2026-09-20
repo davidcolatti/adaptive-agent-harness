@@ -20,6 +20,10 @@ Listed in the order they appear in `package.json`.
 | `pnpm format:check` | `biome format .` | Formatting check only, no writes. First stage of `pnpm check`; fails on an unformatted file. |
 | `pnpm lint` | `biome check --formatter-enabled=false .` | Biome's linter plus the `organizeImports` assist, with formatting deliberately switched off so lint and format fail for distinct reasons. |
 | `pnpm prepare` | `husky` | Installs the git hooks. You never run this by hand: pnpm runs it automatically after `pnpm install`. |
+| `pnpm supabase:reset` | `supabase db reset` | Drop and recreate the local database, apply every migration in `supabase/migrations/`, then run `supabase/seed.sql`. The reproducibility gate: it is what proves the committed migrations create a clean database from zero. Needs the stack running. |
+| `pnpm supabase:start` | `supabase start` | Start the local Supabase stack in Docker and print its URLs and keys. The first run pulls about a dozen images and takes minutes. **Needs Docker running.** |
+| `pnpm supabase:stop` | `supabase stop` | Stop the containers, keeping the data volume. |
+| `pnpm supabase:types` | `supabase gen types --lang typescript --local > packages/storage-supabase/src/database.types.ts` | Regenerate the committed database types from the running local database. The CLI has no output-file flag, so the script redirects stdout; a failed generation therefore truncates the file, and the fix is to reset and re-run. Never hand-edit the output (AGENTS.md rule 12). |
 | `pnpm test` | `vitest run` | Run every Vitest project (unit, integration, contract, replay) once. Part of `pnpm check`. |
 | `pnpm test:contract` | `vitest run --project contract` | Run only `*.contract.test.ts`. As of M1-T6 this starts a real `eve dev` server for `apps/eve-fixture-agent` and runs `EveAgentRuntime` against it, in about four seconds. It needs no credential and reaches no model provider. |
 | `pnpm test:integration` | `vitest run --project integration` | Run only `*.integration.test.ts`. |
@@ -53,6 +57,8 @@ Each workspace package declares its own scripts, and any of them can be run in i
 | `@internal/runtime-eve` | `build`, `dev`, `typecheck` |
 | `@internal/testing` | `build`, `dev`, `typecheck` |
 | `@internal/config` | none (it ships only shared tsconfig bases, no runtime code) |
+| `@internal/storage-supabase` | `build`, `dev`, `typecheck` |
+| `@internal/trace` | `build`, `dev`, `typecheck` |
 | `@internal/example-agent` | `build`, `dev`, `info`, `typecheck` |
 
 For every package, `build` is `tsc -p tsconfig.build.json`, `dev` is the same with
@@ -142,8 +148,19 @@ order:
 Steps 5 through 10 are `pnpm check` broken out into separately named steps, in the same order, so
 a red build names the gate that failed instead of just saying `check` failed.
 
+A second job, `supabase-types`, runs alongside it on the same triggers (M2-T11). It installs the
+same way, then runs `pnpm supabase:start`, `pnpm supabase:reset`, `pnpm supabase:types`,
+`git diff --exit-code -- packages/storage-supabase/src/database.types.ts`, and
+`pnpm supabase:stop` with `if: always()`. It is a separate job because it needs Docker and spends
+minutes pulling images, while `check` must stay the fast gate. A migration committed without its
+regenerated types fails at the `git diff` step. See
+[ADR-0033](../decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md).
+
 ## Related
 
+- [`../runbooks/supabase-local.md`](../runbooks/supabase-local.md) for operating the local Supabase
+  stack: the schema-change routine, port collisions, a wedged stack, and capturing local keys into
+  a git-ignored `.env.local`.
 - [`local-setup.md`](local-setup.md) for prerequisites, the git hooks and editor setup.
 - [`../research/tooling/2026-09-19-m0-toolchain-verification.md`](../research/tooling/2026-09-19-m0-toolchain-verification.md)
   for why each tool is configured the way it is.

@@ -5,7 +5,9 @@ last_verified: 2026-09-19
 related:
   - docs/milestones/build-plan.md
   - docs/contracts/execution-context.md
+  - docs/contracts/redaction.md
   - docs/decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md
+  - docs/decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md
   - docs/decisions/0010-observability-trace-is-a-product-surface-captured-from-the-first-run.md
 implementation:
   - packages/core
@@ -131,9 +133,16 @@ still carries its dimension and limits even though the whitelist does not know
 about them. Class fields are merged last and win over a caller's key of the
 same name.
 
-Redacting a secret a caller chose to put in `details` is **M2-T9's job**, not
-this contract's. The whitelist stops the harness from leaking values nobody
-chose to publish; it cannot stop a caller from publishing one deliberately.
+Redacting a secret a caller chose to put in `details` is **not this contract's
+job**. The whitelist stops the harness from leaking values nobody chose to
+publish; it cannot stop a caller from publishing one deliberately.
+
+That redaction happens **in the trace pipeline**, not here (M2-T9, ADR-0035).
+`createRedactingTraceWriter()` in `@internal/trace` walks a serialized error's
+`message`, `details`, `stack` and its whole `cause` chain before anything buffers
+or stores the event, replacing what it finds with `[REDACTED:<rule-name>]`.
+`name` and `code` are left alone, because they are the discriminants a reader
+branches on. See [`redaction.md`](./redaction.md).
 
 ## `serializeError`
 
@@ -184,7 +193,9 @@ Three guarantees worth stating explicitly:
 
 - M1-T3 decides which schema library produces `ValidationIssue` values and
   writes the adapter that normalizes them.
-- M2-T9 adds redaction over `details` before persistence.
+- M2-T9 is done: redaction over `message`, `details`, `stack` and the `cause`
+  chain runs in the trace pipeline before persistence
+  ([`redaction.md`](./redaction.md)).
 - M2-T3 decides how a serialized error is carried on a trace event; this
   contract only guarantees the value is embeddable.
 - No class carries a `retryable` flag. Retry is a policy decision about a

@@ -1,7 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { AgentExecution, AgentExecutionUsage, AgentRuntime } from "./agent-runtime.js";
+import type { BehaviorDescriptor, BehaviorSource } from "./behavior.js";
+import { createBehaviorFingerprint } from "./behavior.js";
 import type { ExecutionContext, RuntimeInfo } from "./context.js";
 import { HARNESS_RUNTIME_INFO } from "./context.js";
+import type { DomainDefinition } from "./domain.js";
 import { defineDomain } from "./domain.js";
 import { StorageError, ValidationError } from "./errors.js";
 import { type Clock, createHarness, type HarnessRunResult } from "./harness.js";
@@ -485,7 +488,9 @@ describe("harness.run: tracing", () => {
     // needs no pointer to itself (ADR-0031).
     expect(trace.events.every((event) => event.parentId === null)).toBe(true);
     expect(trace.events.every((event) => event.version === TRACE_EVENT_VERSION)).toBe(true);
-    // M4 fills `node`; M2-T8 fills `behaviorFingerprint`. Neither is faked.
+    // M4 fills `node`. `behaviorFingerprint` is `null` here because `triage`
+    // declares no `behavior`; a domain that declares one is covered by the
+    // "behavior fingerprint" block below. Neither is ever faked.
     expect(trace.events.every((event) => event.node === null)).toBe(true);
     expect(trace.events.every((event) => event.behaviorFingerprint === null)).toBe(true);
     expect(trace.events.every((event) => event.attempt === result.attempt)).toBe(true);
@@ -567,6 +572,190 @@ describe("harness.run: tracing", () => {
       "2026-09-19T12:00:00.000Z",
       "2026-09-19T12:00:01.500Z",
     ]);
+  });
+});
+
+describe("harness.run: behavior fingerprint", () => {
+  /** The smallest complete descriptor: one value per component (M2-T8). */
+  const DESCRIPTOR: BehaviorDescriptor = {
+    instructions: "Triage the vendor.\n",
+    sop: "1. Check the evidence.\n",
+    skills: [{ id: "triage", content: "Gather, then judge.\n" }],
+    tools: [{ id: "lookup", version: "1.0.0", definitionFingerprint: "sha256:aa" }],
+    model: { model: "test/model", temperature: 0 },
+    schemas: [{ ref: "triage.input@1.0.0", fingerprint: "sha256:bb" }],
+    workflowIr: null,
+    policy: { maxOpenRiskFlags: 0 },
+  };
+
+  /** `triage`, plus a behavior source. Everything else is identical. */
+  function triageWithBehavior(
+    behavior: BehaviorSource,
+  ): DomainDefinition<TriageInput, TriageOutput> {
+    return defineDomain<TriageInput, TriageOutput>({
+      id: "triage",
+      version: "1.0.0",
+      inputSchema,
+      outputSchema,
+      createJob: (input) => ({
+        jobType: "triage",
+        objective: `Triage ${input.vendorName}.`,
+        input,
+        contracts: {
+          inputSchema: "triage.input@1.0.0",
+          outputSchema: "triage.output@1.0.0",
+          sop: "triage-sop",
+        },
+      }),
+      behavior,
+    });
+  }
+
+  it("stamps the same fingerprint on every event of a run, and on the result", async () => {
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace,
+    });
+
+    const result = await harness.run({
+      domain: triageWithBehavior(DESCRIPTOR),
+      input: { vendorName: "Northwind" },
+    });
+
+    const expected = createBehaviorFingerprint(DESCRIPTOR);
+
+    expect(result.behaviorFingerprint?.fingerprint).toBe(expected.fingerprint);
+    expect(result.behaviorFingerprint?.components).toEqual(expected.components);
+    expect(trace.events.length).toBeGreaterThan(1);
+    expect(trace.events.every((event) => event.behaviorFingerprint === expected.fingerprint)).toBe(
+      true,
+    );
+  });
+
+  it("puts the component digests in the run.started payload, and nothing else there", async () => {
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace,
+    });
+
+    await harness.run({
+      domain: triageWithBehavior(DESCRIPTOR),
+      input: { vendorName: "Northwind" },
+    });
+
+    const expected = createBehaviorFingerprint(DESCRIPTOR);
+
+    expect(trace.events[0]?.payload.behavior).toEqual({
+      scheme: expected.scheme,
+      algorithm: expected.algorithm,
+      components: { ...expected.components },
+    });
+    // The payload stays identity-only (ADR-0031): digests, never the
+    // instructions, the SOP or the skill text they were computed from.
+    expect(JSON.stringify(trace.events[0]?.payload)).not.toContain("Triage the vendor");
+  });
+
+  it("records null, and no `behavior` payload, for a domain that declares none", async () => {
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace,
+    });
+
+    const result = await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+
+    expect(result.behaviorFingerprint).toBeNull();
+    expect(trace.events.every((event) => event.behaviorFingerprint === null)).toBe(true);
+    expect(trace.events[0]?.payload.behavior).toBeUndefined();
+  });
+
+  it("resolves an async loader once, before the first event", async () => {
+    const trace = createLocalTraceWriter();
+    let calls = 0;
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace,
+    });
+
+    const result = await harness.run({
+      domain: triageWithBehavior(async () => {
+        calls += 1;
+        return await Promise.resolve(DESCRIPTOR);
+      }),
+      input: { vendorName: "Northwind" },
+    });
+
+    expect(calls).toBe(1);
+    expect(trace.events[0]?.type).toBe("run.started");
+    expect(trace.events[0]?.behaviorFingerprint).toBe(result.behaviorFingerprint?.fingerprint);
+  });
+
+  it("carries the fingerprint on a failed run too, so a failure stays comparable", async () => {
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({
+        result: {
+          status: "failed",
+          error: { name: "ToolExecutionError", code: "TOOL_EXECUTION", message: "no" },
+          usage: USAGE,
+          runtime: RUNTIME,
+        },
+      }),
+    });
+
+    const result = await harness.run({
+      domain: triageWithBehavior(DESCRIPTOR),
+      input: { vendorName: "Northwind" },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.behaviorFingerprint?.fingerprint).toBe(
+      createBehaviorFingerprint(DESCRIPTOR).fingerprint,
+    );
+  });
+
+  it("changes when the instructions, the SOP or a policy threshold changes", async () => {
+    // The M2 acceptance criterion, asserted through the harness rather than
+    // only against `createBehaviorFingerprint`.
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+    });
+
+    const run = async (descriptor: BehaviorDescriptor): Promise<string | undefined> => {
+      const result = await harness.run({
+        domain: triageWithBehavior(descriptor),
+        input: { vendorName: "Northwind" },
+      });
+      return result.behaviorFingerprint?.fingerprint;
+    };
+
+    const baseline = await run(DESCRIPTOR);
+
+    expect(await run({ ...DESCRIPTOR })).toBe(baseline);
+    expect(await run({ ...DESCRIPTOR, instructions: "Triage the vendor!\n" })).not.toBe(baseline);
+    expect(await run({ ...DESCRIPTOR, sop: "1. Check the evidence twice.\n" })).not.toBe(baseline);
+    expect(await run({ ...DESCRIPTOR, policy: { maxOpenRiskFlags: 1 } })).not.toBe(baseline);
+  });
+
+  it("throws before any event when the descriptor is invalid", async () => {
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace,
+    });
+
+    await expect(
+      harness.run({
+        domain: triageWithBehavior({ ...DESCRIPTOR, instructions: "" }),
+        input: { vendorName: "Northwind" },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // No run was recorded: a run whose behavior cannot be fingerprinted is not
+    // a run anyone could later compare, so it is refused rather than written
+    // with a `null` fingerprint.
+    expect(trace.events).toEqual([]);
   });
 });
 
@@ -673,6 +862,10 @@ describe("HarnessRunResult", () => {
     attempt: 1,
     usage: USAGE,
     runtime: RUNTIME,
+    // Every variant carries the run's behavior fingerprint (M2-T8), `null`
+    // here because this block builds results by hand rather than by running a
+    // domain.
+    behaviorFingerprint: null,
   } as const;
 
   it("carries usage and runtime on every variant", () => {

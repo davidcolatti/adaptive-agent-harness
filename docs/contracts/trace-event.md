@@ -104,7 +104,7 @@ type TraceEvent = {
 | `parentId` | The enclosing span | A `*.started` event's `id`. `null` for a root. |
 | `node` | The workflow node | **Always `null` until M4.** Typed now so the schema does not change then. |
 | `version` | Event schema version | The literal `1`, exported as `TRACE_EVENT_VERSION`. |
-| `behaviorFingerprint` | `sha256:` digest of the behavior that produced the run | **Always `null` until M2-T8.** Never faked. |
+| `behaviorFingerprint` | `sha256:` digest of the behavior that produced the run | Filled by M2-T8, the same value on every event of a run. `null` only when the domain declares no behavior source; never faked. See [`behavior-fingerprint.md`](./behavior-fingerprint.md). |
 | `payload` | The sanitized body | **Identity-only.** See below. |
 | `usage` | What this event's work consumed | `null` when nothing is known. |
 | `latencyMs` | How long the work this event closes took | `null` on a `*.started` event. |
@@ -167,12 +167,12 @@ codes, model ids, tool ids, the framework's own event id for cross-reference.
 What never belongs in it: message text, reasoning, tool arguments, tool
 results, model output, or anything read out of a job's input.
 
-**M2-T9 owns redaction, and its sanitizers are the safety net, not the
-boundary.** A payload that needs redacting should not have been written. The
-one place content could still reach a trace today is the `details` of a
-serialized error on a `run.failed` event, which carries whatever a thrower
-chose to publish; ADR-0026 says `details` is opt-in and the M2 status file
-already notes that M2-T9 must sanitize it.
+**M2-T9's redaction is the safety net, not the boundary.** A payload that needs
+redacting should not have been written. The one place content could still reach
+a trace today is the `details` of a serialized error on a `run.failed` event,
+which carries whatever a thrower chose to publish; ADR-0026 says `details` is
+opt-in and is explicitly not a redaction boundary. See
+[Redaction](#redaction) below and [`redaction.md`](./redaction.md).
 
 ## `TraceRecorder`: who owns `sequence`
 
@@ -278,6 +278,43 @@ on every event it is handed. `pnpm example:run:mock` uses it, writing
 `apps/<agent>/.harness/traces/<runId>.jsonl` and printing the path. Until M2-T5,
 that file is the durable trace.
 
+## Redaction
+
+Full detail is in [`redaction.md`](./redaction.md) and
+[ADR-0035](../decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md);
+what a reader of this contract needs is where it sits and what it may change.
+
+`createRedactingTraceWriter({ writer, policy? })` in `@internal/trace` is a
+`TraceWriter` decorator, and the chain an application assembles is:
+
+```text
+TraceRecorder -> redacting writer -> buffered writer -> TraceSink
+```
+
+Redaction is **above the buffer**, so an unredacted event is never held in
+memory, never retried from the buffer after a sink rejection, and never written
+by a sink added later that forgot to redact. It is **below the recorder**,
+because the recorder's event is the truth about what happened and this is the
+projection of it that is safe to store. `redactEvents(events, policy?)` lets a
+sink re-apply the same rules defensively.
+
+Four mechanisms: field-path redaction over a `**`/`*` glob of the JSON tree,
+secret-pattern redaction that replaces only the matched span of a string,
+headers redaction under any `headers` object, and per-tool sanitizer hooks keyed
+by `payload.tool`. A removed value becomes `[REDACTED:<rule-name>]`, which names
+the rule so a reader knows something was there and why.
+
+What it may change: `payload`, and an error's `message`, `details`, `stack` and
+`cause` chain. What it never touches: `id`, `runId`, `attempt`, `sequence`,
+`timestamp`, `type`, `parentId`, `node`, `version`, `behaviorFingerprint`,
+`usage`, `latencyMs`, and an error's `name` and `code`. A redacted event is a new
+frozen object; the input is neither mutated nor frozen.
+
+Because payloads are identity-only, a healthy run's trace contains no redaction
+token at all. A verified `pnpm example:run:mock` writes the same six events with
+the same payload keys as before redaction was wired, and no `[REDACTED` anywhere
+in the file.
+
 ## How a run reads
 
 The mock example, end to end:
@@ -301,9 +338,14 @@ trace events, are in [`../architecture/runtime.md`](../architecture/runtime.md).
 - **M2-T5** persists events (the `trace_events` table) and decides when an
   attempt becomes a row with an `AttemptId`. It adds a Supabase `TraceSink`; the
   writer does not change.
-- **M2-T8** computes `behaviorFingerprint`. Every event carries `null` until it
-  does.
-- **M2-T9** owns redaction, including the `details` of a serialized error.
+- **M2-T8** is done: `createHarness()` resolves the domain's behavior source
+  before `run.started` and passes the composite to the recorder, so every event
+  of a run carries one `sha256:` value, and `run.started`'s payload carries the
+  per-component digests. A domain that declares no behavior source still records
+  `null`. See [`behavior-fingerprint.md`](./behavior-fingerprint.md).
+- **M2-T9** is done: redaction runs in a `TraceWriter` decorator above the
+  buffer, covers a serialized error's `details`, and is documented in
+  [`redaction.md`](./redaction.md).
 - **M2-T10**, the run inspector, is the first reader of a stored trace; today a
   JSONL file and `jq` are the inspector.
 - **M3** produces `decision.*`, **M4** produces `node.*`, `fallback.*` and the

@@ -1,3 +1,4 @@
+import type { BehaviorSource } from "./behavior.js";
 import type { Budget, DomainRef, ToolGrant } from "./context.js";
 import type { ValidationIssue } from "./errors.js";
 import { deepFreeze } from "./freeze.js";
@@ -94,6 +95,20 @@ export interface DomainDefinition<TInput = unknown, TOutput = unknown> {
   createJob(input: TInput): Job<TInput, TOutput>;
   /** The domain's fixture cases. Possibly empty, never absent. */
   readonly evals: readonly DomainEval<TInput, TOutput>[];
+  /**
+   * What this domain's behavior is made of, for the behavior fingerprint
+   * (M2-T8, ADR-0034). Absent when the domain declares none.
+   *
+   * **The domain supplies it because only the domain can.** ADR-0028 makes the
+   * eve adapter a URL-only client that never reads an agent's files, and
+   * ADR-0025 makes the application the author of that agent, so the
+   * instructions, the skills and the model configuration are the application's
+   * to gather. `createHarness()` resolves this once per run, before
+   * `run.started`, and stamps the resulting fingerprint on every event of the
+   * run and on the run result. A domain that declares nothing here produces
+   * `null`, which is recorded as `null` rather than as a placeholder digest.
+   */
+  readonly behavior?: BehaviorSource;
 }
 
 /** The configuration {@link defineDomain} accepts. */
@@ -110,6 +125,17 @@ export interface DefineDomainConfig<TInput, TOutput> {
   createJob(input: TInput): CreateJobInput<TInput>;
   /** The domain's fixture cases. Defaults to `[]`. */
   readonly evals?: readonly DomainEval<TInput, TOutput>[];
+  /**
+   * The behavior-affecting inputs this domain runs under: a
+   * {@link BehaviorDescriptor}, or a function (usually async, because gathering
+   * one means reading files) that produces one.
+   *
+   * Optional. Omitting it leaves every event's `behaviorFingerprint` `null`,
+   * which is honest but costs the domain everything built on the fingerprint:
+   * replay comparability (M6), learning batch selection (M7) and the "did the
+   * behavior change?" question the run ledger exists to answer.
+   */
+  readonly behavior?: BehaviorSource;
 }
 
 function requireNonEmptyString(
@@ -176,6 +202,21 @@ export function defineDomain<TInput, TOutput>(
     issues.push({ path: ["createJob"], message: "expected a function" });
   }
 
+  // Shape only. What a descriptor must *contain* is `createBehaviorFingerprint`
+  // to say, and for the loader form there is nothing to inspect until a run
+  // calls it, so validating content here would check one of the two forms and
+  // not the other.
+  if (
+    config.behavior !== undefined &&
+    typeof config.behavior !== "function" &&
+    (typeof config.behavior !== "object" || config.behavior === null)
+  ) {
+    issues.push({
+      path: ["behavior"],
+      message: "expected a behavior descriptor or a function returning one",
+    });
+  }
+
   throwIfIssues("defineDomain: invalid domain configuration", issues);
 
   assertIsSchema(config.inputSchema, { label: "defineDomain: `inputSchema`" });
@@ -238,5 +279,10 @@ export function defineDomain<TInput, TOutput>(
     outputSchema: config.outputSchema,
     createJob,
     evals,
+    // Conditionally spread rather than written as `behavior: config.behavior`,
+    // because `exactOptionalPropertyTypes` distinguishes an absent optional
+    // property from one present and `undefined`, and `DomainDefinition.behavior`
+    // means "this domain declares none" by being absent.
+    ...(config.behavior === undefined ? {} : { behavior: config.behavior }),
   });
 }

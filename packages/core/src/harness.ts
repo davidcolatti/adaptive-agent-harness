@@ -1,5 +1,10 @@
 import type { AgentExecution, AgentExecutionUsage, AgentRuntime } from "./agent-runtime.js";
 import {
+  type BehaviorFingerprint,
+  behaviorFingerprintPayload,
+  resolveBehaviorFingerprint,
+} from "./behavior.js";
+import {
   type Budget,
   createExecutionContext,
   type DomainRef,
@@ -125,6 +130,18 @@ interface HarnessRunResultBase {
   readonly usage: AgentExecutionUsage;
   /** Which runtime produced it. */
   readonly runtime: RuntimeInfo;
+  /**
+   * The behavior this run executed, fingerprinted component by component
+   * (M2-T8, ADR-0034), or `null` when the domain declares no behavior source.
+   *
+   * The same value every event of the run carries in
+   * `TraceEvent.behaviorFingerprint`, which is its composite `fingerprint`
+   * field. It is on the result as well as in the trace so that a caller which
+   * keeps no trace — a test, a script, an eval harness — can still say what it
+   * ran, and so a run's outcome and the behavior that produced it are one
+   * value.
+   */
+  readonly behaviorFingerprint: BehaviorFingerprint | null;
 }
 
 /** The agent produced an output and it satisfied the domain's output schema. */
@@ -170,8 +187,13 @@ export interface Harness {
   /**
    * Validate an input, build its job, run it, and validate what comes back.
    *
-   * @throws {ValidationError} if `input` does not satisfy `domain.inputSchema`.
-   * Nothing else throws: every other outcome is a {@link HarnessRunResult}.
+   * @throws {ValidationError} if `input` does not satisfy `domain.inputSchema`,
+   * or if `domain.behavior` produces a descriptor
+   * {@link createBehaviorFingerprint} rejects. Whatever a `domain.behavior`
+   * loader itself throws also propagates. Everything after that point is a
+   * {@link HarnessRunResult}: both of these happen while a run is still being
+   * prepared, so there is no run to report a failure against and nothing has
+   * been spent.
    */
   run<TInput, TOutput>(input: HarnessRunInput<TInput, TOutput>): Promise<HarnessRunResult<TOutput>>;
 }
@@ -299,19 +321,28 @@ export function createHarness(options: CreateHarnessOptions): Harness {
     // honest about that.
     const attempt = 1;
 
+    // 4. Fingerprint the behavior, **before the first event is recorded**
+    //    (M2-T8, ADR-0034). Resolving it here rather than lazily is what makes
+    //    "every event of a run carries the same fingerprint" true: the
+    //    descriptor is gathered once, so an instructions file edited while a
+    //    run is in flight cannot split one run across two behaviors.
+    //
+    //    A domain that declares no `behavior` yields `null`, and `null` is what
+    //    the recorder stamps. A placeholder digest would be worse than an
+    //    absent one, because every comparison built on it would silently
+    //    succeed (ADR-0031, M2-T3's reason for leaving the field `null`).
+    const behavior = await resolveBehaviorFingerprint(domain.behavior);
+
     // The run's single sequence owner (M2-T3/M2-T4, ADR-0031). The harness's
     // `run.*` events and the adapter's `agent.*`/`model.*`/`tool.*` events go
     // through this one recorder, which is why a run now has one total order
     // instead of two collections each numbered from 0.
-    //
-    // `behaviorFingerprint` is deliberately absent, which leaves it `null`:
-    // **M2-T8 is what computes one**, and a fabricated value would break every
-    // comparison built on it.
     const recorder = createTraceRecorder({
       runId,
       writer: trace,
       attempt,
       clock,
+      behaviorFingerprint: behavior?.fingerprint ?? null,
     });
 
     const emit = async (
@@ -343,6 +374,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       jobId: effectiveJob.id,
       domain: effectiveJob.domain,
       attempt,
+      behaviorFingerprint: behavior,
     } as const;
 
     const startedAt = clock.now().getTime();
@@ -353,6 +385,12 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       domainVersion: effectiveJob.domain.version,
       jobType: effectiveJob.jobType,
       attempt,
+      // The per-component digests, so a trace on its own can answer *which*
+      // part of the behavior changed between two runs rather than only that
+      // something did. Every value is a `sha256:` string, so this is identity
+      // data and keeps the payload identity-only (ADR-0031); the descriptor's
+      // actual content never enters a trace.
+      ...(behavior === null ? {} : { behavior: behaviorFingerprintPayload(behavior) }),
     });
 
     /**
@@ -383,7 +421,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       return result;
     };
 
-    // 4. A signal that is already aborted short-circuits. The runtime is not
+    // 6. A signal that is already aborted short-circuits. The runtime is not
     //    called at all: handing work to an adapter that the contract then
     //    obliges it to abandon is pointless, and it would make "the runtime saw
     //    this run" false in the trace while true in the adapter's own records.
@@ -397,7 +435,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       );
     }
 
-    // 5. Run. A runtime is contractually required to *return* a failure rather
+    // 7. Run. A runtime is contractually required to *return* a failure rather
     //    than throw, but a defect in an adapter must not become a defect in the
     //    harness, so a thrown value is contained and reported as a failure.
     let execution: AgentExecution<TOutput>;
@@ -441,7 +479,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       );
     }
 
-    // 6. Validate the output before calling the run a success. This is the
+    // 8. Validate the output before calling the run a success. This is the
     //    "fails closed" criterion: an output that does not satisfy the domain's
     //    schema produces a `failed` result carrying the `ValidationError`, and
     //    the offending value is not returned.

@@ -54,3 +54,49 @@ jobs:
 
       - name: Handoff documentation
         run: pnpm run check:handoff
+
+  # The reproducibility gate for the local Supabase environment (M2-T11,
+  # ADR-0033). It is a separate job, not extra steps on `check`, because it
+  # needs Docker and takes minutes pulling images, while `check` must stay the
+  # fast gate that mirrors `pnpm check`. Docker is preinstalled on
+  # `ubuntu-latest`, so `supabase start` works without a service container.
+  supabase-types:
+    name: supabase-types
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Start Supabase
+        run: pnpm run supabase:start
+
+      # `db reset` from an empty database applies every committed migration and
+      # then `supabase/seed.sql`. This is the "clean database from zero" the
+      # milestone's acceptance criteria name.
+      - name: Reset database from committed migrations and seed
+        run: pnpm run supabase:reset
+
+      - name: Regenerate database types
+        run: pnpm run supabase:types
+
+      # The drift gate itself: the committed generated types must be exactly
+      # what the committed migrations produce. A migration landed without its
+      # regenerated types fails here.
+      - name: Fail on generated-type drift
+        run: git diff --exit-code -- packages/storage-supabase/src/database.types.ts
+
+      - name: Stop Supabase
+        if: always()
+        run: pnpm run supabase:stop

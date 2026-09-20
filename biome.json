@@ -62,6 +62,14 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/storage-supabase/src/database.types.ts"],
+      "formatter": {
+        "enabled": false
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

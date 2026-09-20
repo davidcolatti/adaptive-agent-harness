@@ -6,6 +6,8 @@ related:
   - docs/milestones/build-plan.md
   - docs/decisions/0015-workflow-ir-references-a-typed-versioned-capability-registry.md
   - docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md
+  - docs/decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md
+  - docs/contracts/behavior-fingerprint.md
   - docs/contracts/domain-definition.md
   - docs/contracts/job.md
   - docs/examples/README.md
@@ -201,12 +203,23 @@ What it does **not** hash, and why:
 - **Anything time-dependent.** M2-T8: "do not hash timestamps or irrelevant
   metadata."
 
-**M2-T8 extends behavior fingerprints** to agent instructions, SOPs, loaded
-skills, tool definition versions, model configuration, schema content, workflow
+**M2-T8 has landed, and the two compose rather than compete.**
+[`behavior-fingerprint.md`](behavior-fingerprint.md) covers agent instructions,
+the SOP, loaded skills, tool definitions, model configuration, schemas, workflow
 IR and policy thresholds. Those are *content* fingerprints; this is a
-*reference* fingerprint. An entry is expected to fold its content fingerprint
-into this input rather than to replace the scheme, and the `sha256:` prefix
-exists so the algorithm itself can change.
+*reference* fingerprint, and it still opens no file the declaration points at.
+
+The direction of the dependency is content-on-reference, not the reverse: a
+manifest `tool` entry's fingerprint becomes that tool's `definitionFingerprint`
+in a behavior descriptor, and a `schema` entry's becomes that schema's
+`fingerprint`. So moving a registered capability's version, module, export name
+or permission declaration moves the run's behavior fingerprint through the
+component that carries it, without this function changing at all. Whether an
+entry should eventually fold a content fingerprint back into *this* input is
+left open in
+[ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md);
+it would make a manifest entry depend on reading files, which M4 is the first
+milestone with a reason to want.
 
 ## The worked example
 
@@ -231,14 +244,17 @@ repository would write for its own files.
 The `agent` entry's value is a descriptor rather than the `eve` definition
 itself. Importing `agent/agent.ts` here would drag `eve` into the
 harness-facing half of the package for no benefit: the registry needs to know
-*where the agent is*, not *what eve makes of it*. The descriptor is also the
-natural input for M2-T8's content fingerprint over instructions, SOP and
-skills.
+*where the agent is*, not *what eve makes of it*. The descriptor also names the authored
+files that M2-T8's content fingerprint reads: `apps/example-agent/src/behavior.ts`
+gathers the same instructions, skills and SOP into a `BehaviorDescriptor`.
 
 `procurement-sop`, which `Job.contracts.sop` names, is deliberately **not**
 registered. A SOP is content, not an executable capability, and putting a wrong
-kind on a permanent ID is not reversible. SOP-as-capability is M2-T8 and M5
-territory.
+kind on a permanent ID is not reversible. M2-T8 settled what happens instead:
+the behavior fingerprint hashes the SOP's **content** as its own component, and
+`contracts.sop` stays a bare, unversioned identifier, because the content digest
+is the version and a hand-maintained one would go stale silently (ADR-0034,
+closing ADR-0032's open question).
 
 ## Open for later milestones
 

@@ -36,24 +36,32 @@ layout still plans, with their target milestone and a one-line summary.
 | `agent-runtime.md` | active (M1-T5) | The `AgentRuntime` interface that runs a job through any AI-SDK-compatible agent implementation, its `AgentExecution` result, and the fake used to replace it in tests. |
 | `harness.md` | active (M1-T4) | `createHarness()`: the public entry point, the single place input is validated before execution and a runtime's claimed output before success, and the run's trace events. |
 | `capability-registry.md` | active (M1-T9) | `CapabilityRegistry` and the serializable `CapabilityManifest`: versioned schemas, agents, tools, handlers and policies, with behavior fingerprints and no executable source. |
-| `trace-event.md` | active (M2-T3, M2-T4) | The closed event taxonomy, the fifteen-field event, the run-scoped `TraceRecorder` that owns a run's order, and the buffered writer with its local JSONL sinks. |
+| `trace-event.md` | active (M2-T3, M2-T4) | The closed event taxonomy, the fifteen-field event, the run-scoped `TraceRecorder` that owns a run's order, the buffered writer with its local JSONL sinks, and the redaction pass above them. |
+| `redaction.md` | active (M2-T9) | What is removed from a trace event before anything buffers or stores it: field paths, secret patterns, headers and per-tool sanitizer hooks, applied by a `TraceWriter` decorator that sits above the buffer. |
+| `behavior-fingerprint.md` | active (M2-T8) | The component-wise `sha256:` fingerprint over the behavior-affecting inputs — instructions, SOP, skills, tool definitions, model configuration, schemas, workflow IR and policy thresholds — supplied by the domain and stamped on every event of a run. |
 | `workflow-ir.md` | planned (M4) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics. |
 | `decision-engine.md` | planned (M3) | The `DecisionEngine` interface for bounded probabilistic judgments, implemented first by Jev. |
 | `promotion-policy.md` | planned (M6) | The quality/regression/false-auto/fallback thresholds a candidate workflow must clear before promotion. |
 
-Nine contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
+Eleven contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
 and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime` with `AgentExecution`
 (M1-T5), `createHarness()` (M1-T4), the capability registry with its serializable manifest
-(M1-T9), the entity identifier scheme (M2-T1), and the trace event with its recorder and writer
-(M2-T3, M2-T4). All live in `packages/core` except the trace's persistence half, which is
-`packages/trace`: the buffered writer and the JSONL sinks, kept out of core so that core owns no
-storage decision and touches no `node:fs`. The schema contract that `DomainDefinition` depends on is a
+(M1-T9), the entity identifier scheme (M2-T1), the trace event with its recorder and writer
+(M2-T3, M2-T4), the behavior fingerprint (M2-T8), and trace redaction (M2-T9). All live in `packages/core` except the trace's
+persistence half, which is `packages/trace`: the buffered writer, the JSONL sinks and the
+redaction pass above them, kept out of core so that core owns no storage decision and touches no
+`node:fs`. Redaction is a `TraceWriter` decorator placed above the buffer, so "redact before
+persistence" is structural rather than a convention every sink has to remember
+([ADR-0035](../decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md)). The schema contract that `DomainDefinition` depends on is a
 harness-owned copy of Standard Schema v1, recorded in
 [ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md) and documented in
 `domain-definition.md`; it is what keeps `packages/core` at zero dependencies while a domain
 authors its schemas in `zod`. The manifest's behavior fingerprints rest on a harness-owned
 canonical JSON encoding, recorded in
-[ADR-0029](../decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md).
+[ADR-0029](../decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md). What a *run's*
+behavior fingerprint hashes, and why it is composed component by component and supplied by the
+domain rather than gathered by the harness, is `behavior-fingerprint.md` and
+[ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md).
 
 Every entity in the system is named by a sortable, branded identifier. The scheme is RFC 9562
 UUIDv7 with a monotonic counter, owned by the harness rather than taken from Node's

@@ -1,0 +1,11 @@
+-- Seed data for the local Supabase database.
+--
+-- `supabase db reset` runs the migrations in `migrations/` and then this file,
+-- because `[db.seed]` in `config.toml` is enabled with `sql_paths = ["./seed.sql"]`.
+-- Reset is the reproducibility gate for this repository: a clean database plus the
+-- committed migrations plus this file must always produce the same state.
+--
+-- It is deliberately empty as of M2-T11. There is no schema yet (M2-T5) and no
+-- migration yet (M2-T6), so there is nothing to seed. Seed rows added later must be
+-- deterministic and must never contain a real credential: this file is committed, and
+-- the pre-commit secret scan treats it like any other tracked source file.

@@ -4558,3 +4558,765 @@ M2-T5 (Supabase schema) adds a `trace_events` table whose columns mirror
 `packages/storage-supabase` behind the same `createBufferedTraceWriter()`. It also decides when an
 attempt becomes a row, which is the question `TraceEvent.attempt` deliberately leaves open. M2-T11
 (local Supabase) must land first.
+
+## 2026-09-19 22:30 — M2-T11 — Reproducible local Supabase environment
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent, concurrent M2 session)
+**Commit:** not committed
+
+### Goal
+
+Make a local Supabase reproducible from the repository alone: the CLI pinned as a project dev
+dependency, `supabase/config.toml` committed, the four `pnpm supabase:*` lifecycle scripts, the
+`packages/storage-supabase` scaffold holding the generated `database.types.ts`, a CI job that fails
+on type drift, and the docs/runbook/ADR that say how it is operated. This task gates M2-T5 through
+M2-T10, none of which can be verified without a database.
+
+### Implementation references
+
+- **package/version:** `supabase@2.117.0`, installed as a root `devDependencies` pin (exact, no
+  range, per ADR-0024). `npm view supabase version` -> `2.117.0`; `dist-tags.latest` is the same
+  and `time.modified` is `2026-09-18T13:38:40.990Z`. `node_modules/supabase/package.json` confirms
+  `"version": "2.117.0"`, `bin.supabase = dist/supabase.js`, and that the platform binary arrives
+  as an **optional dependency** (`@supabase/cli-darwin-arm64@2.117.0` and seven siblings), not as a
+  postinstall download. No `onlyBuiltDependencies` entry is therefore needed: pnpm 12's blocked
+  lifecycle scripts do not affect it. `pnpm exec supabase --version` prints `2.117.0`.
+- **release-age gate:** not triggered. `pnpm install` printed
+  `✓ Lockfile passes supply-chain policies` and appended nothing to
+  `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`; the package was published about 33 hours
+  before the install. That file is therefore unchanged by this task.
+- **installed CLI surface read** (all via `pnpm exec supabase <cmd> --help` against 2.117.0, which
+  is the lockfile-matched installed package and therefore the top of the source-precedence list):
+  - `supabase init [--interactive|-i] [--use-orioledb] [--force]`. **Non-interactive is the
+    default**; `-i` is what prompts for IDE (VS Code / IntelliJ) settings, so plain `supabase init`
+    generates no editor files. It writes exactly `supabase/config.toml` and `supabase/.gitignore`,
+    and touches `supabase/.temp/cli-latest` as a version-check cache.
+  - `supabase start [--exclude|-x <containers>] [--ignore-health-check]`.
+  - `supabase stop [--project-id] [--no-backup] [--all]`. `--no-backup` is what deletes the data
+    volumes; plain `stop` keeps them.
+  - `supabase db reset [--local] [--linked] [--db-url] [--no-seed] [--sql-paths] [--version]
+    [--last]`. Description: "Resets the local database to current migrations." Local is the
+    default target.
+  - `supabase gen types [--local|--linked|--db-url|--project-id] [--lang
+    typescript|go|swift|python] [--schema|-s] [--query-timeout]`. **There is no output-file flag
+    in 2.117.0**; the documented examples all write to stdout (`supabase gen types --local`), so
+    the script must use shell redirection. Recorded as a deviation risk below.
+  - `supabase status [--override-name]`, plus the **global** `--output, -o
+    env|pretty|json|toml|yaml|table|csv`. `supabase status -o env` is therefore the supported way
+    to capture local URLs and keys into an env file.
+- **generated `supabase/config.toml` (2.117.0 defaults), ports:** `project_id` defaulted to the
+  working-directory name, `adaptive-agent-harness`, which is exactly the stable value wanted, so
+  it is committed unchanged. Ports: API `54321`, DB `54322`, DB shadow `54320`, Studio `54323`,
+  local SMTP `54324` (optional `smtp_port` 54325 / `pop3_port` 54326 commented out), analytics
+  `54327`, pooler `54329` (`[db.pooler] enabled = false`), edge-runtime Chrome inspector `8083`.
+  `[db.migrations] enabled = true`, `[db.seed] enabled = true` with
+  `sql_paths = ["./seed.sql"]`, which is why `supabase/seed.sql` is the file this task creates.
+- **port collision check:** none. `eve start` defaults to `$PORT` then `3000` and `eve dev`
+  defaults to `$PORT` then `2000`
+  (`node_modules/.pnpm/eve@0.63.0_*/node_modules/eve/docs/reference/cli.md` lines 197-221); the
+  contract suite starts `eve dev --no-ui --port 0`. Nothing in the repository uses 8083 or the
+  `543xx` range. `lsof -nP -iTCP -sTCP:LISTEN` on the development host showed nothing listening in
+  either range.
+- **what must stay out of git:** `supabase init` writes its own `supabase/.gitignore` covering
+  `.branches`, `.temp`, `.env.keys`, `.env.local` and `.env.*.local`. `git check-ignore -v`
+  confirms `supabase/.temp/cli-latest` and `supabase/.branches` resolve through it, and that the
+  root `.gitignore`'s existing `.env.*` line (with `!.env.example`) already ignores `.env.local`.
+  The root file still gains explicit entries so the rule survives the CLI's file being regenerated.
+- **secrets:** local URLs and keys are printed by `supabase start`/`supabase status` and are never
+  written to a tracked file. No key value, including the well-known local demo anon/service keys,
+  appears anywhere in this task's output.
+- **selected documented pattern:** the build plan's own M2-T11 wrapper set, wrapping the four
+  commands verbatim, with `gen types` redirected to
+  `packages/storage-supabase/src/database.types.ts` because 2.117.0 offers no output flag.
+- **not documented / harness-owned:** the reproducibility discipline itself (reset then regenerate
+  then `git diff --exit-code`) is a repository policy, not a CLI feature; it becomes ADR-0033 and
+  the `supabase-types` CI job.
+- **still to establish during verification:** what `supabase gen types --lang typescript --local`
+  emits against a database with zero migrations applied, whether its stdout carries any log line
+  that would pollute the redirected file, and whether Biome's formatter accepts the generated file
+  unchanged.
+
+### Work completed
+
+Nothing yet beyond establishing the references above and installing the pinned dev dependency.
+
+### Files changed
+
+- `package.json` — `supabase@2.117.0` added to `devDependencies`.
+- `pnpm-lock.yaml` — regenerated by `pnpm install`.
+- `supabase/config.toml`, `supabase/.gitignore` — written by `pnpm exec supabase init`.
+
+### Verification
+
+- `pnpm exec supabase --version` — PASS, prints `2.117.0`.
+- `pnpm exec supabase init` — PASS, exit 0, "Finished supabase init."
+
+### Decisions / deviations
+
+- To be recorded in the result entry and in ADR-0033.
+
+### Known issues / blockers
+
+- `supabase gen types` writing to stdout means a failed generation truncates the committed
+  generated file. The CI drift gate catches it; the runbook says to re-run after a successful
+  `supabase db reset`.
+
+### Next exact step
+
+Create `supabase/migrations/` and `supabase/seed.sql`, scaffold `packages/storage-supabase`, add
+the four scripts, then run the reproducibility sequence (`start`, `reset`, `types`, regenerate,
+`git diff --exit-code`, `stop`).
+
+## 2026-09-19 22:31 — M2-T8 — Behavior fingerprint
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under a Fable orchestrator)
+**Commit:** not committed
+
+### Goal
+
+Give every trace event and every run result a real `behaviorFingerprint`: a `sha256:` digest over
+the canonicalized behavior-affecting inputs the build plan's M2-T8 lists — agent instructions, SOP,
+loaded skills, tool definitions/version ids, model configuration, schemas, workflow IR and policy
+thresholds — and nothing time-dependent. The acceptance criterion is that changing the
+instructions, the SOP or a policy threshold changes the fingerprint, and that changing nothing
+behavior-affecting does not.
+
+### Implementation references
+
+- package/version: `eve@0.63.0` (pinned by `packages/runtime-eve/package.json` and
+  `apps/example-agent/package.json`), `ai@7.0.107`, Node 24.21.0, pnpm 12.4.2.
+- installed docs read: `node_modules/eve/docs/skills.mdx` (skill layout: `agent/skills/`, flat
+  markdown or a packaged directory with `SKILL.md`; the name comes from the path; `description`
+  frontmatter is a routing hint, and a flat file may omit it), `docs/reference/agent-files.md`
+  (the authored slot table: `agent/skills/<name>.md` resolves to skill `<name>`, and `lib/` is
+  "Shared authored helper code … Import-only; not copied into the sandbox"),
+  `docs/agent-config.md` (`agent.ts` is optional but `model` is required once it exists; the
+  behavior-affecting settings a config may carry: `model`, `reasoning`, `compaction`, `limits`).
+- official docs/repos/examples read: none beyond the installed docs; nothing here is a new eve
+  API call.
+- public types/exports inspected: `packages/core/src/fingerprint.ts` (`canonicalJson`,
+  `fingerprint`, `FINGERPRINT_ALGORITHM_PREFIX`), `capabilities.ts` (`capabilityFingerprint`,
+  `CapabilityManifestEntry`), `trace.ts` (`TraceEvent.behaviorFingerprint`,
+  `CreateTraceRecorderOptions.behaviorFingerprint`), `harness.ts`, `domain.ts`, `json.ts`.
+- selected documented pattern: the behavior descriptor is **supplied by the domain**, not read by
+  the harness. ADR-0028 makes `EveAgentRuntime` a URL-only client that cannot see an agent's files,
+  and ADR-0025 makes the application the author of the eve agent, so the application is the only
+  party that can read `agent/instructions.md`, `agent/skills/` and the authored model
+  configuration. The model configuration is extracted into `agent/lib/`, which eve's own slot table
+  documents as the import-only shared-helper slot, so `agent/agent.ts` and `src/behavior.ts` read
+  one constant instead of two copies that drift.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending; ADR-0034)
+
+### Known issues / blockers
+
+- None yet.
+
+### Next exact step
+
+Implement `packages/core/src/behavior.ts`, wire it through `defineDomain()` and `createHarness()`,
+and give the example app a real descriptor.
+
+## 2026-09-19 22:31 — M2-T9 — Secret and sensitive-data redaction
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, M2-T9 implementation session)
+**Commit:** not committed
+
+### Goal
+
+Redact before persistence. Build the four mechanisms M2-T9 names — field-path redaction,
+secret-pattern redaction, headers redaction and tool-specific sanitizer hooks — as a pure redactor
+over the JSON value model plus a `TraceWriter` decorator placed ahead of the buffered writer, so
+nothing buffers or persists an unredacted event. Prove M2's acceptance criterion "seeded secrets
+never appear in stored trace payloads" with fake secrets seeded through a real `createHarness()`
+run and through a JSONL round trip.
+
+### Implementation references
+
+- package/version: no new dependency. `@internal/trace` depends on `@internal/core` only and uses
+  Node built-ins, unchanged.
+- installed docs read: `.secretlintrc.json` (`@secretlint/secretlint-rule-preset-recommend@13.0.5`,
+  the only configured rule), `.secretlintignore`, `.husky/pre-commit` (how staged paths reach
+  `secretlint --no-glob`), so seeded fake secrets in tests do not block a commit.
+- official docs/repos/examples read, for the token formats the default pattern set claims:
+  - Supabase, <https://supabase.com/docs/guides/getting-started/api-keys> and
+    <https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys> — secret keys have
+    the form `sb_secret_…` and replace the legacy `service_role` key (itself a JWT).
+  - Supabase, <https://supabase.com/docs/guides/platform/personal-access-tokens> — personal access
+    tokens start with `sbp_`.
+  - Vercel, <https://vercel.com/docs/ai-gateway/authentication-and-byok/api-keys> — AI Gateway API
+    keys have the prefix `vck_`, which is the format `AI_GATEWAY_API_KEY` carries.
+- public types/exports inspected: `packages/core/src/json.ts` (`JsonValue`, `JsonObject`,
+  `isJsonObject`), `packages/core/src/trace.ts` (`TraceEvent`, `TraceWriter`, `TraceRecorder`),
+  `packages/core/src/errors.ts` (`SerializedHarnessError`, `ValidationError`),
+  `packages/trace/src/{buffered-trace-writer,sink,jsonl-sink}.ts`,
+  `packages/runtime-eve/src/eve-agent-runtime.ts` (`tool.*` payloads carry the tool name at
+  `payload.tool`, which is the key a sanitizer hook matches on).
+- selected documented pattern: none imposed by a framework. Redaction is harness-owned; the design
+  is recorded in ADR-0035.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (in progress)
+
+### Decisions / deviations
+
+- (in progress)
+
+### Known issues / blockers
+
+- None yet.
+
+### Next exact step
+
+Implement `packages/trace/src/redaction.ts` and `redacting-trace-writer.ts`, wire
+`apps/example-agent/src/run.ts`, then verify.
+
+## 2026-09-19 22:45 — M2-T11 — Reproducible local Supabase environment
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent, concurrent M2 session)
+**Commit:** not committed
+
+### Goal
+
+As in the `started` entry at 22:30: a local Supabase reproducible from the repository alone, with
+the CLI pinned as a project dev dependency, the four lifecycle scripts, the
+`packages/storage-supabase` scaffold holding the generated types, a CI drift gate, and the
+documentation to operate it. Gates M2-T5 through M2-T10.
+
+### Implementation references
+
+As recorded in the `started` entry at 22:30 (`supabase@2.117.0`, the installed CLI's help surface
+for `init`/`start`/`stop`/`db reset`/`gen types`/`status`, the generated `config.toml` port map,
+the eve port comparison, and the ignore-file survey). Three of the four open questions that entry
+listed are now answered by execution rather than by reading:
+
+- **`gen types` against zero migrations** emits a complete, valid module: `Json`, a `Database` type
+  with empty `graphql_public` and `public` schemas, the `Tables`/`TablesInsert`/`TablesUpdate`/
+  `Enums`/`CompositeTypes` helper types, and `Constants`. Nothing about it is conditional on tables
+  existing, so the committed file is meaningful before M2-T6 writes a migration.
+- **Its log output goes to stderr**, not stdout: the redirected file contains only TypeScript.
+  (`Connecting to db 5432` and a `MaxListenersExceededWarning` from the CLI appear on the terminal
+  and not in the file.)
+- **Biome's formatter rejects the generated file** (the generator omits statement-terminating
+  semicolons); Biome's linter accepts it. Hence a `formatter: { enabled: false }` override for
+  that one path rather than a whole-file exclusion.
+
+### Work completed
+
+- **Pinned the CLI.** `supabase@2.117.0` added to the root `devDependencies`, exact, installed with
+  `pnpm install`. The release-age gate did not trigger (`Lockfile passes supply-chain policies`)
+  and nothing was appended to `minimumReleaseAgeExclude`, so `pnpm-workspace.yaml` is **unchanged**
+  by this task. No `onlyBuiltDependencies` entry was needed either: 2.117.0 ships its platform
+  binary as an optional dependency, not as a postinstall download, so pnpm 12's blocked lifecycle
+  scripts do not affect it.
+- **Extended ADR-0024's mechanism to it.** `tests/toolchain/supabase-cli-pin.test.ts` reads the
+  pinned string from the root manifest and the `version` from the installed
+  `supabase/package.json`, both from disk with no literal, and asserts they agree; asserts the pin
+  carries no range operator; and asserts the four scripts still wrap the four CLI commands
+  verbatim. It lives under `tests/toolchain/` rather than co-located because the dependency it
+  guards is the root's.
+- **Initialized the repository-local config.** `pnpm exec supabase init`, non-interactively (`-i`
+  is what generates editor settings and was not used), producing `supabase/config.toml` and the
+  CLI's own `supabase/.gitignore`. `project_id` defaulted to the working-directory name,
+  `adaptive-agent-harness`, which is exactly the stable value wanted, so the file is committed at
+  the CLI's defaults with nothing edited. Added `supabase/migrations/README.md` (what the directory
+  is for, how to create a migration, why it is empty until M2-T6) and `supabase/seed.sql` (header
+  comment only).
+- **Added the four scripts** to the root `package.json`: `supabase:start`, `supabase:stop`,
+  `supabase:reset`, and `supabase:types` with the stdout redirection the CLI forces.
+- **Scaffolded `packages/storage-supabase`** (`@internal/storage-supabase`, private, on the
+  `packages/trace` template: the `@internal/source` export condition, both tsconfigs,
+  `build`/`dev`/`typecheck`, `@internal/core` as its only dependency and `vitest` as a
+  devDependency). `src/index.ts` re-exports the generated `Database` type and nothing else, with a
+  header saying M2-T5 adds the adapter. `@supabase/supabase-js` deliberately **not** installed.
+- **Generated and committed `src/database.types.ts`**, unmodified output of `pnpm supabase:types`.
+- **Biome override.** `biome.json` gained an `overrides` entry disabling the formatter for
+  `packages/storage-supabase/src/database.types.ts`. Configuration, not a hand edit of generated
+  source; linting still applies and passes.
+- **CI drift gate.** A second job, `supabase-types`, in `.github/workflows/ci.yml`: checkout, the
+  existing pnpm/Node setup, `pnpm install --frozen-lockfile`, start, reset, regenerate,
+  `git diff --exit-code` on the one generated path, and stop with `if: always()`. The `check` job
+  is untouched. The YAML was parsed with the repository's own `yaml` dependency to confirm it is
+  valid and that both jobs are present.
+- **Ignore rules.** Root `.gitignore` gained `supabase/.temp/`, `supabase/.branches/`, `.env.local`
+  and `.env*.local`. The CLI's own `supabase/.gitignore` already covers the first three; the root
+  entries exist so the rule survives that file being regenerated, and so the whole policy is
+  readable in one place.
+- **Documentation.** New runbook `docs/runbooks/supabase-local.md` (the four commands, the
+  schema-change routine, the reproducibility sequence, the port table, key capture, and five
+  failure modes: Docker down, port in use, wedged stack, truncated generated file, CI-only drift),
+  registered in `docs/runbooks/README.md` and removed from that file's "later milestones must add"
+  list. `docs/development/local-setup.md` gained a "Docker, for the local database" section and
+  lost its stale "Milestone 0 needs no Docker" framing. `docs/development/commands.md` gained the
+  four scripts, the two new packages in the per-package table, the `supabase-types` CI job, and a
+  runbook cross-reference. `docs/architecture/system-map.md` gained prose for
+  `packages/storage-supabase` and the `supabase/` directory, flipped that package's status row from
+  "planned (M2)", and added both to its frontmatter.
+- **ADR-0033**, `docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md`,
+  indexed in `docs/decisions/README.md` with a summary paragraph.
+- **Milestone status.** `docs/milestones/m2-job-trace-supabase-and-run-ledger.md`: the `### M2-T11`
+  subsection marked completed with a `**Result.**` paragraph, and the two `pnpm supabase:*`
+  acceptance bullets moved from "not yet verified" to a dated verified note.
+
+### Files changed
+
+- `package.json` — `supabase@2.117.0` devDependency; four `supabase:*` scripts.
+- `pnpm-lock.yaml` — regenerated.
+- `biome.json` — `overrides` entry disabling the formatter for the generated types file.
+- `.gitignore` — Supabase and `.env*.local` entries.
+- `.github/workflows/ci.yml` — new `supabase-types` job; `check` untouched.
+- `supabase/config.toml`, `supabase/.gitignore` — written by `supabase init` (new).
+- `supabase/migrations/README.md`, `supabase/seed.sql` — new.
+- `packages/storage-supabase/package.json`, `tsconfig.json`, `tsconfig.build.json`,
+  `src/index.ts` — new.
+- `packages/storage-supabase/src/database.types.ts` — new, **generated**.
+- `tests/toolchain/supabase-cli-pin.test.ts` — new.
+- `tests/architecture/package-boundaries.test.ts` — `@internal/storage-supabase` added to the
+  workspace-discovery assertion. `tests/architecture/boundaries.ts` needed **no** change.
+- `docs/decisions/0033-...md` (new), `docs/decisions/README.md`,
+  `docs/runbooks/supabase-local.md` (new), `docs/runbooks/README.md`,
+  `docs/development/local-setup.md`, `docs/development/commands.md`,
+  `docs/architecture/system-map.md`,
+  `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (M2-T11 subsection and the two
+  supabase acceptance bullets only), `docs/progress/WORKLOG.md`.
+
+### Verification
+
+Reproducibility sequence, against real Docker:
+
+- `pnpm exec supabase --version` — PASS, `2.117.0`.
+- `pnpm supabase:start` — PASS, exit 0. First run pulled about a dozen images; the stack came up
+  and printed its URLs and keys (not recorded anywhere, deliberately).
+- `pnpm supabase:reset` — PASS, exit 0, from an empty database: `Recreating database...`,
+  `Initialising schema...`, `Seeding globals from roles.sql...`, `Seeding data from
+  supabase/seed.sql...`, `Finished supabase db reset on branch main.` Zero migrations applied, as
+  expected before M2-T6. Run twice, both PASS.
+- `pnpm supabase:types` — PASS, exit 0, writing a complete module. `sha256` of the result:
+  `5e938e4dc93aeb63e1e38a653fbd68250467896ed1eafef9c1dc97939fc2ea0c`.
+- **Determinism** — PASS. Snapshot the generated file, run a second full `pnpm supabase:reset`,
+  regenerate, compare: identical `sha256`, and `git diff --no-index --exit-code` between the two
+  exits 0 with no output. (`--no-index` because the file is not yet committed; the CI job uses the
+  plain `git diff --exit-code` form against the committed file.)
+- `pnpm supabase:stop` — PASS, exit 0, `Stopped supabase local development setup.`
+  `docker ps` afterwards lists nothing. **Supabase is left stopped.**
+- `node -e "require('yaml').parse(...)"` on `.github/workflows/ci.yml` — PASS: jobs
+  `[check, supabase-types]`, nine steps on the new job, ten still on `check`.
+- `git check-ignore -v .env.local supabase/.temp/cli-latest supabase/.branches
+  apps/x/.env.development.local` — PASS, all four ignored.
+
+Repository gates:
+
+- `pnpm typecheck` — PASS. 8 packages including `@internal/storage-supabase`, plus the root.
+- `pnpm build` — PASS. 8 packages.
+- `pnpm test` — PASS. **676 tests across 39 files**, all four projects.
+- `pnpm exec vitest run --project unit tests/` (this task's own suites) — PASS, 22 tests, 3 files.
+- `pnpm exec biome format` over every file this task touched — PASS.
+- `pnpm example:run:mock` — PASS, exit 0, `"status": "completed"`, trace written to
+  `apps/eve-fixture-agent/.harness/traces/01a0bcad-f497-7000-97c8-2a8b4ab02f93.jsonl`.
+- **`pnpm check` — FAIL**, at stage 1 (`format:check`), for reasons entirely outside this task.
+  `biome format` reports five unformatted files and `biome lint` two import-order fixes, all of
+  them files owned by the concurrent M2-T8 and M2-T9 work in the same tree:
+  `packages/core/src/behavior.ts`, `packages/core/src/behavior.test.ts`,
+  `packages/core/src/harness.test.ts`, `packages/trace/src/secret-patterns.ts`,
+  `packages/trace/src/redaction.test.ts`, `packages/trace/src/redacting-trace-writer.ts` and
+  `apps/example-agent/src/behavior.ts`. Re-run once after the first observation; the list had grown
+  rather than shrunk, which is what an actively-edited tree looks like. Every file this task
+  touched passes both gates, and every other stage of `pnpm check` (typecheck, test, build) passes
+  over the whole workspace. The orchestrator should re-run `pnpm check` once M2-T8 and M2-T9 land.
+
+### Decisions / deviations
+
+All recorded in **ADR-0033**. The ones that are deviations from the task brief rather than
+restatements of it:
+
+- **No hand-written header on the generated file**, although the brief asked for one if the
+  generator omits one. It does omit one, and adding it by hand would be self-defeating: the next
+  `pnpm supabase:types` deletes it, and the `supabase-types` job then reports drift on a file
+  nobody touched. Making the script prepend the header instead was rejected because it would stop
+  the script being the verbatim wrapper the build plan specifies and the pin test asserts. The
+  "generated, never hand-edit" statement therefore lives in AGENTS.md rule 12,
+  `packages/storage-supabase/src/index.ts`, the runbook and the ADR.
+- **`pnpm supabase:types` uses shell redirection**, because `supabase gen types` in 2.117.0 has no
+  output-file flag. The brief allowed this and preferred a flag; there is none. The consequence, a
+  failed generation truncating the committed file, is stated in the ADR's Negative consequences,
+  in the commands table, and as a runbook failure mode.
+- **`supabase/migrations/` holds a `README.md`, not a `.gitkeep`.** Both were measured and both
+  make the CLI print `Skipping migration <name>... (file name must match pattern
+  "<timestamp>_name.sql")` on every start and reset, so the noise is not avoidable by naming. The
+  README was kept because it is worth more than one informational line, and the runbook explains
+  the message and when to take it seriously.
+- **`tests/architecture/package-boundaries.test.ts` was edited**, which the brief scoped to
+  `boundaries.ts` only. `boundaries.ts` genuinely needed nothing: `@internal/storage-supabase` was
+  already in `adapterPackages` and `@supabase/*` already in `adapterOnlyDependencies`. But the test
+  file carries an explicit list of every workspace package, which exists so a new package cannot be
+  silently ungoverned, and it failed until the new name was added. One entry, with a comment.
+- **`pnpm-workspace.yaml` is unchanged.** The brief anticipated a `minimumReleaseAgeExclude` entry;
+  the gate did not trigger, so adding one would have been a stale record of nothing.
+- **The `-o env` capture uses `--override-name`.** `supabase status -o env` emits `API_URL`,
+  `ANON_KEY` and `SERVICE_ROLE_KEY`, which are not the names `.env.example` already declares. The
+  runbook's documented command maps them onto `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL`, verified to work against the running stack.
+  It also warns that `>` would clobber the AI Gateway credential `eve link` writes to the same
+  file.
+
+### Known issues / blockers
+
+- **`pnpm check` fails on other agents' in-flight files** (detail under Verification). Not caused
+  by and not fixable from this task.
+- **AGENTS.md needs four edits this task is not permitted to make**, listed for the orchestrator:
+  the Commands table needs the four `supabase:*` rows; the repository-layout tree needs
+  `packages/storage-supabase/` and a root `supabase/` entry, both moved out of the "planned" block;
+  the ADR paragraph needs ADR-0033 described and "next free number" advanced; and the "Local
+  persistence" / Docker prerequisite wording could note that Docker is now required for M2 work.
+- The M2 status file's **top-level `**Status:**` line** still says M2-T11 is `in_progress`. The
+  brief scoped this task to the `### M2-T11` subsection and the two acceptance bullets, so that
+  line was deliberately left for the orchestrator, which also has to reconcile M2-T8's and M2-T9's
+  states in the same line.
+- The CI `supabase-types` job has **never run**: it is new, and the first execution will be on the
+  next push. Its steps were verified locally one by one, and the YAML parses.
+- `supabase/config.toml` is committed at 2.117.0's defaults. A CLI upgrade may rewrite parts of it;
+  under ADR-0033 that upgrade is its own task with its own source-of-truth checkpoint.
+
+### Next exact step
+
+**M2-T5, Supabase schema.** The environment it needs now exists. Design the fourteen tables the
+build plan lists, with stable indexed metadata in columns and versioned payloads in JSONB; decide
+whether `@internal/storage-supabase` declares `@supabase/supabase-js`; and decide when an attempt
+becomes a row, the question `TraceEvent.attempt` leaves open. M2-T6 then writes the migrations,
+after which `pnpm supabase:reset && pnpm supabase:types` produces a `database.types.ts` with real
+tables in it, and the `supabase-types` CI job starts earning its runtime. Start with:
+
+```bash
+pnpm supabase:start && pnpm supabase:reset
+```
+
+## 2026-09-19 22:46 — M2-T9 — Secret and sensitive-data redaction
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, M2-T9 implementation session)
+**Commit:** not committed
+
+### Goal
+
+As in the `started` entry above: the four redaction mechanisms M2-T9 names, applied before
+anything buffers or persists a trace event, with M2's "seeded secrets never appear in stored trace
+payloads" proven rather than asserted.
+
+### Implementation references
+
+As recorded in the `started` entry above, unchanged. No new dependency: `@internal/trace` still
+depends on `@internal/core` only. The token formats the default pattern set claims were verified
+against Supabase's "API keys" and "Personal Access Tokens" guides (`sb_secret_…`, `sbp_…`) and
+Vercel's AI Gateway "API Keys" page (`vck_…`); `.secretlintrc.json` (the recommended preset at
+13.0.5) and `.husky/pre-commit` were read so the seeded fakes cannot block a commit.
+
+### Work completed
+
+- **`packages/trace/src/redaction.ts`**, the pure redactor: `RedactionPolicy`,
+  `createRedactor(policy?)` with `redactValue(value, path?)`, `redactEvent(event)` and
+  `redactEvents(events)`, plus `DEFAULT_REDACTION_POLICY`, `createRedactionPolicy(overrides)`, the
+  token constants and `redactionToken(name)`.
+  - **Field paths** are a glob over the JSON tree: literal segments, `*` for exactly one segment,
+    `**` for any number including none, array indices as segments, literal comparison
+    case-insensitive by default with `caseSensitive: true` per rule. A match replaces the value
+    whatever its type. Eighteen default rules covering the camel and snake spelling of `api-key`,
+    `access-token`, `refresh-token`, `session-token`, `client-secret`, `private-key`,
+    `service-role-key`, `password`, `secret`, `credentials` and `token`.
+  - **Headers**: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`,
+    `x-auth-token`, `x-supabase-auth`, `apikey`, matched case-insensitively under any object whose
+    own key is `headers`, at any depth. The header rule wins over a field-path rule inside a
+    `headers` object, so a redacted header always reports itself as one.
+  - **Tool sanitizers**: `{ toolId, sanitize(payload, event) }`, matched against `payload.tool` on
+    a `tool.*` event, run before the generic rules with their output still put through them, and
+    rejected with a `ValidationError` if they return something JSON cannot represent.
+  - Scope: `payload`, and an error's `message`, `details`, `stack` and whole `cause` chain.
+    `name`/`code` and every identity, ordering and usage field pass through. A new frozen event is
+    returned and the input is neither mutated nor frozen.
+- **`packages/trace/src/secret-patterns.ts`**, the documented default pattern set as
+  `DEFAULT_SECRET_PATTERN_RULES`: `private-key-block`, `aws-access-key-id`, `github-token`,
+  `slack-token`, `supabase-secret-key`, `supabase-access-token`, `vercel-ai-gateway-key`,
+  `api-key-sk-prefix`, `jwt`, `authorization-bearer`, `authorization-basic`. Each replaces only the
+  span it matched; the two `Authorization` rules use a lookbehind so the scheme word survives.
+- **`packages/trace/src/redacting-trace-writer.ts`**: `createRedactingTraceWriter({ writer,
+  policy? })`, the `TraceWriter` decorator, placed above the buffered writer.
+- **`apps/example-agent/src/run.ts`**: the writer construction now reads
+  `createRedactingTraceWriter({ writer: createBufferedTraceWriter({ sink: traces }) })`. Only the
+  import, that expression and one line of the file's header comment changed.
+- Docs: new `docs/contracts/redaction.md`; a Redaction section and an updated M2-T9 open item in
+  `docs/contracts/trace-event.md`; a "redaction happens in the trace pipeline" note and updated
+  open item in `docs/contracts/errors.md`; a row and an updated summary in
+  `docs/contracts/README.md`; the package row and a new source-file bullet in
+  `docs/architecture/system-map.md`; **ADR-0035** plus its index row and paragraph in
+  `docs/decisions/README.md`; the M2-T9 result and the seeded-secrets acceptance bullet in the M2
+  status file.
+
+### Files changed
+
+- `packages/trace/src/redaction.ts` (new), `secret-patterns.ts` (new),
+  `redacting-trace-writer.ts` (new), `redaction.test.ts` (new),
+  `redacting-trace-writer.test.ts` (new), `index.ts` (exports).
+- `apps/example-agent/src/run.ts` (writer construction and its import).
+- `docs/contracts/redaction.md` (new), `trace-event.md`, `errors.md`, `README.md`;
+  `docs/architecture/system-map.md`;
+  `docs/decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md` (new),
+  `docs/decisions/README.md`;
+  `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (M2-T9 subsection and one acceptance
+  bullet); `docs/progress/WORKLOG.md`.
+
+### Verification
+
+- `pnpm vitest run --project unit packages/trace` — PASS (77 tests across 4 files, up from 23
+  across 2; +54 tests, +2 files).
+- `pnpm exec secretlint --no-glob -- packages/trace/src/redaction.test.ts
+  packages/trace/src/redacting-trace-writer.test.ts packages/trace/src/redaction.ts
+  packages/trace/src/secret-patterns.ts packages/trace/src/redacting-trace-writer.ts
+  packages/trace/src/index.ts` — PASS (exit 0). No secretlint configuration was changed.
+- `pnpm typecheck` — PASS (8 tasks).
+- `pnpm test` — PASS (691 tests across 40 files).
+- `pnpm build` — PASS (8 tasks).
+- `pnpm check:handoff` — PASS.
+- `pnpm example:run:mock` — PASS, exit 0, `"status": "completed"`, trace at
+  `apps/eve-fixture-agent/.harness/traces/01a0bcaf-d0b3-7001-ae58-35caae7a52ff.jsonl`: six lines,
+  sequences 0 to 5, the same types and payload keys as before redaction was wired, and
+  `grep -c "\[REDACTED" ` returns **0** — adapter payloads are identity-only, so there is nothing
+  for the redactor to remove and it removes nothing.
+- `pnpm check` — **FAIL**, at its first stage (`format:check`) and again at `lint`, in four files
+  belonging to the concurrent M2-T8 task and none of this task's:
+  `packages/core/src/behavior.ts`, `packages/core/src/behavior.test.ts`,
+  `packages/core/src/harness.test.ts` and `apps/example-agent/src/behavior.test.ts` are
+  unformatted, and `apps/example-agent/src/behavior.ts` and `behavior.test.ts` need import
+  organisation. Re-run after M2-T8 lands. Every other stage of the gate passes, and every file
+  this task touched passes `biome check`.
+
+### Decisions / deviations
+
+All recorded in **ADR-0035**. The ones that are deviations from the task brief rather than
+restatements of it:
+
+- **The end-to-end acceptance test uses local test doubles rather than
+  `createFakeAgentRuntime`/`createRecordingTraceWriter` from `@internal/testing`.** The brief
+  allowed adding the workspace devDependency; it was not added. Doing so means editing
+  `packages/trace/package.json` and the root `pnpm-lock.yaml` while M2-T11 is installing into the
+  same lockfile, and it would make a package whose stated claim is "no dependency but
+  `@internal/core`" depend on a second one. `packages/core/src/harness.test.ts` already sets the
+  precedent of local doubles, for a related reason. The doubles are about sixty lines and the
+  coverage is unchanged: a real `createHarness()`, a real recorder, the real redacting writer, the
+  real buffered writer and both an in-memory sink and a JSONL file on disk.
+- **`sbp_` (Supabase personal access token) and `vck_` (Vercel AI Gateway) are in the default
+  pattern set**, because both formats are documented; the brief left both conditional on
+  verification. `sb_secret_` is used rather than a guessed service-role prefix, and the legacy
+  `service_role` key is a JWT and is caught by the `jwt` rule.
+- **The `Bearer`/`Basic` rules use a lookbehind** so the scheme word survives and only the
+  credential is replaced, and they require a 16-character minimum (plus mixed case for `Basic`) so
+  that prose like "Bearer token missing" and "Basic authentication required" does not match. Both
+  false positives were found while writing the tests and both are now regression-tested.
+- **Inside a `headers` object the header rule wins over a field-path rule.** Without the tie-break,
+  the default `**.authorization` rule would label a redacted `Authorization` header
+  `[REDACTED:authorization]` in one place and `[REDACTED:header]` in another.
+- **A field-path rule matching `payload` or an error's `details` whole nests the token under
+  `redacted`** (`REDACTED_VALUE_KEY`), because both positions are typed as objects and a string
+  cannot go there. Named in ADR-0035's negative consequences as the wart it is.
+- **`docs/architecture/runtime.md` was not edited.** It documents the eve adapter and its
+  event-to-trace mapping; it does not describe the writer chain, so there was nothing there to
+  correct. The chain is documented in `docs/contracts/trace-event.md`,
+  `docs/contracts/redaction.md` and `docs/architecture/system-map.md`.
+- **A `strict: false`-style escape hatch is deliberately absent**, as the brief asked, and
+  `createRedactionPolicy()` concatenates onto the defaults rather than replacing them.
+
+### Known issues / blockers
+
+- `pnpm check` is red on M2-T8's four files, as recorded above. Nothing this task owns is involved.
+- **Redaction is a safety net, not the boundary.** ADR-0031's identity-only payload rule is still
+  what keeps content out of a trace; nothing here licenses widening a payload. The acceptance test
+  deliberately violates that rule inside a fake runtime to prove the net catches something.
+- **The default field-path set is a list of spellings.** A new one (`apiSecret`, say) is a rule
+  someone has to add; matching substrings of key names instead would fire on `tokenCount`.
+- **The `token` field-path rule is broad** and would redact a payload field called exactly `token`
+  that was not a credential.
+- No verification against a real database yet: M2-T5's Supabase sink does not exist, so "stored"
+  means the in-memory sink and the JSONL file. The batch helper `redactEvents()` is exported for
+  that sink to re-apply when it lands.
+
+### Next exact step
+
+M2-T5 (Supabase schema) adds the `trace_events` table and a Supabase `TraceSink` in
+`packages/storage-supabase`, behind the same `createBufferedTraceWriter()` and therefore behind the
+same redacting writer. It should call `redactEvents()` on its batch as well, belt and braces, and
+re-verify the seeded-secret acceptance criterion against a real row. M2-T11 (local Supabase) must
+land first.
+
+## 2026-09-19 22:58 — M2-T8 — Behavior fingerprint
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under a Fable orchestrator)
+**Commit:** not committed
+
+### Goal
+
+As in the `started` entry above: fill `TraceEvent.behaviorFingerprint` with a real `sha256:` digest
+over the canonicalized behavior-affecting inputs, and satisfy the M2 acceptance criterion
+"Behavior fingerprint changes when instructions/SOP/policy changes".
+
+### Implementation references
+
+Unchanged from the `started` entry: `eve@0.63.0`'s installed `docs/skills.mdx`,
+`docs/reference/agent-files.md` and `docs/agent-config.md`; `packages/core/src/fingerprint.ts`,
+`capabilities.ts`, `trace.ts`, `harness.ts`, `domain.ts`, `json.ts`.
+
+Two facts from the installed eve docs decided real design points rather than only informing them:
+
+- `docs/reference/agent-files.md` lists `lib/` as "Shared authored helper code … Import-only; not
+  copied into the sandbox", which is what makes the shared model-configuration constant a
+  documented pattern rather than a liberty taken with eve's authored tree.
+- the same file's "Naming from paths" table (`agent/skills/summarize.md` resolves to skill
+  `summarize`) plus `docs/skills.mdx`'s packaged `SKILL.md` layout are what the example's skill
+  loader implements, so a descriptor's skill ids are the ids eve itself resolves.
+
+### Work completed
+
+- **`packages/core/src/behavior.ts` (new).** `BehaviorDescriptor` with one field per input the
+  build plan lists, `createBehaviorFingerprint()` returning one `sha256:` digest per component plus
+  the composite, `resolveBehaviorFingerprint()`, `behaviorFingerprintPayload()`,
+  `behaviorFingerprintsMatch()` and `diffBehaviorComponents()`. Built on ADR-0029's
+  `fingerprint()`; nothing about the digest changed.
+- **`domain.ts`.** `DefineDomainConfig`/`DomainDefinition` gained an optional `behavior` source,
+  validated for shape and carried through unchanged.
+- **`harness.ts`.** Resolution before `run.started`; the composite passed to
+  `createTraceRecorder`; `behaviorFingerprint` on the `HarnessRunResult` base so all three variants
+  carry it; the component digests written into the `run.started` payload.
+- **`apps/example-agent`.** `agent/lib/agent-config.ts` (new) holds the authored runtime
+  configuration, `agent/agent.ts` passes it to `defineAgent`, `src/behavior.ts` (new) gathers the
+  real descriptor and `src/domain/index.ts` declares it. The policy's threshold became an exported
+  constant the function itself reads, so the value fingerprinted is the value enforced.
+- **Docs.** New `docs/contracts/behavior-fingerprint.md` (registered in the contracts README),
+  ADR-0034, and updates to `capability-registry.md`, `harness.md`, `domain-definition.md`,
+  `trace-event.md` (its `behaviorFingerprint` field row and M2-T8 open-item line only) and
+  `docs/architecture/system-map.md`.
+
+### Files changed
+
+- `packages/core/src/behavior.ts`, `behavior.test.ts` (new)
+- `packages/core/src/domain.ts`, `domain.test.ts`
+- `packages/core/src/harness.ts`, `harness.test.ts`
+- `packages/core/src/index.ts`
+- `apps/example-agent/agent/lib/agent-config.ts` (new)
+- `apps/example-agent/agent/agent.ts`
+- `apps/example-agent/src/behavior.ts`, `src/behavior.test.ts` (new)
+- `apps/example-agent/src/domain/index.ts`
+- `apps/example-agent/src/policies/no-proceed-with-open-risk-flags.ts`
+- `docs/contracts/behavior-fingerprint.md` (new), `docs/contracts/README.md`,
+  `capability-registry.md`, `harness.md`, `domain-definition.md`, `trace-event.md`
+- `docs/decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md` (new),
+  `docs/decisions/README.md`
+- `docs/architecture/system-map.md`
+- `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (the M2-T8 subsection and its one
+  acceptance bullet)
+
+### Verification
+
+- `pnpm vitest run --project unit packages/core apps/example-agent` — PASS (477 tests, 22 files).
+- `pnpm check` — PASS (691 tests across 40 files; format, lint, typecheck, test, build,
+  check:handoff), run after the concurrent M2-T9 and M2-T11 work had landed in the same tree.
+- `pnpm example:run:mock` — PASS, exit 0, `"status": "completed"`. All six events of
+  `apps/eve-fixture-agent/.harness/traces/01a0bcaf-7770-7000-88b4-f95db68b56c2.jsonl` carry the
+  same non-null `sha256:c0ab81341295c36655b5c4614d9352bd29deec74c7d75f65c82b8dd33f0f8c2d`, and
+  `run.started` carries all eight component digests. First line:
+
+  ```json
+  {"attempt":1,"behaviorFingerprint":"sha256:c0ab81341295c36655b5c4614d9352bd29deec74c7d75f65c82b8dd33f0f8c2d","error":null,"id":"01a0bcaf-7772-7000-bc45-2ca989646249","latencyMs":null,"node":null,"parentId":null,"payload":{"attempt":1,"behavior":{"algorithm":"sha256","components":{"instructions":"sha256:d57880944e71ac43a61c6b749e702f0067256c4ceaa14d9cb4b9691569977070","model":"sha256:fad1b415f49984cc1802629c9ff6688ab85a85ff949b5c4db49b0a5abde39b1b","policy":"sha256:a8b6b14f75fb81d9144f6182f1d94210e2e4af7afc38870b62c7632171f3ab7a","schemas":"sha256:11a3258dbc9b7351c6df986de2b7b4a96bb6c11ec14605db154082e6062f9f3d","skills":"sha256:d46c489df163105874be323e980c7c9f9dcda8700b7ddba0e884b44cf33266e7","sop":"sha256:720f6cb18cc5ec619ed0f92da4dbd30930c0b2cf174a4a3b0f18b0f25599431f","tools":"sha256:021f9fa5a44613ec60d139d04ca046c1be21f96cc6a19f2b1d11d2238796fdba","workflowIr":"sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"},"scheme":1},"domain":"vendor-triage","domainVersion":"1.0.0","jobId":"01a0bcaf-776f-7000-ba89-47d1827f526f","jobType":"vendor-triage"},"runId":"01a0bcaf-7770-7000-88b4-f95db68b56c2","sequence":0,"timestamp":"2026-09-20T02:40:11.122Z","type":"run.started","usage":null,"version":1}
+  ```
+
+- **The acceptance criterion, end to end** — PASS. One line appended to
+  `apps/example-agent/agent/instructions.md`, then `pnpm example:run:mock` again: the composite
+  moved to `sha256:c9b02cd6d1b4436ba06eacb575af5589c61214108282fac2b7167d8a4f465e35`, the
+  `instructions` component moved to `sha256:f5efab73610e6ae1044664308daab599da84f4d45d1db6692ba551c43d8a0cb3`,
+  and `sop` stayed `sha256:720f6cb1…`. The edit was reverted with
+  `git checkout -- apps/example-agent/agent/instructions.md`, and a third run returned the
+  composite to `sha256:c0ab8134…`, which is also the evidence that the revert was complete.
+
+### Decisions / deviations
+
+All recorded in **ADR-0034**. The ones that are choices rather than restatements of the task brief:
+
+- **`BehaviorFingerprint` carries a `scheme` number, and it is hashed into the composite.** The
+  brief sketched `{ fingerprint, components, algorithm }`. Adding, removing or redefining a
+  component changes what a composite means, and the `sha256:` prefix cannot signal that because the
+  algorithm would be unchanged. Hashing the scheme makes such a change move every composite at once
+  and say why, while leaving the component digests comparable across it.
+- **The example's `model` component is the whole authored agent configuration**, not only the model
+  id. eve's `defineAgent` also takes `reasoning`, `compaction`, `limits` and `defaultTools`, all
+  behavior-affecting; hashing the constant `agent.ts` actually passes means setting one of them is
+  fingerprinted immediately rather than after someone remembers to widen the descriptor.
+- **The shared constant is `agent/lib/agent-config.ts`, not `agent/lib/model-config.ts`**, for the
+  same reason: it is the agent's configuration, and naming it after the model would misdescribe it.
+- **`src/behavior.ts` reads eve's version from `eve/package.json` rather than importing
+  `@internal/runtime-eve`.** Importing the adapter for one constant would pull `eve` into every
+  module that imports the domain, including the fake-runtime unit tests, and `src/domain/index.ts`
+  has imported only `@internal/core` since M1. Reading a declared export-map subpath is the same
+  technique `eveVersion()` and `src/dependency-pins.test.ts` already use.
+- **The example's skill loader throws on a file it cannot read** (a `defineSkill` module) rather
+  than skipping it. A skill silently missing from the descriptor is a behavior change the
+  fingerprint would miss, which is the failure mode this task exists to prevent; refusing to start
+  the run is the recoverable direction.
+- **`harness.run()` now throws in a second case.** A `behavior` loader that throws, or a descriptor
+  `createBehaviorFingerprint` rejects, propagates rather than degrading to `null`. It belongs with
+  input validation: both happen while the run is being prepared, so nothing has been spent and
+  there is no run to report against. Recording the run with a `null` fingerprint would manufacture
+  the unfingerprinted run invariant 4 forbids at the moment the system already knows something is
+  wrong.
+- **The per-run budget is deliberately not a policy threshold.** A caller can override a budget per
+  run, so including it would report two runs of one behavior as two behaviors. The job records it.
+- **ADR-0032's open question is closed rather than left open.** `Job.contracts.sop` stays a bare,
+  unversioned identifier: the content digest is the version, and a hand-maintained version field is
+  the one that goes stale silently. `JobContracts` is unchanged.
+- **One unrelated one-line fix in a file this task already edited:** `docs/decisions/README.md`'s
+  index table had no row for ADR-0032 (an M2-T2 omission; the prose paragraph was there). Added
+  alongside the 0034 row rather than left inconsistent in the table being edited.
+
+### Known issues / blockers
+
+- **A mock run's fingerprint describes the example agent, not the fixture agent.** `src/run.ts`
+  runs one domain against either target and the descriptor belongs to the domain. Acceptable for a
+  credential-free smoke path; **M2-T5's run ledger should record which target ran**. Recorded as an
+  open question in ADR-0034.
+- **A domain's descriptor is only as complete as the domain makes it.** Nothing can check that an
+  application declared everything its behavior depends on. A future `@internal/runtime-eve` helper
+  that builds a descriptor from an eve project's authored slots is the obvious mitigation; not
+  built, because one worked example is not yet a pattern.
+- **The example re-reads its authored files on every run**, deliberately, so an edit between two
+  runs shows up. A domain with many or large skills will want a cache, and the invalidation rule is
+  undecided.
+- `pnpm example:run` against a live Gateway model is still unverified here: no credential.
+
+### Next exact step
+
+M2-T5's Supabase schema should persist `behavior_fingerprint` per trace event and carry the
+component digests plus **which target ran** on the run row, which is the one open question this
+task recorded rather than answered.

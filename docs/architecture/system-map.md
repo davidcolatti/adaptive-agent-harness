@@ -8,12 +8,15 @@ related:
   - docs/decisions/0025-application-packages-may-author-eve-agents-directly.md
   - docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md
   - docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md
+  - docs/decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md
   - docs/contracts/README.md
   - docs/research/vercel/2026-09-19-m1-eve-ai-sdk-install-survey.md
   - docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md
   - docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md
   - docs/architecture/runtime.md
   - docs/decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md
+  - docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md
+  - docs/runbooks/supabase-local.md
 implementation:
   - apps/eve-fixture-agent
   - apps/example-agent
@@ -22,6 +25,8 @@ implementation:
   - packages/config
   - packages/runtime-eve
   - packages/runtime-ai-sdk
+  - packages/storage-supabase
+  - supabase
   - tests/architecture/boundaries.ts
 ---
 
@@ -223,6 +228,16 @@ Six packages and two applications exist. Everything else in the repository layou
     encoding hashed with SHA-256 via the Node built-in `node:crypto`
     ([ADR-0029](../decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md)).
     Documented in [`../contracts/capability-registry.md`](../contracts/capability-registry.md).
+  - The **behavior fingerprint** (M2-T8): `BehaviorDescriptor`, one field per behavior-affecting
+    input the build plan names, and `createBehaviorFingerprint()`, which returns one `sha256:`
+    digest per component plus the composite, so a reader can say *which* component changed rather
+    than only that something did. The descriptor is supplied by the domain
+    (`DomainDefinition.behavior`) because the eve adapter never reads an agent's files (ADR-0028)
+    and the application authors the agent (ADR-0025); `createHarness()` resolves it once per run
+    before `run.started`, stamps the composite on every trace event and on the run result, and
+    writes the component digests into the `run.started` payload
+    ([ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md)).
+    Documented in [`../contracts/behavior-fingerprint.md`](../contracts/behavior-fingerprint.md).
 
   Of build plan section 5, `DecisionEngine` (M3) is still to come and `FallbackContext` waits for
   M4. The package still declares no third-party dependency and must keep none; `node:crypto` is a
@@ -292,6 +307,33 @@ Six packages and two applications exist. Everything else in the repository layou
 
   It authors two tools: `echo_fixture`, which the fixture jobs grant, and `forbidden_tool`, which
   they deliberately do not.
+- `packages/storage-supabase` (`@internal/storage-supabase`) was created by M2-T11 and holds
+  exactly one thing: `src/database.types.ts`, the TypeScript types generated from the local
+  Supabase database. **There is no adapter in it yet.** M2-T5 adds the `Storage` port and the
+  Supabase `TraceSink` that sits behind `createBufferedTraceWriter()`, and decides then whether the
+  package declares `@supabase/supabase-js`; nothing here calls Supabase at runtime, so that
+  dependency is deliberately not installed.
+
+  It was already a declared adapter in `BOUNDARY_RULES.adapterPackages` before it existed, which is
+  why M2-T11 changed nothing in `tests/architecture/boundaries.ts`: the boundary was reserved ahead
+  of the package, exactly as intended. It is therefore the only workspace package permitted to
+  depend on `@supabase/*`, and AGENTS.md's "no direct database access outside
+  `packages/storage-supabase`" is the prose form of the same rule.
+
+  `src/database.types.ts` is **generated and never hand-edited** (AGENTS.md rule 12). It carries no
+  hand-written header on purpose: a header would be deleted by the next generation and would then
+  register as drift in the CI job whose whole purpose is to detect drift. `biome.json` carries an
+  `overrides` entry disabling the **formatter** for that one path, because the generator's output
+  omits the semicolons Biome's formatter would add; linting still applies to it.
+- `supabase/` at the repository root is the committed local-database definition, added by M2-T11:
+  `config.toml` (the CLI's 2.117.0 defaults, with `project_id = "adaptive-agent-harness"`),
+  `migrations/` (empty of migrations until M2-T6, with a `README.md` explaining that), `seed.sql`
+  (empty until there is a schema to seed), and the CLI's own `.gitignore` for `.temp` and
+  `.branches`. The pinned CLI (`supabase@2.117.0`, a root dev dependency) is driven only through
+  the four `pnpm supabase:*` scripts, `supabase db reset` is the reproducibility gate, and the
+  `supabase-types` CI job fails on generated-type drift. Decided in
+  [ADR-0033](../decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md),
+  operated per [`../runbooks/supabase-local.md`](../runbooks/supabase-local.md).
 
 ### Package status
 
@@ -308,8 +350,8 @@ plan's milestone sections.
 | `packages/registry` | planned (M5), **workflow** registry; the *capability* registry is in `packages/core` (M1-T9) |
 | `apps/example-agent` | exists (M1-T2 eve project, M1-T3 domain, M1-T9 capabilities, M1-T6 `src/run.ts`; runs through `createHarness()` with either runtime) |
 | `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
-| `packages/trace` | exists (M2-T4): `createBufferedTraceWriter()`, `TraceSink`, and the in-memory and JSONL sinks |
-| `packages/storage-supabase` | planned (M2) |
+| `packages/trace` | exists (M2-T4, M2-T9): `createBufferedTraceWriter()`, `TraceSink`, the in-memory and JSONL sinks, and the redaction layer above them |
+| `packages/storage-supabase` | exists (M2-T11, the generated `Database` type only); the `Storage` adapter and the Supabase `TraceSink` are M2-T5 |
 | `packages/observability` | planned (M2) |
 | `packages/decision-jev` | planned (M3) |
 | `packages/workflow` | planned (M4) |
@@ -343,15 +385,31 @@ still calls nothing. The source files in the workspace packages are:
   `harness.ts`. Distinct from `identifiers.ts`, which rules on the `{ id, version }` names a
   human writes rather than the ids a machine mints. M2-T2 added `entityIdTimestamp()` here, which reads
   a job's creation time out of its id and is why no entity carries a `createdAt` field.
+- `packages/core/src/behavior.ts` and `behavior.test.ts` (M2-T8): the `BehaviorDescriptor` type,
+  `createBehaviorFingerprint()`, `resolveBehaviorFingerprint()` and the two comparisons M6 and M7
+  will make, `behaviorFingerprintsMatch()` and `diffBehaviorComponents()`. It builds on
+  `fingerprint.ts` and changes nothing about it: ADR-0029 owns *how* a digest is made, ADR-0034
+  owns *what* goes in. Wired through `domain.ts` (the optional `behavior` source) and `harness.ts`
+  (resolution before the first event).
 - `packages/core/src/freeze.ts` and `freeze.test.ts` (M2-T2): `deepFreeze()`, the whole of the
   harness's freezing surface. It is what makes "jobs are immutable after execution begins" reach a
   nested budget or tool grant, and it recurses into arrays and plain objects only, so a job is
   deeply immutable exactly as far as it is JSON-representable (ADR-0032).
-- `packages/trace/src/index.ts`, `buffered-trace-writer.ts`, `sink.ts`, `jsonl-sink.ts` and the
-  two co-located `*.test.ts` files (M2-T4): the buffered, order-preserving `TraceWriter`, the
+- `packages/trace/src/index.ts`, `buffered-trace-writer.ts`, `sink.ts`, `jsonl-sink.ts` and their
+  co-located `*.test.ts` files (M2-T4): the buffered, order-preserving `TraceWriter`, the
   `TraceSink` interface beneath it, and the in-memory and JSONL sinks. `node:fs/promises` and
   `node:path` only; no third-party dependency. M2-T5's Supabase sink is another `TraceSink`, and
   belongs in `packages/storage-supabase` rather than here.
+- `packages/trace/src/redaction.ts`, `secret-patterns.ts`, `redacting-trace-writer.ts` and their
+  two co-located `*.test.ts` files (M2-T9): the pure redactor over the JSON value model, the
+  documented default secret-pattern set, and the `TraceWriter` decorator that applies it. The
+  decorator sits **above** the buffered writer, so nothing unredacted is ever buffered or
+  persisted, and every sink behind it inherits the guarantee
+  ([ADR-0035](../decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md),
+  [`../contracts/redaction.md`](../contracts/redaction.md)). No third-party dependency here either:
+  the redactor uses `@internal/core` types and the JavaScript standard library only.
+- `packages/storage-supabase/src/index.ts` (one re-export of the generated `Database` type) and
+  `src/database.types.ts` (generated by `pnpm supabase:types`, committed, never hand-edited)
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
@@ -366,12 +424,16 @@ still calls nothing. The source files in the workspace packages are:
 - `packages/runtime-eve/src/testing/index.ts` and `testing/dev-server.ts` (the `./testing`
   subpath: `startEveDevServer()`)
 - `packages/runtime-ai-sdk/src/index.ts` and `index.test.ts`
-- `apps/example-agent/agent/agent.ts`, `agent/tools/lookup_vendor_evidence.ts`,
+- `apps/example-agent/agent/agent.ts`, `agent/lib/agent-config.ts` (M2-T8: the authored runtime
+  configuration as one constant, so `agent.ts` and `src/behavior.ts` cannot disagree about which
+  model the agent runs), `agent/tools/lookup_vendor_evidence.ts`,
   `agent/tools/load_skill.ts` (a one-line re-export restoring the one default tool the skill
   needs, after `defaultTools: false` removed all eight), `agent/lib/vendor-fixtures.ts`, `agent/lib/vendor-evidence.ts` and its test,
   `src/domain/schemas.ts`, `src/domain/procurement-sop.ts`, `src/domain/index.ts`,
   `src/domain/domain.test.ts` and `src/domain/harness.test.ts`, `src/capabilities.ts` with its
-  test, `src/handlers/detect-payment-detail-change.ts` and
+  test, `src/behavior.ts` with its test (M2-T8: the domain's `BehaviorSource`, gathering the
+  instructions, skills, tools, schemas, model configuration and policy thresholds it runs under),
+  `src/handlers/detect-payment-detail-change.ts` and
   `src/policies/no-proceed-with-open-risk-flags.ts` with theirs, `src/run.ts` (the
   `pnpm example:run` entrypoint), and `src/dependency-pins.test.ts`
 - `apps/eve-fixture-agent/agent/agent.ts` (the scripted `mockModel`), `agent/instructions.md`,
@@ -384,7 +446,8 @@ compiled by `eve`, not by anything in this workspace, and none of them calls a m
 agent runtime, no model call and no Supabase dependency anywhere in the workspace. `@internal/core` still declares no runtime dependency; its only devDependencies are
 `@internal/config` for the tsconfig bases and `vitest` for its co-located tests. The supporting TypeScript
 outside the packages is tooling only: `scripts/verify-handoff.ts` (and its test),
-`tests/architecture/`, and `tests/toolchain/`.
+`tests/architecture/`, and `tests/toolchain/` (the `@internal/source` condition test and, from
+M2-T11, the Supabase CLI pin test).
 
 ## How the boundary is enforced today
 

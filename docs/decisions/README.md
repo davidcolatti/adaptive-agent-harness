@@ -82,6 +82,10 @@ and related ADRs that motivated it.
 | [0029](0029-canonical-json-and-sha-256-behavior-fingerprints.md) | Canonical JSON (RFC 8785-style) and `sha256:`-prefixed behavior fingerprints | accepted |
 | [0030](0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md) | Sortable UUIDv7 entity identifiers, owned rather than delegated to Node | accepted |
 | [0031](0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md) | Trace event taxonomy, recorder-owned sequencing, and the buffered writer | accepted |
+| [0032](0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md) | Jobs are deeply immutable, the effective job is the job, and a job carries no clock | accepted |
+| [0033](0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md) | The Supabase CLI is a pinned dev dependency, and `db reset` is the reproducibility gate | accepted |
+| [0034](0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md) | The behavior fingerprint is component-wise, hashes content not source, and is supplied by the domain | accepted |
+| [0035](0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md) | Redaction is a `TraceWriter` decorator placed before buffering | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -162,3 +166,54 @@ turns a stored value back into a job with every problem reported at a path, and 
 part of a job** because it belongs to a run, which is the question ADR-0030 explicitly deferred to
 M2-T2. It is implemented in `packages/core/src/job.ts`, `freeze.ts`, `json.ts`, `ids.ts`,
 `domain.ts` and `harness.ts`, and documented in `docs/contracts/job.md`.
+
+Entry 0033 records M2-T11, the local Supabase environment: the CLI is a **root dev dependency
+pinned exactly** (2.117.0) rather than a global install, so a contributor's Homebrew CLI cannot
+produce a different database from identical committed files, and ADR-0024's installed-version
+assertion test guards it. **`supabase db reset` is the reproducibility gate**, meaning from an
+empty database and the committed migrations plus seed and nothing else.
+`packages/storage-supabase/src/database.types.ts` is **generated, committed and CI-checked**: the
+`supabase-types` job resets, regenerates and runs `git diff --exit-code`, so a migration landing
+without its regenerated types turns red on the commit that caused it. Local URLs and keys are
+captured into a git-ignored `.env.local` and never written to a tracked file, with no exemption
+for the well-known local demo keys. Its alternatives section records why a global CLI, a plain
+Postgres in Docker Compose, and a hosted project were each rejected.
+
+Entry 0034 records M2-T8, the behavior fingerprint, which is what finally makes north-star
+invariant 4 ("every behavior-affecting version is fingerprinted") true of a real run. It extends
+what ADR-0029 hashes, not how. The build plan's eight inputs become one field each on a closed
+`BehaviorDescriptor`, and `createBehaviorFingerprint()` returns **one digest per component plus the
+composite**, because "the SOP changed and nothing else did" is a finding M6's replay and M7's batch
+selector can act on and "the behavior changed" is not. A `scheme` number is hashed into the
+composite so that adding a ninth component is a visible change rather than a silent one. Content is
+hashed, never executable source (ADR-0029's reason, restated) and never a timestamp: the descriptor
+type is closed, so there is nowhere to put one, and a type-level test pins that. Texts are
+normalized for line endings only, because a CRLF checkout is not a behavior change while an extra
+blank line in an instruction file is; `skills`, `tools` and `schemas` are sorted, so declaration
+order is not behavior. **The domain supplies the descriptor**, because ADR-0028's URL-only eve
+adapter cannot read an agent's files and ADR-0025 makes the application their author;
+`createHarness()` resolves it once per run before `run.started`, stamps the composite on every
+event and on the result, and writes the component digests into the `run.started` payload. A domain
+that declares none records `null`, and a descriptor that cannot be gathered fails the run rather
+than being recorded as `null`. It also closes ADR-0032's open question: `contracts.sop` stays an
+unversioned identifier, because the content hash is the version and a hand-maintained one would go
+stale silently. It is implemented in `packages/core/src/behavior.ts`, `domain.ts` and `harness.ts`,
+with the example's descriptor in `apps/example-agent/src/behavior.ts`, and documented in
+`docs/contracts/behavior-fingerprint.md`.
+
+Entry 0035 records M2-T9, secret and sensitive-data redaction, and answers the question the build
+plan's "redact before persistence" leaves open: *where*. Redaction is a pure function over the JSON
+value model in `@internal/trace`, applied by a `TraceWriter` decorator that sits **above the
+buffered writer** and below the recorder, so an unredacted event is never held in memory, never
+retried from the buffer after a sink rejection, and never written by a sink added later that forgot
+to redact; every sink behind it, including M2-T5's Supabase sink, inherits the guarantee without
+implementing anything. The four mechanisms the plan names are a `**`/`*` glob path language over the
+JSON tree, a documented secret-pattern set that replaces only the span it matched, a header-name set
+applied under any `headers` object, and per-tool sanitizer hooks keyed by `payload.tool` that run
+before the generic rules and whose output still goes through them. A removed value becomes
+`[REDACTED:<rule-name>]`, naming the rule so a stored trace says what was taken and why. There is
+deliberately **no high-entropy heuristic** in the default set, because every identifier the harness
+writes is high entropy on purpose and such a rule would redact the trace's own structure. It is
+implemented in `packages/trace/src/redaction.ts`, `secret-patterns.ts` and
+`redacting-trace-writer.ts`, wired in `apps/example-agent/src/run.ts`, and documented in
+`docs/contracts/redaction.md`.

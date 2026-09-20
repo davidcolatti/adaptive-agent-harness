@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type { BehaviorDescriptor, BehaviorSource } from "./behavior.js";
 import { type CreateJobInput, type DomainDefinition, defineDomain } from "./domain.js";
 import { ValidationError } from "./errors.js";
 import type { Job } from "./job.js";
@@ -131,6 +132,48 @@ describe("defineDomain", () => {
         createJob: undefined as unknown as (input: TriageInput) => CreateJobInput<TriageInput>,
       }),
     ).toThrow(ValidationError);
+  });
+
+  // The behavior source (M2-T8, ADR-0034). `defineDomain` checks its shape and
+  // nothing more: what a descriptor must contain is
+  // `createBehaviorFingerprint`'s rule, and for the loader form there is
+  // nothing to inspect until a run calls it.
+  it("leaves `behavior` absent when the domain declares none", () => {
+    expect(define().behavior).toBeUndefined();
+    expect("behavior" in define()).toBe(false);
+  });
+
+  it("carries a behavior descriptor through unchanged", () => {
+    const behavior: BehaviorDescriptor = {
+      instructions: "Triage.",
+      sop: "",
+      skills: [],
+      tools: [],
+      model: {},
+      schemas: [],
+      workflowIr: null,
+      policy: {},
+    };
+
+    expect(define({ behavior }).behavior).toBe(behavior);
+  });
+
+  it("carries a behavior loader through unchanged", () => {
+    const loader = (): BehaviorDescriptor => {
+      throw new Error("not called by defineDomain");
+    };
+
+    expect(define({ behavior: loader }).behavior).toBe(loader);
+  });
+
+  it("rejects a `behavior` that is neither a descriptor nor a function", () => {
+    try {
+      define({ behavior: "agent/instructions.md" as unknown as BehaviorSource });
+      expect.unreachable("expected defineDomain to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.path).toEqual(["behavior"]);
+    }
   });
 });
 

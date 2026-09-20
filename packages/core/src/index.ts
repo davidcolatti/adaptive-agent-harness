@@ -6,8 +6,9 @@
 // `DomainDefinition` and `defineDomain()` (M1-T3), `AgentRuntime` with
 // `AgentExecution` (M1-T5), `createHarness()` (M1-T4), and the capability
 // registry with its canonical-JSON fingerprint scheme (M1-T9). Milestone 2 adds
-// the sortable entity-ID scheme and its twelve brands (M2-T1), and the
-// finalized `Job` contract with `deepFreeze` and `parseJob` (M2-T2).
+// the sortable entity-ID scheme and its twelve brands (M2-T1), the
+// finalized `Job` contract with `deepFreeze` and `parseJob` (M2-T2), and the
+// behavior fingerprint (M2-T8).
 //
 // Re-exports are listed by name rather than starred, so this file states the
 // package's public surface and a symbol becomes public deliberately. Their
@@ -28,6 +29,32 @@ export type {
   CompletedAgentExecution,
   FailedAgentExecution,
 } from "./agent-runtime.js";
+
+// The behavior fingerprint (M2-T8; ADR-0034). What is hashed to answer "is this
+// the same behavior?": instructions, SOP, skills, tool definitions, model
+// configuration, schemas, workflow IR and policy thresholds, component by
+// component. ADR-0029 owns *how* it is hashed.
+export type {
+  BehaviorComponentName,
+  BehaviorDescriptor,
+  BehaviorFingerprint,
+  BehaviorFingerprintAlgorithm,
+  BehaviorFingerprintScheme,
+  BehaviorSchema,
+  BehaviorSkill,
+  BehaviorSource,
+  BehaviorTool,
+} from "./behavior.js";
+export {
+  BEHAVIOR_COMPONENT_NAMES,
+  BEHAVIOR_FINGERPRINT_ALGORITHM,
+  BEHAVIOR_FINGERPRINT_SCHEME,
+  behaviorFingerprintPayload,
+  behaviorFingerprintsMatch,
+  createBehaviorFingerprint,
+  diffBehaviorComponents,
+  resolveBehaviorFingerprint,
+} from "./behavior.js";
 
 // Capability registry (M1-T9). AD-015; ADR-0029 for the fingerprint scheme.
 export type {

@@ -6554,7 +6554,7 @@ Then read `docs/contracts/workflow-ir.md` and ADR-0038.
 
 **Status:** started
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -6614,7 +6614,7 @@ Implement `packages/workflow/src/runtime/**`, then ADR-0040,
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent, M4 Phase 2)
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -6672,7 +6672,7 @@ Implement `packages/workflow/src/validate/**` and `compile.ts`, then the co-loca
 
 **Status:** started
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -6753,7 +6753,7 @@ Implement `packages/workflow/src/dsl/`.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, implementer subagent, M4 Phase 2)
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -6890,7 +6890,7 @@ Then M4-T10 can author the real vendor workflow against `compileWorkflow()`.
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -7098,7 +7098,7 @@ export PATH="$HOME/.n/bin:$PATH" && pnpm vitest run --project unit packages/work
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -7246,13 +7246,17 @@ resolves something it left open.
 - **The package's public surface is the runtime's contract, not its parts.**
   `index.ts` exports `createWorkflowRuntime`, its option and result types, the
   three ports with their request/record types, the two in-memory port factories,
-  `NodeExecutionRecord`, and the two idempotency-key functions. The binding
-  evaluator, the budget ledger and the grant assertions stay module-private: they
-  are how the interpreter is built rather than what a caller needs, and the
-  repository's rule is that a symbol becomes public deliberately. The two key
-  functions are the exception because the contract doc states their formula, so
-  something outside the package will eventually derive the same key. Tests import
-  the rest by module path.
+  `NodeExecutionRecord`, the two idempotency-key functions and
+  `fallbackContextPayload`. The binding evaluator, the budget ledger and the
+  grant assertions stay module-private, along with `IdempotencyCoordinates`,
+  `BindingScope`, `BindingItem`, `BudgetLedger` and `BudgetTotals`: they are how
+  the interpreter is built rather than what a caller needs, and the repository's
+  rule is that a symbol becomes public deliberately. The key functions are public
+  because the contract doc states their formula, and they take a structural
+  argument so a caller writes an object literal rather than naming the
+  coordinates type; `fallbackContextPayload` is public because M5's router has to
+  read an escalation's envelope as JSON. Everything else is reachable from
+  `./runtime/index.js`, which is how this package's own tests import it.
 - **Two idempotency keys, not one.** The build plan's formula contains the
   attempt; a retry is by definition a different attempt, so a protection key
   built from it would differ on every retry and never match, and M4-T7's own
@@ -7365,7 +7369,7 @@ export PATH="$HOME/.n/bin:$PATH" && pnpm check
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `0d12b43`
 
 ### Goal
 
@@ -7489,3 +7493,58 @@ with this DSL. One addition to what it needs to know: do **not** write
 `permissions` on a `call` node unless a scope is needed — the DSL derives the
 grant the validator wants — and remember that a compiled workflow needs a
 reachable `escalate` node.
+
+## 2026-09-20 16:30 — M4-T10 — Hand-authored compiled vendor workflow and M4 acceptance verification
+
+**Status:** started
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Author Milestone 4's vendor workflow for real, in `apps/example-agent`, with the
+typed DSL (M4-T5), against the domain's own capability registry (M1-T9), and run
+it through `createHarness()` on the local deterministic runtime (M4-T6). Then
+verify all eight of Milestone 4's acceptance criteria with dated evidence in the
+status file.
+
+```text
+jev classify ──┬── clear     → code finalize                      (→ vendor-triage.output)
+               ├── research  → agent research → jev verify → code decide
+               └── default   → escalate full-agent
+```
+
+The two Jev questions are answered by a deterministic fixture
+`WorkflowDecisionPort`, a documented placeholder until M3 lands a
+`DecisionEngine`; M4-T3 and the M4 status file both already say a fake decision
+port stands in until then.
+
+### Implementation references
+
+- package/version: no new third-party dependency. The one dependency added is
+  the workspace package `@internal/workflow` (`workspace:*`), which
+  `apps/example-agent` may depend on because it is an internal harness package,
+  not a third-party one; `tests/architecture/boundaries.ts` bans `workflow` (the
+  npm package, Vercel's durable primitive), not `@internal/workflow`.
+- installed docs read: not applicable; nothing framework-facing is touched. The
+  `eve` surface used (`startEveDevServer`, `EveAgentRuntime`) is unchanged from
+  M1-T6 and is reached through `@internal/runtime-eve`.
+- public types/exports inspected: `@internal/workflow`'s `src/index.ts` — the
+  whole public surface — plus `packages/workflow/src/dsl/vendor-triage.test.ts`
+  (the same graph with placeholder refs), `runtime/workflow-runtime.ts`
+  (`createWorkflowRuntime`, `asAgentRuntime`, `WorkflowDecisionPort`,
+  `NodeExecutionRecord`), `runtime/ports.ts`, `compiled.ts`, `compile.ts`, and
+  `validate/capabilities.ts` (the manifest-schema-equality rule).
+- selected documented pattern: `docs/contracts/workflow-dsl.md` (the authoring
+  surface, defaults, derived bindings and schemas),
+  `docs/architecture/workflow-runtime.md`, ADR-0039/0040/0041.
+
+### Work completed
+
+(in progress)
+
+### Next exact step
+
+Register the new schemas and handlers in `src/capabilities.ts`, author
+`src/workflow/vendor-triage-workflow.ts`, then the fixture decision port and the
+tests.

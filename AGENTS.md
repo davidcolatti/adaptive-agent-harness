@@ -104,7 +104,8 @@ adaptive-agent-harness/
 │   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
 │   ├── storage-supabase/        # Supabase adapter (declared adapter); generated database.types.ts (M2-T11)
 │   ├── testing/                 # shared test helpers; fake clock, fake AgentRuntime
-│   └── trace/                   # buffered order-preserving TraceWriter + sinks (M2-T4)
+│   ├── trace/                   # buffered order-preserving TraceWriter + sinks (M2-T4)
+│   └── workflow/                # compileWorkflow/validateWorkflow, typed DSL, local runtime (M4)
 ├── docs/
 │   ├── README.md
 │   ├── context/current-state.md
@@ -150,7 +151,7 @@ yet built (**planned**):
 ```
 apps/playground/                                              (planned, unscheduled)
 packages/decision-jev/                                        (planned, M3)
-packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
+packages/registry/, replay/, evals/                           (planned, M4-M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)
 ```
 
@@ -588,7 +589,26 @@ store that fails makes `harness.run()` throw `StorageError`. ADR-0037 records
 M2-T10: the harness CLI is built on Node's `util.parseArgs` with no
 dependency, lives in `packages/observability` beside the inspector for now,
 and reads only through the `Storage` port or a trace-only JSONL source.
-The next free number is 0038.
+ADR-0038 records M4-T1/T2: the workflow IR is a core contract —
+`parseWorkflowDefinition()` is its strict read boundary, in the `parseJob()`
+style, and node input flows through a closed five-case `Binding` data-flow
+model, not an expression language — while `@internal/workflow` implements
+validation, the typed DSL and the local runtime over it. ADR-0039 records
+M4-T4/T9: workflow validation is a graph model with exactly one owner per
+node (successor edges vs. containment), schema compatibility is reference
+equality on `id@version` rather than structural comparison, and only `agent`
+and `call` nodes may carry tool grants. ADR-0040 records M4-T6/T7/T8: the
+local runtime interprets a `CompiledWorkflow` and nothing else, records node
+input/output into the run's existing trace (amending ADR-0031's
+identity-only payload rule for `node.*` events only), derives two
+idempotency keys where one is a prefix of the other, and a node that
+exhausts its retries or hits another fallback condition escalates rather
+than fails, with `asAgentRuntime()` mapping that escalation to a
+`WorkflowError` as a stopgap until M5. ADR-0041 records M4-T5: the typed DSL
+is a wiring front end that parses its own IR through
+`parseWorkflowDefinition()`, never resolves capabilities or validates the
+graph itself, and offers grants only on `agent`/`call`, matching ADR-0039.
+The next free number is 0042.
 
 ## Scope discipline
 

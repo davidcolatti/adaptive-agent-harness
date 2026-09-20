@@ -4,18 +4,19 @@
 > session. History lives in `docs/progress/WORKLOG.md`; frozen milestone
 > records live in `docs/progress/milestones/`.
 
-**Last updated:** 2026-09-20 (Milestone 2 complete)
-**Current milestone:** M2 is complete. Next is **M4, Workflow IR + Local
-Runtime** (the critical path), with **M3, Jev**, able to proceed beside it —
-both are blocked only by M2, which is now done.
-**Current task:** Not started. First create the status file for whichever
-milestone starts (M4 recommended first, since it is the critical path and M3
-can run beside it), from `docs/milestones/build-plan.md`, in the M2 status
-file's shape.
-**Last commit SHA:** `8361a42` (M2 close-out docs); M2-T10 code: `5eaba18` (M2-T10: local run inspector and the first
-harness CLI command). This handoff's own docs commit follows it. Earlier M2
-commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
-`02b1261`. Run `git log --oneline`.
+**Last updated:** 2026-09-20 (Milestone 4 started)
+**Current milestone:** M4, Workflow IR + Local Runtime, is in progress (the
+critical path). M3, Jev, remains unblocked and can start beside it at any
+point; both were blocked only by M2, which is complete.
+**Current task:** M4-T1 through M4-T9 are `completed`. M4-T10 (the
+hand-authored vendor workflow in `apps/example-agent`) and acceptance
+verification are in progress; it is the last M4 task.
+**Last commit SHA:** `0d12b43` (M4-T3, T4, T5, T6, T7, T8, T9: `compileWorkflow`/
+`validateWorkflow`, the typed DSL, the local runtime; ADRs 0039-0041). Earlier:
+`4c03e2e` (M4-T1/M4-T2: serializable workflow IR and node contracts),
+`8361a42` (M2 close-out docs), M2-T10 code: `5eaba18` (M2-T10: local run
+inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
+`62548d6`, `1f629bf`, `5721f7d`, `02b1261`. Run `git log --oneline`.
 
 ## Completed milestones / tasks
 
@@ -30,7 +31,7 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
 ## What works now
 
 - `pnpm install --frozen-lockfile` and `pnpm check` pass (2026-09-20, after
-  M2-T10). Tests: 876 passed, 43 skipped across 53 files (`unit` +
+  Phase 2). Tests: 1146 passed, 43 skipped across 62 files (`unit` +
   `contract` projects); the skipped tests are the Supabase legs of the
   storage and inspector contract suites, which skip without
   `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` set.
@@ -50,7 +51,7 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
   path. Displays job, route, timeline, tool/model/Jev calls, errors, result,
   cost and fingerprints from durable evidence alone — no application log is
   consulted. Verified against real Supabase and against a JSONL-only trace.
-- Ten workspace packages, plus two apps:
+- Eleven workspace packages, plus two apps:
   - `@internal/core` (zero third-party deps; `node:crypto` only): JSON model,
     `deepFreeze`, ids (twelve branded types, generators, `parseEntityId`,
     `entityIdTimestampMs`/`entityIdTimestamp`), `ExecutionContext` (`trace` is
@@ -63,7 +64,20 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
     capability registry + manifest, `canonicalJson` + `fingerprint`,
     `createBehaviorFingerprint`, `BehaviorDescriptor`, and `Storage`,
     `RunRecord`, `RunStart`, `RunFinish`, `RunFilter`, `RunPage`, `TracePage`,
-    `parseRunRecord`, `CreateHarnessOptions.storage`/`.target`.
+    `parseRunRecord`, `CreateHarnessOptions.storage`/`.target`. New in
+    M4-T1/M4-T2: `WorkflowDefinition`, `WORKFLOW_SCHEMA_VERSION`,
+    `FallbackReason`/`FALLBACK_REASONS`/`FallbackContext`,
+    `parseWorkflowDefinition`/`isWorkflowDefinition`, `canonicalWorkflowIr`,
+    `workflowFingerprint`, `WorkflowNode` (eleven node types), `Binding`
+    (five-case data-flow model), `NodeId`, `RetryPolicy`, `NodeProtection`.
+  - `@internal/workflow` (M4-T1, filled out in Phase 2): `CompiledWorkflow`,
+    `compileWorkflow`/`validateWorkflow` (M4-T4/M4-T9), the `workflow()` typed
+    DSL builder (M4-T5), `createWorkflowRuntime()` with `.asAgentRuntime()`
+    (M4-T6/M4-T7/M4-T8), and three ports — `WorkflowDecisionPort` (for M3's
+    `jev` nodes), `ArtifactStorePort` (for M5's `artifact` nodes) and
+    `ProtectedEffectStore` (M4-T7's non-idempotent-write protection) — each
+    with an in-memory default implementation. Still depends on
+    `@internal/core` only; zero third-party dependencies.
   - `@internal/trace`: `TraceSink`, `createBufferedTraceWriter`, JSONL sinks
     and `readJsonlTraceEvents`, `createRedactor`/`createRedactingTraceWriter`,
     `DEFAULT_REDACTION_POLICY`, `createStorageTraceSink`,
@@ -146,8 +160,15 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
 
 ## What does not exist yet
 
-- Jev, workflow IR, replay, evals, learner, compiler, and the rest of the CLI
-  beyond `pnpm harness run show`.
+- The workflow validator, typed DSL and local runtime now exist
+  (`@internal/workflow`, Phase 2), but no human-authored workflow runs inside
+  an application yet — that is M4-T10, in progress. A `jev` node cannot
+  execute until M3 lands a real `DecisionEngine` (the runtime uses a fake
+  `WorkflowDecisionPort` today). The local runtime deliberately builds no
+  durability, and there is no router (M5) to match a job to a workflow or to
+  consume a `FallbackContext` yet.
+- Jev, replay, evals, learner, compiler, and the rest of the CLI beyond
+  `pnpm harness run show`.
 
 ## Known failures
 
@@ -182,7 +203,27 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
   `Storage` is a core port over a Supabase schema, with `runs` as the outcome
   ledger and no attempts table; **ADR-0037** the run inspector is a library
   over the `Storage` port with a `parseArgs` CLI, living in
-  `packages/observability`. Next free ADR number: **0038**.
+  `packages/observability`; **ADR-0038** the workflow IR is a core contract
+  (`@internal/core` declares `WorkflowDefinition` and its strict
+  `parseWorkflowDefinition()` boundary) while validation, the typed DSL and
+  the local runtime live in `@internal/workflow`, with node input flowing
+  through a closed five-case `Binding` model rather than an expression
+  language; **ADR-0039** workflow validation is a graph model with exactly
+  one owner per node (successor edges vs. containment), schema compatibility
+  is reference equality on `id@version` rather than structural comparison,
+  and only `agent` and `call` nodes may carry tool grants; **ADR-0040** the
+  local runtime interprets a `CompiledWorkflow` and nothing else, records
+  node input/output into the run's existing trace (amending ADR-0031's
+  identity-only payload rule for `node.*` events only), derives two
+  idempotency keys (one the other's prefix) rather than the plan's one, and a
+  node that exhausts its retries or hits another fallback condition
+  escalates rather than fails, with `asAgentRuntime()` mapping that
+  escalation to a `WorkflowError` as a stopgap until M5 gives `escalated` its
+  own status; **ADR-0041** the typed DSL is a wiring front end that parses
+  its own IR through `parseWorkflowDefinition()` and never resolves
+  capabilities or validates the graph itself, offering grants only on
+  `agent`/`call`, matching ADR-0039. Next free ADR number: **0042**, unless
+  the M4-T10 hand-authored-workflow task claims it.
 - TypeScript 6.0.x until 7.1 (ADR-0019). Framework work follows
   `docs/development/source-of-truth-protocol.md`.
 
@@ -247,6 +288,45 @@ full). Runbooks: `docs/runbooks/supabase-local.md`,
   `eve dev` runs as `node .../eve.js dev ...`, so `pgrep -f "eve dev"` never
   matches; use `pgrep -f "eve.js dev"` or check listening ports.
 - `apps/*` is the only place eve may be imported outside `packages/runtime-eve`.
+- **`parseWorkflowDefinition()` is a shape boundary only**, the workflow
+  sibling of `parseJob()`: it rejects unknown fields, checks per-node
+  well-formedness and deep-freezes the result, but it deliberately does not
+  check that `entry` or any `next`/`cases`/`default`/`body`/`steps` target
+  exists, that every node is reachable, that a cycle is a declared bounded
+  loop, or that any capability reference resolves. Those are graph questions
+  `compileWorkflow()` (M4-T4/M4-T9, in `@internal/workflow`) owns; a bare
+  `WorkflowDefinition` carries none of those guarantees, only a
+  `CompiledWorkflow` does.
+- **`packages/workflow` carries the ban on the npm package named `workflow`**
+  (Vercel's durable-workflow primitive), the same as `@internal/core` and
+  `@internal/trace`. `@internal/workflow` is not an adapter and its local
+  runtime deliberately builds no durability; see ADR-0038 for why the two are
+  kept from being confused.
+- **A `branch` node is pass-through**: its output is the value it routed,
+  unchanged, so a node after it binds the thing being decided about rather
+  than a label. The chosen `label` and `target` go only into the node's
+  `node.completed` trace payload (ADR-0040), because that is the only place a
+  reader needs them.
+- **Only `agent` and `call` nodes may carry tool grants** (ADR-0039, stricter
+  than M4-T8's literal text): a `code` node runs a registered handler, `jev`
+  asks a question, `artifact` writes, and control shapes route, so a grant on
+  any of them would be permission nothing reads.
+- **A `{ kind: "node" }` binding is checked by dominance, not reachability**:
+  node `X` must run on every path from `entry` to the binding node `N`. A
+  `map` body and a `loop` body may run zero times, so both flow into their
+  body *and* straight to their own `next` — a node after a `map` is never
+  told that a node inside its body ran, even though it is reachable from it.
+- **Every workflow needs a reachable `escalate` node, and every `branch`
+  needs a `default`** (ADR-0039: "missing escalation target" from M4-T4,
+  plus north-star invariant 1, "a domain can always fall back to its full
+  agent").
+- **`node.*` trace payloads carry input and output by design, amending
+  ADR-0031's identity-only rule for `node.*` events only** (ADR-0040): a
+  `node.started` payload carries the node's evaluated input, a
+  `node.completed` payload carries its validated output, and redaction still
+  applies because it is a `TraceWriter` decorator placed above the buffer
+  (ADR-0035) — a secret in a node's input or output is stripped before
+  anything is written, exactly as for a job.
 
 ## Uncommitted / generated artifacts
 
@@ -258,14 +338,15 @@ full). Runbooks: `docs/runbooks/supabase-local.md`,
 
 ## Exact next task
 
-**Start M4 first** (the critical path: M0 -> M1 -> M2 -> M4 -> M5 -> ...),
-creating `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`
-from the build plan, in the M2 status file's shape. **M3, Jev**, is blocked
-only by M2 and can start beside M4 at any point (its own status file would be
+Phase 1 (M4-T1, M4-T2) and Phase 2 (M4-T3 through M4-T9: the validator, the
+local runtime and the typed DSL) have both landed. The M4 status file
+(`docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`)
+now marks Phase 3 `in progress`: M4-T10, the hand-authored vendor workflow in
+`apps/example-agent`, plus the milestone's acceptance-criteria verification —
+the last M4 task. **M3, Jev**, is blocked only by M2 and can start beside M4
+at any point (its own status file would be
 `docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`); the two
-teams should coordinate on shared files if run concurrently. M4's own
-"Parallel Work" note says runtime, validator, DSL and fixture workflow can
-split after the IR is defined.
+teams should coordinate on shared files if run concurrently.
 
 ## Exact first command for the next agent
 
@@ -281,7 +362,9 @@ Docker must be running for `pnpm supabase:start`.) Then read, in order:
 
 ## Last successful verification
 
-- `pnpm check`: PASS, 2026-09-20, after M2-T10 (876 passed, 43 skipped, 53
+- `pnpm check`: PASS, 2026-09-20, after Phase 2 (M4-T3 through M4-T9; 1146
+  passed, 43 skipped, 62 files). Prior: PASS after M4-T1/M4-T2 (935 passed,
+  43 skipped, 54 files); PASS after M2-T10 (876 passed, 43 skipped, 53
   files).
 - `pnpm example:run:mock`: PASS in all three storage modes (persisted,
   JSONL-only, configured-but-unreachable).

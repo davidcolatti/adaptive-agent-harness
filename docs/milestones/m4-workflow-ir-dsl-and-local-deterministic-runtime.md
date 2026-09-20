@@ -1,7 +1,7 @@
 # Milestone 4, Workflow IR, DSL, and Local Deterministic Runtime
 
-**Status:** in progress. M4-T1 and M4-T2 are `completed` (commit `4c03e2e`). Phase 2 (M4-T4/M4-T9
-validator, M4-T3/M4-T6/M4-T7/M4-T8 runtime, M4-T5 DSL) is in progress, running in parallel.
+**Status:** in progress. M4-T1 through M4-T9 are `completed` (commits `4c03e2e`, `0d12b43`).
+M4-T10, the hand-authored vendor workflow and acceptance verification, is in progress.
 
 **Goal (from the build plan):** create the inspectable compiled representation before attempting
 automatic compilation. Humans should be able to author workflows first.

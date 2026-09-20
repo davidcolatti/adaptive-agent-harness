@@ -31,20 +31,23 @@ layout still plans, with their target milestone and a one-line summary.
 | `identifiers.md` | active (M2-T1) | The sortable RFC 9562 UUIDv7 scheme every entity id is minted under, its strict-ordering guarantee, and the twelve branded id types (`JobId`, `RunId`, and ten more). |
 | `execution-context.md` | active (M1-T7) | `ExecutionContext` and its supporting types: run/job IDs, domain reference, attempt, budget, tool grants, trace writer, abort signal and runtime metadata. |
 | `errors.md` | active (M1-T8) | The nine-class harness error taxonomy and the whitelisted, stack-free representation every error serializes into. |
-| `job.md` | active (M1-T3; M2-T2 extends) | The immutable unit of work: domain, job type, objective, input, contract references, budget, and permissions. |
+| `job.md` | active (M1-T3; finalized M2-T2) | The immutable unit of work: domain, job type, objective, input, contract references, budget, and permissions. Deeply immutable, with `parseJob()` as the boundary that turns a stored value back into one. |
 | `domain-definition.md` | active (M1-T3) | `DomainDefinition`, `defineDomain()`, and the Standard Schema contract that lets a domain use any schema library while core keeps zero dependencies. |
 | `agent-runtime.md` | active (M1-T5) | The `AgentRuntime` interface that runs a job through any AI-SDK-compatible agent implementation, its `AgentExecution` result, and the fake used to replace it in tests. |
 | `harness.md` | active (M1-T4) | `createHarness()`: the public entry point, the single place input is validated before execution and a runtime's claimed output before success, and the run's trace events. |
 | `capability-registry.md` | active (M1-T9) | `CapabilityRegistry` and the serializable `CapabilityManifest`: versioned schemas, agents, tools, handlers and policies, with behavior fingerprints and no executable source. |
-| `trace-event.md` | planned (M2) | The append-only structured event stream that reconstructs an execution without application logs. |
+| `trace-event.md` | active (M2-T3, M2-T4) | The closed event taxonomy, the fifteen-field event, the run-scoped `TraceRecorder` that owns a run's order, and the buffered writer with its local JSONL sinks. |
 | `workflow-ir.md` | planned (M4) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics. |
 | `decision-engine.md` | planned (M3) | The `DecisionEngine` interface for bounded probabilistic judgments, implemented first by Jev. |
 | `promotion-policy.md` | planned (M6) | The quality/regression/false-auto/fallback thresholds a candidate workflow must clear before promotion. |
 
-Eight contracts are implemented, all in `packages/core`: the execution context (M1-T7), the error
-taxonomy (M1-T8), `Job` and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime`
-with `AgentExecution` (M1-T5), `createHarness()` (M1-T4), the capability registry with its
-serializable manifest (M1-T9), and the entity identifier scheme (M2-T1). The schema contract that `DomainDefinition` depends on is a
+Nine contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
+and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime` with `AgentExecution`
+(M1-T5), `createHarness()` (M1-T4), the capability registry with its serializable manifest
+(M1-T9), the entity identifier scheme (M2-T1), and the trace event with its recorder and writer
+(M2-T3, M2-T4). All live in `packages/core` except the trace's persistence half, which is
+`packages/trace`: the buffered writer and the JSONL sinks, kept out of core so that core owns no
+storage decision and touches no `node:fs`. The schema contract that `DomainDefinition` depends on is a
 harness-owned copy of Standard Schema v1, recorded in
 [ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md) and documented in
 `domain-definition.md`; it is what keeps `packages/core` at zero dependencies while a domain
@@ -60,4 +63,9 @@ documented in `identifiers.md`. `Job.id`, `ExecutionContext.runId`/`jobId` and `
 carry it today; the other nine brands exist as types with no field yet.
 
 Of build plan section 5, `DecisionEngine` (M3) is still to come and `FallbackContext` waits for
-M4. `job.md` is written against the M1 shape the build plan states; M2-T2 finalizes it.
+M4. `job.md` is **finalized** as of M2-T2, recorded in
+[ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md): the
+field list is unchanged, immutability is deep rather than one level, the job the runtime receives
+is the job, creation time is derived from the `JobId` rather than stored in a `createdAt` field, an
+attempt belongs to a run rather than to a job, and `parseJob()` is the boundary a stored job comes
+back through.

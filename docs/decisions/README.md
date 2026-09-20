@@ -81,6 +81,7 @@ and related ADRs that motivated it.
 | [0028](0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md) | `EveAgentRuntime` is a URL-only client that observes the eve event stream | accepted |
 | [0029](0029-canonical-json-and-sha-256-behavior-fingerprints.md) | Canonical JSON (RFC 8785-style) and `sha256:`-prefixed behavior fingerprints | accepted |
 | [0030](0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md) | Sortable UUIDv7 entity identifiers, owned rather than delegated to Node | accepted |
+| [0031](0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md) | Trace event taxonomy, recorder-owned sequencing, and the buffered writer | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -135,3 +136,29 @@ random bits. Sortability is the property M2-T1 exists to buy, so the harness own
 adds the RFC 9562 §6.2 monotonic counter the built-in lacks. It is implemented in
 `packages/core/src/ids.ts` and wired at the two call sites in `packages/core/src/domain.ts` and
 `packages/core/src/harness.ts`.
+
+Entry 0031 settles M2-T3 and M2-T4 together, because both turn on one question the build plan
+leaves open: who assigns a run's `sequence`. The taxonomy is closed and is the plan's list plus
+`run.aborted`, which the harness already emits and which is not a failure; "parent span" is a
+`parentId` pointing at a `*.started` event's own id rather than a separate span entity; `attempt`
+stays an ordinal until M2-T5's ledger decides when an attempt becomes a row; a run-scoped
+`TraceRecorder` in `@internal/core` owns `sequence`, `id`, `attempt`, `version` and
+`behaviorFingerprint`, and `ExecutionContext.trace` carries it, which is what stops the harness and
+the eve adapter each numbering their events from 0 inside one run; `EveAgentRuntime` maps eve's
+stream onto the taxonomy instead of emitting `eve.<type>`, and the ADR lists the eve events that
+are deliberately not trace events; and the new `@internal/trace` package holds
+`createBufferedTraceWriter()`, whose sink failures surface as a `StorageError` that leaves
+`harness.run()` rather than a run reported as completed. It is documented in
+`docs/contracts/trace-event.md`.
+
+Entry 0032 finalizes the `Job` contract, which M2-T2 was the task to do. It changes no field and
+settles five things the build plan's field list does not: immutability is **deep** (`deepFreeze`
+rather than `Object.freeze`, so a nested budget or tool grant cannot be widened after the job
+exists), the **effective job is the job** (the harness applies a run's overrides while building it,
+so the value the runtime receives is the one a trace records and persistence stores, under the id
+the domain minted), a job carries **no `createdAt`** because a UUIDv7 `JobId` already embeds its
+creation millisecond and `entityIdTimestamp()` reads it back, `parseJob()` is the **boundary** that
+turns a stored value back into a job with every problem reported at a path, and an **attempt is not
+part of a job** because it belongs to a run, which is the question ADR-0030 explicitly deferred to
+M2-T2. It is implemented in `packages/core/src/job.ts`, `freeze.ts`, `json.ts`, `ids.ts`,
+`domain.ts` and `harness.ts`, and documented in `docs/contracts/job.md`.

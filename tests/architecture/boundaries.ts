@@ -106,6 +106,13 @@ export const BOUNDARY_RULES: BoundaryRules = {
     // The adapter rule already bans these for every non-adapter package; the
     // entry is kept explicit because core is the boundary the plan names.
     "@internal/core": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
+    // `@internal/trace` (M2-T4) sits directly under `core` in the dependency
+    // diagram, beside the runtime adapters and above storage. It is **not** an
+    // adapter: it owns buffering and ordering, and the storage medium lives
+    // behind its own `TraceSink`, so the same bans core carries apply here.
+    // When M2-T5 adds a Supabase sink, that sink belongs in
+    // `@internal/storage-supabase`, which is already a declared adapter.
+    "@internal/trace": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
   },
 };
 

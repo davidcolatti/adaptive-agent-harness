@@ -276,6 +276,61 @@ export function parseEntityId<TKind extends EntityKind>(
 }
 
 /**
+ * Read the creation time an entity id embeds, as Unix milliseconds.
+ *
+ * The first 48 bits of a UUIDv7 *are* the creation timestamp (RFC 9562 §4.4),
+ * so an entity already carries its own creation time and does not need a second
+ * field claiming the same fact. That is why `Job` has no `createdAt`
+ * (M2-T2, ADR-0032): two sources of truth for one instant can disagree, and the
+ * derived one cannot be forged independently of the id it is derived from. A
+ * persisted row that wants a queryable timestamp column derives it here.
+ *
+ * Two caveats, both from the generator's monotonicity rules:
+ *
+ * - Under a burst of more than 4096 ids in one millisecond the timestamp is
+ *   borrowed forward, so it can read marginally **ahead** of the wall clock.
+ * - While the system clock is stepped backwards the timestamp is held, so it
+ *   can read marginally **behind** it until the clock catches up.
+ *
+ * Both are bounded by the size of the burst or the step, and both are the price
+ * of an id that never goes down. Treat the value as the creation time to
+ * millisecond resolution, not as an audited clock reading.
+ *
+ * @throws {ValidationError} if `id` is not a well-formed id in this scheme.
+ * A value arriving from outside should already have been through
+ * {@link parseEntityId}; this check is what keeps a malformed string from
+ * producing a plausible-looking date.
+ */
+export function entityIdTimestampMs(id: string, path: readonly (string | number)[] = []): number {
+  if (!isEntityId(id)) {
+    throw new ValidationError(
+      `cannot read a timestamp from a value that is not a \`${ENTITY_ID_SCHEME}\` id`,
+      { issues: [{ path: [...path], message: ENTITY_ID_MESSAGE }] },
+    );
+  }
+
+  // The 48-bit timestamp is the first two groups of the textual form: eight hex
+  // digits, the dash, then four more.
+  return Number.parseInt(`${id.slice(0, 8)}${id.slice(9, 13)}`, 16);
+}
+
+/**
+ * Read the creation time an entity id embeds, as a `Date`.
+ *
+ * ```ts
+ * entityIdTimestamp(job.id); // when `createJob` minted it
+ * ```
+ *
+ * Sugar over {@link entityIdTimestampMs}; see that function for the two
+ * monotonicity caveats and for why an entity carries no separate `createdAt`.
+ *
+ * @throws {ValidationError} if `id` is not a well-formed id in this scheme.
+ */
+export function entityIdTimestamp(id: string, path: readonly (string | number)[] = []): Date {
+  return new Date(entityIdTimestampMs(id, path));
+}
+
+/**
  * The twelve generators.
  *
  * They are twelve one-line wrappers rather than one `newEntityId(kind)`,

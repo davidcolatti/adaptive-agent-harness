@@ -31,3 +31,7 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local harness run evidence (JSONL traces; M2-T4). One file per run under
+# an app root; the durable store arrives with M2-T5.
+.harness/

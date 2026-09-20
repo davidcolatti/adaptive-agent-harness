@@ -197,6 +197,34 @@ describe("DomainDefinition.createJob", () => {
     expect(Object.isFrozen(job.permissions)).toBe(true);
   });
 
+  it("freezes the job deeply, not one level (M2-T2, ADR-0032)", () => {
+    const domain = define({
+      createJob: (input) => ({
+        ...createJob(input),
+        budget: { maxModelCalls: 4 },
+        permissions: [{ toolId: "lookup", mode: "read" }],
+        metadata: { nested: { flag: true } },
+      }),
+    });
+
+    const job = domain.createJob({ vendorName: "Acme" });
+
+    // A one-level freeze leaves every one of these mutable, and the first two
+    // would silently widen what an execution may do.
+    expect(() => {
+      (job.budget as { maxModelCalls?: number }).maxModelCalls = 1000;
+    }).toThrow(TypeError);
+    expect(() => {
+      (job.permissions[0] as { mode: string }).mode = "write";
+    }).toThrow(TypeError);
+    expect(() => {
+      (job.metadata.nested as { flag: boolean }).flag = false;
+    }).toThrow(TypeError);
+    expect(() => {
+      (job.input as { vendorName: string }).vendorName = "Other";
+    }).toThrow(TypeError);
+  });
+
   it("does not validate its input, because the harness owns that choke point", () => {
     const rejecting = schemaOf<TriageInput>(() => ({ issues: [{ message: "always invalid" }] }));
     const domain = define({ inputSchema: rejecting });

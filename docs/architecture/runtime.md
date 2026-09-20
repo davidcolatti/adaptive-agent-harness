@@ -113,26 +113,60 @@ that only validates fails before the turn starts, with a message saying so.
 
 ## The event-to-trace mapping
 
-One `TraceEvent` per stream event, with `sequence` counting from 0 within the run, `timestamp`
-taken from eve's own `meta.at`, and `type` namespaced `eve.<event type>`.
+The adapter maps eve's stream onto the harness's closed trace taxonomy
+([`../contracts/trace-event.md`](../contracts/trace-event.md), M2-T3). It does **not** name its own
+event types: M1 emitted `eve.<event type>` because the taxonomy did not exist yet, and
+[ADR-0031](../decisions/0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md)
+replaced that. An eve event either *is* a member of the taxonomy or is not a trace event at all.
+
+Ordering is no longer the adapter's either. `context.trace` is the run's `TraceRecorder`, and it
+owns `sequence` for the whole run, so the harness's `run.*` events and the adapter's events
+interleave in one total order. `state.sequence` is gone.
+
+| Stream event | Trace event | Payload adds |
+| --- | --- | --- |
+| `turn.started` | `agent.started` | `runtime`, `sessionId` |
+| `turn.completed` | `agent.completed` | — (carries the run's accrued `usage` and `latencyMs`) |
+| `turn.failed`, `session.failed` | `agent.failed` | `code` |
+| `turn.cancelled` | `agent.failed` | `cancelled: true` |
+| `step.started` | `model.started` | `modelId` |
+| `step.completed` | `model.completed` | `finishReason`; `usage` from the step (`modelCalls`, `costUsd`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, each only when present) |
+| `step.failed` | `model.failed` | `code` |
+| `actions.requested` | one `tool.started` **per action** | `tool`, `callId`, `kind` |
+| `action.result` | `tool.completed`, or `tool.failed` when `status` is `failed` or `rejected` | `tool`, `callId`, `status`, `code` |
+| `input.requested` | `approval.requested` | `requestCount` |
+| `input.resolved` | `approval.resolved` | `outcomes` |
+| everything else | **no trace event** | — |
+
+Every payload also carries `eveEventId` (eve's `evt_`-prefixed sortable id, which M2-T5 can dedupe
+on), plus `turnId` and `stepIndex` where the event carries them. That is the join key back to eve's
+own durable stream for anything this trace deliberately leaves out.
+
+Spans are correlated the way eve's own documentation requires: **tool spans by `callId`**, because
+`ActionsRequestedStreamEvent` states that consumers "must correlate action lifecycles by call ID
+rather than assume one event contains every call from an assistant step"; **model spans by `turnId`
+plus `stepIndex`**. Each event's `timestamp` is its `meta.at`, so the trace reports when eve saw
+something rather than when the adapter read it, and `latencyMs` is measured between those.
+
+A `rejected` action result becomes `tool.failed` carrying a `PermissionDeniedError` rather than a
+`ToolExecutionError`: eve's `rejected` means a human or a policy denied the call at an approval
+gate, so it never ran. A failure event's harness error carries eve's `code` and never its
+`message`, which is provider text the harness did not author.
+
+**Dropped, deliberately:** `session.started`, `session.waiting`, `session.completed`,
+`message.received`, `message.appended`, `message.completed`, `reasoning.appended`,
+`reasoning.completed`, `action.input.appended`, `action.partial`, `result.completed`,
+`context.cleared`, `compaction.requested`, `compaction.completed`, `authorization.required`,
+`authorization.completed`, `approval.candidate`, `approval.settled` and the four `subagent.*`
+events. The deltas and `result.completed` are content; the rest describe eve's own lifecycle rather
+than the agent's work. ADR-0031 names the two groups a later milestone will want (eve's approval
+gate and connection authorization for M5's approvals, and `subagent.*` as nested runs with their
+own `runId`).
 
 The payload is a **whitelist, never a dump**, for the same reason `serializeError` is one
-(ADR-0026). Every event contributes `eventId` (eve's `evt_`-prefixed ULID, which M2 can dedupe on),
-plus `turnId` and `stepIndex` where the event carries them.
-
-| Stream event | Trace type | Payload adds |
-| --- | --- | --- |
-| `step.started` | `eve.step.started` | `modelId` |
-| `step.completed` | `eve.step.completed` | `finishReason`, `usage` (`costUsd`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, each only when present) |
-| `actions.requested` | `eve.actions.requested` | `tools` (names), `actionCount` |
-| `action.result` | `eve.action.result` | `status`, `tool`, `errorCode` |
-| `input.requested` | `eve.input.requested` | `requestCount` |
-| `step.failed`, `turn.failed`, `session.failed` | `eve.<type>` | `code` |
-| everything else | `eve.<type>` | identity and coordinates only |
-
-**Never carried:** assistant text, reasoning, tool inputs, tool outputs, the structured result, and
-the text of a human-input request. M2-T9 owns redaction; until it exists the adapter carries
-nothing that would need it, which is also why payloads stay small.
+(ADR-0026). **Never carried:** assistant text, reasoning, tool inputs, tool outputs, the structured
+result, and the text of a human-input request. M2-T9 owns redaction; the adapter carries nothing
+that would need it, which is also why payloads stay small.
 
 ## Enforcement points
 
@@ -214,8 +248,8 @@ is deliberately not called: it would terminally retire an id a human might want 
    documented eve features.
 2. **Budget enforcement is the harness's, and it is reactive.** eve's own limits are authored, per
    session, token and cost only, and prompt a human on breach.
-3. **The trace payload is a placeholder.** M2-T3 owns the event taxonomy and the full `TraceEvent`
-   schema; nothing may branch on these payloads yet.
+3. **The trace maps onto the taxonomy, but two of its fields are still empty.** M2-T3 settled the
+   event schema; `behaviorFingerprint` stays `null` until M2-T8 and `node` until M4.
 4. **`domains` stands in for the capability registry** until M1-T9.
 5. **`pnpm example:run` against a live Gateway model is unverified.** No credential was available
    when this was written. Everything below the model is verified by the contract suite and by
@@ -229,8 +263,9 @@ pnpm example:run:mock   # apps/eve-fixture-agent, eve's mockModel, no credential
 ```
 
 Both build first, then start an eve dev server, run the vendor-triage domain through
-`createHarness()`, print the `HarnessRunResult` as JSON, stop the server, and exit non-zero unless
-the run completed. `pnpm example:run` exits early with a message naming `.env.example` when no
+`createHarness()`, print the `HarnessRunResult` as JSON, write the run's ordered trace to
+`apps/<agent>/.harness/traces/<runId>.jsonl` and print that path, stop the server, and exit
+non-zero unless the run completed. `pnpm example:run` exits early with a message naming `.env.example` when no
 `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` is set.
 
 `example:run:mock` is the whole harness path with the model scripted: the real domain, the real

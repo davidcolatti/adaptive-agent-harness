@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createHarness, type HarnessRunResult } from "@internal/core";
 import { EveAgentRuntime } from "@internal/runtime-eve";
 import { type EveDevServer, startEveDevServer } from "@internal/runtime-eve/testing";
+import { createBufferedTraceWriter, createJsonlDirectoryTraceSink } from "@internal/trace";
 import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/index.js";
 
 /**
@@ -15,9 +16,10 @@ import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/
  *
  * 1. start an `eve` server for an authored agent;
  * 2. build an `EveAgentRuntime` pointed at it;
- * 3. `createHarness({ agentRuntime })`;
+ * 3. `createHarness({ agentRuntime, trace })`, where `trace` is the buffered
+ *    writer draining into a JSONL file per run (M2-T4);
  * 4. `harness.run({ domain: vendorTriage, input })`;
- * 5. print the result and stop the server.
+ * 5. print the result and the trace path, and stop the server.
  *
  * **Nothing here touches the `eve` runtime directly.** The agent under
  * `agent/` is authored for eve and this file calls the harness API, which is
@@ -42,8 +44,22 @@ interface RunSummary {
   readonly target: string;
   readonly agent: string;
   readonly host: string;
+  /** The JSONL file this run's ordered trace was written to (M2-T4). */
+  readonly tracePath: string;
   readonly result: HarnessRunResult<unknown>;
 }
+
+/**
+ * Where a run's trace lands: `<app root>/.harness/traces/<runId>.jsonl`.
+ *
+ * Beside the agent that produced it, so a run's evidence and the agent it
+ * exercised are in one place, and under `.harness/`, which `.gitignore`
+ * excludes. The run id is minted inside `harness.run()`, so the file cannot be
+ * named up front; `createJsonlDirectoryTraceSink` names it from each event's
+ * own `runId` instead. Until M2-T5 puts trace events in Supabase, this file is
+ * the durable trace.
+ */
+const TRACES_DIRNAME = join(".harness", "traces");
 
 /**
  * The repository root: the nearest ancestor holding `pnpm-workspace.yaml`.
@@ -152,6 +168,12 @@ async function main(): Promise<number> {
   try {
     server = await startEveDevServer({ appRoot: target.appRoot, env: credentialEnv() });
 
+    // The local durable trace (M2-T4): events are buffered in append order and
+    // drained to one JSONL file per run. `createHarness()` flushes before it
+    // returns, and lets a storage failure out rather than reporting a run whose
+    // trace was never written as `completed`.
+    const traces = createJsonlDirectoryTraceSink(join(target.appRoot, TRACES_DIRNAME));
+
     const harness = createHarness({
       agentRuntime: new EveAgentRuntime({
         host: server.host,
@@ -160,6 +182,7 @@ async function main(): Promise<number> {
         // request structured output for.
         domains: [vendorTriage],
       }),
+      trace: createBufferedTraceWriter({ sink: traces }),
     });
 
     const result = await harness.run({ domain: vendorTriage, input: INPUT });
@@ -167,10 +190,12 @@ async function main(): Promise<number> {
       target: name,
       agent: target.agent,
       host: server.host,
+      tracePath: traces.pathFor(result.runId),
       result,
     };
 
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    process.stderr.write(`Trace written to ${summary.tracePath}\n`);
 
     // A failed or aborted run is a non-zero exit, so the command can gate CI.
     return result.status === "completed" ? 0 : 1;

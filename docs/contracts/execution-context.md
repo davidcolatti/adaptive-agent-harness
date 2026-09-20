@@ -8,6 +8,7 @@ related:
   - docs/architecture/system-map.md
   - docs/decisions/0003-ai-sdk-is-the-lowest-agent-runtime-contract-eve-is-the-default-runtime-adapter.md
   - docs/decisions/0010-observability-trace-is-a-product-surface-captured-from-the-first-run.md
+  - docs/contracts/trace-event.md
 implementation:
   - packages/core
 ---
@@ -21,8 +22,8 @@ M1-T7.
 The split from `Job` is the point of the type. A `Job` is immutable and says
 *what* to do: its domain, objective, input, contracts, budget and permissions.
 An `ExecutionContext` describes *this particular attempt* at doing it, so it
-carries the attempt number, the writer trace events go to, and the signal that
-cancels the work. A retry reuses the same job and receives a new context.
+carries the attempt number, the recorder trace events go through, and the
+signal that cancels the work. A retry reuses the same job and receives a new context.
 
 Every field is readonly. Nothing inside an execution may reassign its own
 budget or widen its own permissions part-way through a run.
@@ -37,7 +38,7 @@ interface ExecutionContext {
   readonly attempt: number;
   readonly budget: Budget;
   readonly permissions: readonly ToolGrant[];
-  readonly trace: TraceWriter;
+  readonly trace: TraceRecorder;
   readonly signal: AbortSignal;
   readonly runtime: RuntimeInfo;
 }
@@ -51,7 +52,7 @@ interface ExecutionContext {
 | `attempt` | Which attempt this is, counting from **1**. |
 | `budget` | The limits this attempt must stay inside. |
 | `permissions` | The tools this attempt may use. An empty list grants nothing. |
-| `trace` | Where trace events go. |
+| `trace` | The run's `TraceRecorder`: what the attempt records events through, and the single owner of the run's `sequence`. |
 | `signal` | Cancellation. An adapter must propagate it to the work it starts. |
 | `runtime` | Which runtime adapter is executing, and its own metadata. |
 
@@ -182,47 +183,61 @@ omits an `undefined`-valued property rather than emitting it. Reading a key
 yields `JsonValue | undefined` in any case, because the repository compiles
 with `noUncheckedIndexedAccess`.
 
-## `TraceWriter` and `TraceEvent`
+## `trace`: a recorder, not a writer
+
+Since M2-T3/M2-T4
+([ADR-0031](../decisions/0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md))
+`ExecutionContext.trace` is a `TraceRecorder`, not a `TraceWriter`.
 
 ```ts
-interface TraceWriter {
-  append(event: TraceEvent): Promise<void>;
+interface TraceRecorder {
+  readonly runId: RunId;
+  readonly attempt: number;
+  readonly behaviorFingerprint: string | null;
+  readonly rootId: TraceEventId | null;
+  readonly lastEventId: TraceEventId | null;
+  readonly recorded: number;
+  record(input: TraceEventInput): Promise<TraceEvent>;
+  span(input: TraceEventInput): Promise<TraceSpan>;
   flush(): Promise<void>;
 }
 ```
 
-`TraceWriter` is stated verbatim by the build plan in **M2-T4**. It is declared
-in core during M1 only because `ExecutionContext` has to hold one. The
-buffered, order-preserving local implementation is M2-T4's work and belongs in
-`packages/trace`.
+The distinction is the whole point of the change. A **writer** is a sink for
+complete events. A **recorder** stamps the fields a caller must not choose —
+`id`, `runId`, `attempt`, `sequence`, `version` and `behaviorFingerprint` — and
+there is exactly one per run. In M1 the context held a writer, and the
+consequence was that `createHarness()` numbered its `run.*` events from 0 while
+`EveAgentRuntime` numbered its events from 0 again inside the same run, so the
+two collections could not be merged into one order. One recorder per run fixes
+that by construction: an adapter cannot start its own count.
 
-`TraceEvent` is the deliberately minimal M1 placeholder:
+The full field table, the closed event taxonomy and the span rules live in
+[`trace-event.md`](trace-event.md).
 
-```ts
-interface TraceEvent {
-  readonly runId: RunId;
-  readonly sequence: number;
-  readonly timestamp: string;  // ISO 8601
-  readonly type: string;
-  readonly payload: JsonObject;
-}
-```
+### Where the recorder comes from
 
-**M2-T3 owns the full schema and will replace this shape.** The build plan
-requires every event to additionally carry an event ID, a parent span, a node
-reference, an event version, a behavior fingerprint, usage, latency and error
-metadata, and to draw `type` from a closed taxonomy (`run.started`,
-`agent.completed`, `tool.failed`, and so on). None of that is defined here,
-because M1 has no execution to fingerprint and inventing the fields now would
-make a guess look like a contract. The five fields above are the subset the
-build plan already fixes and M2 will keep.
+`CreateExecutionContextInput` takes either half:
+
+| Input | Meaning |
+| --- | --- |
+| `trace` | A `TraceWriter`. The context wraps it in a recorder built from the run identity it already has. |
+| `recorder` | An already-built `TraceRecorder`, used as-is. Wins over `trace` when both are given. |
+| `clock` | The time source for events that carry no timestamp of their own. Ignored when `recorder` is supplied. |
+| `behaviorFingerprint` | Stamped on every event. Defaults to `null`; **M2-T8** supplies a real one. |
+
+`recorder` exists for one caller: `createHarness()` records `run.started`
+itself and then passes the same recorder down, which is how the run's events
+and the adapter's events share one sequence. An ordinary caller passes `trace`
+and never constructs a recorder.
 
 `createNoopTraceWriter()` returns a writer that discards every event. It exists
 so a test, or a caller that genuinely has nowhere to write yet, can build a
-context without a trace package. It is not a test double: it records nothing,
-so it cannot be asserted against. The recording counterpart is
-`createRecordingTraceWriter()` in `@internal/testing`, added by M1-T4 when the
-harness's own tests needed to assert on emitted events.
+context without a trace package; the context still wraps it in a real recorder,
+so `sequence` and `id` behave normally and only persistence is absent. It is
+not a test double: it records nothing, so it cannot be asserted against. The
+recording counterpart is `createRecordingTraceWriter()` in `@internal/testing`,
+and the real one is `createBufferedTraceWriter()` in `@internal/trace`.
 
 ## `createExecutionContext`
 
@@ -239,7 +254,8 @@ every default is the conservative reading:
 | `attempt` | `1` | Attempts are 1-based. |
 | `budget` | `{}` | No budget means unlimited, not zero. |
 | `permissions` | `[]` | Permission is explicit, so the default is denial. |
-| `trace` | `createNoopTraceWriter()` | Nowhere to write yet is not a reason to fail. |
+| `trace` | `createNoopTraceWriter()`, wrapped in a recorder | Nowhere to write yet is not a reason to fail. |
+| `behaviorFingerprint` | `null` | M2-T8 computes one; a fabricated value would be worse than none. |
 | `signal` | a signal that never aborts | Not a signal that is already aborted. |
 | `runtime` | `HARNESS_RUNTIME_INFO` | The caller may not know the adapter yet; see above. |
 | `runtime.metadata` | `{}` | An adapter that publishes nothing is not an error. |
@@ -259,10 +275,12 @@ at construction instead of in the evidence.
   this contract deliberately references `jobId` rather than embedding a job.
 - `ToolGrant` will need expiry and approval semantics once approvals exist
   (M2), and an enforcement point once tools actually run (M5).
-- `TraceEvent` is replaced wholesale by M2-T3.
+- `TraceEvent` was replaced wholesale by M2-T3; see
+  [`trace-event.md`](trace-event.md). `behaviorFingerprint` is still `null` on
+  every event until M2-T8, and `node` until M4.
 - Identifier format is fixed by M2-T1, not here: `runId` and `jobId` are
   sortable, branded UUIDv7 values. See [identifiers.md](identifiers.md) and
   [ADR-0030](../decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md).
 - `attempt` is still a **number**, not an `AttemptId`. M2-T1 defines that brand
-  but deliberately gives it no field: where an attempt id surfaces is M2-T2's
-  and M2-T3's decision.
+  but deliberately gives it no field; M2-T3 kept the ordinal on `TraceEvent`
+  and handed the question of when an attempt becomes a row to M2-T5's ledger.

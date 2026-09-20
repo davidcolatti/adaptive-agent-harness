@@ -3,12 +3,13 @@ import type { AgentExecution, AgentExecutionUsage, AgentRuntime } from "./agent-
 import type { ExecutionContext, RuntimeInfo } from "./context.js";
 import { HARNESS_RUNTIME_INFO } from "./context.js";
 import { defineDomain } from "./domain.js";
-import { ValidationError } from "./errors.js";
+import { StorageError, ValidationError } from "./errors.js";
 import { type Clock, createHarness, type HarnessRunResult } from "./harness.js";
 import { isEntityId, newJobId, newRunId } from "./ids.js";
 import type { Job } from "./job.js";
+import { parseJob } from "./job.js";
 import type { Schema, SchemaResult } from "./schema.js";
-import type { TraceEvent, TraceWriter } from "./trace.js";
+import { TRACE_EVENT_VERSION, type TraceEvent, type TraceWriter } from "./trace.js";
 
 /**
  * The test doubles below are **deliberately local to this file**, rather than
@@ -463,6 +464,89 @@ describe("harness.run: tracing", () => {
     expect(trace.flushCount).toBe(1);
   });
 
+  it("fills the M2-T3 fields on every run event", async () => {
+    const trace = createLocalTraceWriter();
+    const clock = clockAt("2026-09-19T12:00:00.000Z");
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({
+        handler: () => {
+          clock.advance(400);
+          return completedWith({ category: "bookkeeping" });
+        },
+      }),
+      trace,
+      clock,
+    });
+
+    const result = await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+    const [started, completed] = trace.events;
+
+    // Every `run.*` event is a root: the run is identified by `runId`, so it
+    // needs no pointer to itself (ADR-0031).
+    expect(trace.events.every((event) => event.parentId === null)).toBe(true);
+    expect(trace.events.every((event) => event.version === TRACE_EVENT_VERSION)).toBe(true);
+    // M4 fills `node`; M2-T8 fills `behaviorFingerprint`. Neither is faked.
+    expect(trace.events.every((event) => event.node === null)).toBe(true);
+    expect(trace.events.every((event) => event.behaviorFingerprint === null)).toBe(true);
+    expect(trace.events.every((event) => event.attempt === result.attempt)).toBe(true);
+    expect(trace.events.every((event) => isEntityId(event.id))).toBe(true);
+    expect(new Set(trace.events.map((event) => event.id)).size).toBe(trace.events.length);
+
+    // A start event has measured nothing yet; the terminal event carries the
+    // run's usage and the harness-measured latency.
+    expect(started?.usage).toBeNull();
+    expect(started?.latencyMs).toBeNull();
+    expect(started?.error).toBeNull();
+    expect(completed?.usage).toEqual({ modelCalls: 2, toolCalls: 1, costUsd: 0.01 });
+    expect(completed?.latencyMs).toBe(400);
+    expect(completed?.error).toBeNull();
+    expect(completed?.payload).toEqual({ jobId: result.jobId });
+  });
+
+  it("carries a failure in the event's error field, in its trace-safe form", async () => {
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({
+        result: {
+          status: "failed",
+          error: { name: "ToolExecutionError", code: "TOOL_EXECUTION", message: "the tool failed" },
+          usage: USAGE,
+          runtime: RUNTIME,
+        },
+      }),
+      trace,
+    });
+
+    await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+    const failed = trace.events[1];
+
+    expect(failed?.type).toBe("run.failed");
+    expect(failed?.error).toEqual({
+      name: "ToolExecutionError",
+      code: "TOOL_EXECUTION",
+      message: "the tool failed",
+    });
+    expect(failed?.payload).toMatchObject({ errorCode: "TOOL_EXECUTION" });
+    expect(failed?.error?.stack).toBeUndefined();
+  });
+
+  it("lets a flush failure out of `run`, so storage failure cannot look like success", async () => {
+    // M2's acceptance criterion: "Storage failures cannot silently turn into
+    // successful runs." A run whose trace never reached its sink is not a run
+    // anyone can inspect, evaluate or replay.
+    const harness = createHarness({
+      agentRuntime: createLocalAgentRuntime({ result: completedWith({ category: "bookkeeping" }) }),
+      trace: {
+        append: () => Promise.resolve(),
+        flush: () => Promise.reject(new StorageError("the trace sink rejected the batch")),
+      },
+    });
+
+    await expect(
+      harness.run({ domain: triage, input: { vendorName: "Northwind" } }),
+    ).rejects.toBeInstanceOf(StorageError);
+  });
+
   it("timestamps events from the supplied clock", async () => {
     const trace = createLocalTraceWriter();
     const clock = clockAt("2026-09-19T12:00:00.000Z");
@@ -523,6 +607,61 @@ describe("harness.run: per-run overrides", () => {
 
     expect(agentRuntime.calls[0]?.job.budget).toEqual({ maxModelCalls: 4, maxToolCalls: 4 });
     expect(agentRuntime.calls[0]?.job.metadata).toEqual({ fixture: true });
+  });
+
+  it("hands the runtime one deeply immutable effective job", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const harness = createHarness({ agentRuntime });
+
+    const result = await harness.run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+      budget: { maxCostUsd: 0.5 },
+      permissions: [{ toolId: "other", mode: "write" }],
+      metadata: { caller: "test" },
+    });
+
+    const job = agentRuntime.calls[0]?.job as Job;
+
+    // **The effective job is the job** (M2-T2, ADR-0032): the overrides are
+    // applied while it is built, before anything executes, and the value the
+    // runtime receives is the one the result, the trace and persistence all
+    // name. Its id is the id the domain minted; nothing amended a second job
+    // into existence.
+    expect(job.id).toBe(result.jobId);
+
+    // Immutable all the way down, not just at the top level.
+    expect(Object.isFrozen(job)).toBe(true);
+    expect(() => {
+      (job.budget as { maxCostUsd?: number }).maxCostUsd = 1e9;
+    }).toThrow(TypeError);
+    expect(() => {
+      (job.permissions[0] as { mode: string }).mode = "read";
+    }).toThrow(TypeError);
+    expect(() => {
+      (job.metadata as { caller?: string }).caller = "someone else";
+    }).toThrow(TypeError);
+  });
+
+  it("hands the runtime a job the boundary validator accepts", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const harness = createHarness({ agentRuntime });
+
+    await harness.run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+      budget: { maxCostUsd: 0.5 },
+    });
+
+    const job = agentRuntime.calls[0]?.job as Job;
+
+    // What the producer builds and what `parseJob` accepts are the same shape,
+    // which is what makes a stored job readable again (M2-T5, M2-T10, M6).
+    expect(parseJob(JSON.parse(JSON.stringify(job)))).toEqual(job);
   });
 });
 

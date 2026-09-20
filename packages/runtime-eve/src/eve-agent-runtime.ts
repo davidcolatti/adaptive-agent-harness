@@ -7,11 +7,18 @@ import {
   BudgetExceededError,
   type ExecutionContext,
   type Job,
+  type JsonObject,
   type JsonValue,
   PermissionDeniedError,
   type RuntimeInfo,
   type Schema,
   serializeError,
+  ToolExecutionError,
+  type TraceEventId,
+  type TraceEventUsage,
+  type TraceRecorder,
+  type TraceSpan,
+  type TraceSpanEndInput,
   ValidationError,
 } from "@internal/core";
 import {
@@ -26,10 +33,14 @@ import {
 } from "eve/client";
 import {
   actionRequestToolName,
+  actionResultCallId,
+  actionResultToolName,
+  eveEventIdentity,
   failureDetail,
-  projectEveEvent,
+  LOAD_SKILL_TOOL_ID,
+  readErrorCode,
+  stepTraceUsage,
   stepUsage,
-  traceEventType,
 } from "./eve-events.js";
 import { type EveOutputSchema, toEveOutputSchema } from "./eve-schema.js";
 
@@ -218,7 +229,27 @@ interface RunState {
   costUsd: number | undefined;
   sessionId: string | undefined;
   turnId: string | undefined;
-  sequence: number;
+}
+
+/**
+ * The spans one turn has open, so a terminal event can close the right one.
+ *
+ * `sequence` used to live on {@link RunState} and no longer does: the run's
+ * {@link TraceRecorder} owns ordering now, which is what stops the harness's
+ * `run.*` events and this adapter's events from both numbering themselves from
+ * 0 within one run (M2-T3/M2-T4, ADR-0031). What the adapter still has to track
+ * is span identity, and eve tells it exactly how: model spans are keyed by turn
+ * and `stepIndex`, and tool spans by `callId`, which
+ * `ActionsRequestedStreamEvent`'s own documentation requires ("consumers must
+ * correlate action lifecycles by call ID").
+ */
+interface TurnSpans {
+  /** The turn's `agent.started`, and the parent of everything inside it. */
+  agent: TraceSpan | undefined;
+  /** Open `model.started` spans, keyed by `<turnId>:<stepIndex>`. */
+  readonly model: Map<string, TraceSpan>;
+  /** Open `tool.started` spans, keyed by eve's `callId`. */
+  readonly tool: Map<string, TraceSpan>;
 }
 
 /**
@@ -270,7 +301,6 @@ export class EveAgentRuntime implements AgentRuntime {
       costUsd: undefined,
       sessionId: undefined,
       turnId: undefined,
-      sequence: 0,
     };
 
     const usage = (): AgentExecutionUsage => ({
@@ -450,6 +480,7 @@ export class EveAgentRuntime implements AgentRuntime {
           }, maxDurationMs);
     durationTimer?.unref?.();
 
+    const spans: TurnSpans = { agent: undefined, model: new Map(), tool: new Map() };
     let turnCompleted = false;
     let turnCancelled = false;
     let failureEvent: MessageStreamEvent | undefined;
@@ -461,14 +492,7 @@ export class EveAgentRuntime implements AgentRuntime {
       for await (const event of response) {
         state.turnId ??= "data" in event ? readTurnId(event.data) : undefined;
 
-        await context.trace.append({
-          runId: context.runId,
-          sequence: state.sequence,
-          timestamp: event.meta.at,
-          type: traceEventType(event),
-          payload: projectEveEvent(event),
-        });
-        state.sequence += 1;
+        await this.#trace(event, context, state, spans);
 
         this.#account(event, state);
         this.#enforce(event, context, state, recordPolicyFailure);
@@ -585,6 +609,242 @@ export class EveAgentRuntime implements AgentRuntime {
   }
 
   /**
+   * Map one eve stream event onto the harness trace taxonomy (M2-T3).
+   *
+   * **The adapter no longer invents `eve.<type>` event names.** M1 namespaced
+   * them because the taxonomy did not exist yet; it does now, so an event
+   * either *is* one of its members or is not a trace event at all. The table:
+   *
+   * | eve stream event | trace event |
+   * | --- | --- |
+   * | `turn.started` | `agent.started` (opens the run's agent span) |
+   * | `turn.completed` | `agent.completed` |
+   * | `turn.failed`, `session.failed` | `agent.failed` |
+   * | `turn.cancelled` | `agent.failed`, `payload.cancelled: true` |
+   * | `step.started` | `model.started` |
+   * | `step.completed` | `model.completed`, with the step's usage |
+   * | `step.failed` | `model.failed` |
+   * | `actions.requested` | one `tool.started` per requested action |
+   * | `action.result` | `tool.completed`, or `tool.failed` when eve's `status` is `failed` or `rejected` |
+   * | `input.requested` | `approval.requested` |
+   * | `input.resolved` | `approval.resolved` |
+   *
+   * Every other eve event is **not** a trace event: the deltas
+   * (`message.appended`, `reasoning.appended`, `action.input.appended`,
+   * `action.partial`) are content this trace does not carry, `result.completed`
+   * *is* the model's output, and the session, compaction, context, subagent,
+   * authorization and approval-candidate events have no counterpart in a
+   * taxonomy that M2 has nothing to do with yet. ADR-0031 lists them and says
+   * what would have to change to add one.
+   *
+   * A cancelled turn maps to `agent.failed` rather than to nothing, because a
+   * span that is never closed makes a trace unreadable; `payload.cancelled`
+   * and the error's message are what distinguish it from a real failure, and
+   * the run-level event is `run.aborted` in that case anyway.
+   */
+  async #trace(
+    event: MessageStreamEvent,
+    context: ExecutionContext,
+    state: RunState,
+    spans: TurnSpans,
+  ): Promise<void> {
+    const recorder = context.trace;
+    const at = event.meta.at;
+    const identity = eveEventIdentity(event);
+    // Inside a turn, everything hangs off the agent span. Before one exists
+    // (or after it closed), the run's own `run.started` is the parent.
+    const parentId = spans.agent?.id ?? recorder.rootId;
+
+    switch (event.type) {
+      case "turn.started": {
+        spans.agent = await recorder.span({
+          type: "agent.started",
+          timestamp: at,
+          parentId: recorder.rootId,
+          payload: {
+            ...identity,
+            runtime: RUNTIME_NAME,
+            ...(state.sessionId === undefined ? {} : { sessionId: state.sessionId }),
+          },
+        });
+        return;
+      }
+
+      case "turn.completed": {
+        await endAgentSpan(recorder, spans, {
+          type: "agent.completed",
+          timestamp: at,
+          payload: identity,
+          usage: accruedUsage(state),
+        });
+        return;
+      }
+
+      case "turn.failed":
+      case "session.failed": {
+        const { code } = failureDetail(event);
+
+        await endAgentSpan(recorder, spans, {
+          type: "agent.failed",
+          timestamp: at,
+          payload: { ...identity, code },
+          usage: accruedUsage(state),
+          // The code, never eve's message: a provider failure message is text
+          // the harness did not author and has not redacted (M2-T9).
+          error: serializeError(
+            new AgentExecutionError(`EveAgentRuntime: eve reported ${code}`, {
+              details: { code, event: event.type },
+            }),
+          ),
+        });
+        return;
+      }
+
+      case "turn.cancelled": {
+        await endAgentSpan(recorder, spans, {
+          type: "agent.failed",
+          timestamp: at,
+          payload: { ...identity, cancelled: true },
+          usage: accruedUsage(state),
+          error: serializeError(
+            new AgentExecutionError(
+              "EveAgentRuntime: the turn was cancelled before it produced a result",
+              { details: { event: event.type } },
+            ),
+          ),
+        });
+        return;
+      }
+
+      case "step.started": {
+        spans.model.set(
+          stepKey(event.data.turnId, event.data.stepIndex),
+          await recorder.span({
+            type: "model.started",
+            timestamp: at,
+            parentId,
+            payload: { ...identity, modelId: event.data.modelId },
+          }),
+        );
+        return;
+      }
+
+      case "step.completed": {
+        await endKeyedSpan(
+          recorder,
+          spans.model,
+          stepKey(event.data.turnId, event.data.stepIndex),
+          parentId,
+          {
+            type: "model.completed",
+            timestamp: at,
+            payload: { ...identity, finishReason: event.data.finishReason },
+            usage: stepTraceUsage(event),
+          },
+        );
+        return;
+      }
+
+      case "step.failed": {
+        const { code } = failureDetail(event);
+
+        await endKeyedSpan(
+          recorder,
+          spans.model,
+          stepKey(event.data.turnId, event.data.stepIndex),
+          parentId,
+          {
+            type: "model.failed",
+            timestamp: at,
+            payload: { ...identity, code },
+            error: serializeError(
+              new AgentExecutionError(`EveAgentRuntime: a model call reported ${code}`, {
+                details: { code, event: event.type },
+              }),
+            ),
+          },
+        );
+        return;
+      }
+
+      case "actions.requested": {
+        // One span per requested action, not one per event: eve documents that
+        // a step's calls may arrive across several events and must be
+        // correlated by `callId`.
+        for (const action of event.data.actions) {
+          spans.tool.set(
+            action.callId,
+            await recorder.span({
+              type: "tool.started",
+              timestamp: at,
+              parentId,
+              payload: {
+                ...identity,
+                tool: actionRequestToolName(action),
+                callId: action.callId,
+                kind: action.kind,
+              },
+            }),
+          );
+        }
+        return;
+      }
+
+      case "action.result": {
+        const { status } = event.data;
+        const callId = actionResultCallId(event.data.result);
+        const tool = actionResultToolName(event.data.result) ?? LOAD_SKILL_TOOL_ID;
+        const code = event.data.error === undefined ? undefined : readErrorCode(event.data.error);
+        const payload: JsonObject = {
+          ...identity,
+          tool,
+          callId,
+          status,
+          ...(code === undefined ? {} : { code }),
+        };
+
+        await endKeyedSpan(recorder, spans.tool, callId, parentId, {
+          type: status === "completed" ? "tool.completed" : "tool.failed",
+          timestamp: at,
+          payload,
+          usage: { toolCalls: 1 },
+          ...(status === "completed"
+            ? {}
+            : { error: serializeError(toolFailure(status, tool, code)) }),
+        });
+        return;
+      }
+
+      case "input.requested": {
+        await recorder.record({
+          type: "approval.requested",
+          timestamp: at,
+          parentId,
+          payload: { ...identity, requestCount: event.data.requests.length },
+        });
+        return;
+      }
+
+      case "input.resolved": {
+        await recorder.record({
+          type: "approval.resolved",
+          timestamp: at,
+          parentId,
+          payload: {
+            ...identity,
+            outcomes: event.data.resolutions.map((resolution) => resolution.outcome),
+          },
+        });
+        return;
+      }
+
+      default:
+        // No counterpart in the taxonomy, so not a trace event (ADR-0031).
+        return;
+    }
+  }
+
+  /**
    * Usage arithmetic over documented fields.
    *
    * `modelCalls` counts `step.completed` and `toolCalls` counts `action.result`;
@@ -684,6 +944,89 @@ export class EveAgentRuntime implements AgentRuntime {
       );
     }
   }
+}
+
+/** The key a model span is stored under: eve's turn plus its step index. */
+function stepKey(turnId: string, stepIndex: number): string {
+  return `${turnId}:${String(stepIndex)}`;
+}
+
+/** The run's usage so far, for the event that closes the agent span. */
+function accruedUsage(state: RunState): TraceEventUsage {
+  return {
+    modelCalls: state.modelCalls,
+    toolCalls: state.toolCalls,
+    ...(state.costUsd === undefined ? {} : { costUsd: state.costUsd }),
+  };
+}
+
+/**
+ * Close a keyed span, or record a parentless terminal event when its start was
+ * never seen.
+ *
+ * The fallback is not defensive padding: a caller that reconnects to a running
+ * session mid-turn genuinely joins after the `step.started` it would have
+ * matched, and dropping the completion would lose the usage attached to it.
+ */
+async function endKeyedSpan(
+  recorder: TraceRecorder,
+  spans: Map<string, TraceSpan>,
+  key: string,
+  fallbackParentId: TraceEventId | null,
+  input: TraceSpanEndInput,
+): Promise<void> {
+  const span = spans.get(key);
+
+  if (span === undefined) {
+    await recorder.record({ ...input, parentId: fallbackParentId });
+    return;
+  }
+
+  spans.delete(key);
+  await span.end(input);
+}
+
+/** Close the turn's agent span, or record the terminal event against the run. */
+async function endAgentSpan(
+  recorder: TraceRecorder,
+  spans: TurnSpans,
+  input: TraceSpanEndInput,
+): Promise<void> {
+  const span = spans.agent;
+
+  if (span === undefined) {
+    await recorder.record({ ...input, parentId: recorder.rootId });
+    return;
+  }
+
+  spans.agent = undefined;
+  await span.end(input);
+}
+
+/**
+ * The harness error a failed or rejected tool call is recorded with.
+ *
+ * `rejected` is eve's word for a call a human or a policy denied at an approval
+ * gate, so it never executed: that is a permission outcome, not a tool defect,
+ * and the error taxonomy already draws exactly that line (ADR-0026,
+ * `PermissionDeniedError` versus `ToolExecutionError`).
+ */
+function toolFailure(
+  status: "failed" | "rejected",
+  toolId: string,
+  code: string | undefined,
+): Error {
+  if (status === "rejected") {
+    return new PermissionDeniedError(
+      `EveAgentRuntime: the call to \`${toolId}\` was rejected at an approval gate`,
+      { toolId, requested: "read" },
+    );
+  }
+
+  return new ToolExecutionError(`EveAgentRuntime: \`${toolId}\` reported ${code ?? "UNKNOWN"}`, {
+    toolId,
+    details: { code: code ?? "UNKNOWN" },
+  });
 }
 
 function domainKey(id: string, version: string): string {

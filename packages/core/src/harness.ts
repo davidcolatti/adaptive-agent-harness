@@ -14,11 +14,19 @@ import {
   serializeError,
   ValidationError,
 } from "./errors.js";
+import { deepFreeze } from "./freeze.js";
 import { type JobId, newRunId, type RunId } from "./ids.js";
 import type { Job } from "./job.js";
 import type { JsonObject } from "./json.js";
 import { validateWith } from "./schema.js";
-import { createNoopTraceWriter, type TraceWriter } from "./trace.js";
+import {
+  createNoopTraceWriter,
+  createTraceRecorder,
+  type TraceEvent,
+  type TraceEventType,
+  type TraceEventUsage,
+  type TraceWriter,
+} from "./trace.js";
 
 /**
  * `createHarness()` (M1-T4): the public entry point, and the one choke point
@@ -171,19 +179,43 @@ export interface Harness {
 /**
  * The trace event types this file emits.
  *
- * **M1 placeholders.** M2-T3 owns the event taxonomy and the full
- * `TraceEvent` schema (event ID, parent span, node reference, event version,
- * behavior fingerprint, usage, latency, error metadata). These four names are
- * the ones the build plan already fixes for a run's lifecycle, so emitting them
- * now costs nothing and establishes the ordering guarantee; nothing may branch
- * on the payload shape until M2-T3 settles it.
+ * The four `run.*` members of the closed M2-T3 taxonomy. `run.aborted` is the
+ * one the build plan's list does not name: a run its caller cancelled is
+ * neither a completion nor a failure, and reporting it as either would be a
+ * lie the run ledger then inherits. ADR-0031 records the amendment.
  */
 const RUN_EVENTS = {
   started: "run.started",
   completed: "run.completed",
   failed: "run.failed",
   aborted: "run.aborted",
-} as const;
+} as const satisfies Record<string, TraceEventType>;
+
+/** The measured fields {@link TraceEvent} carries outside its payload. */
+interface TraceEmitExtra {
+  /** What the event's work consumed. */
+  readonly usage?: TraceEventUsage | null;
+  /** How long it took, in milliseconds. */
+  readonly latencyMs?: number | null;
+  /** Why it failed. Only a `*.failed` event carries one. */
+  readonly error?: SerializedHarnessError | null;
+}
+
+/**
+ * Project an execution's usage onto the trace event's usage shape.
+ *
+ * `durationMs` is deliberately not copied: the trace records duration as the
+ * event's own `latencyMs`, measured by the harness clock, and carrying the
+ * runtime's separate figure in the same event under a second name would make a
+ * reader guess which one a cost or latency analysis should use.
+ */
+function traceUsage(usage: AgentExecutionUsage): TraceEventUsage {
+  return {
+    modelCalls: usage.modelCalls,
+    toolCalls: usage.toolCalls,
+    ...(usage.costUsd === undefined ? {} : { costUsd: usage.costUsd }),
+  };
+}
 
 /** Usage reported when the harness never reached the runtime. */
 const NO_USAGE: AgentExecutionUsage = Object.freeze({
@@ -242,8 +274,17 @@ export function createHarness(options: CreateHarnessOptions): Harness {
 
     // 2. Build the job, then apply the caller's overrides. A domain decides the
     //    defaults; a caller tightens or annotates them for one run.
+    //
+    //    **The effective job is the job** (M2-T2, ADR-0032). The overrides are
+    //    part of creating it, not a later amendment to it: they are applied
+    //    here, before anything executes, and what comes out is the single value
+    //    the runtime receives, the trace records and persistence stores. There
+    //    is no second job and nothing mutates the first. `deepFreeze` rather
+    //    than `Object.freeze` is what makes "immutable after execution begins"
+    //    reach `budget.maxCostUsd` and `permissions[0].mode` rather than
+    //    stopping at the top level.
     const job = domain.createJob(validInput);
-    const effectiveJob: Job<TInput, TOutput> = Object.freeze({
+    const effectiveJob: Job<TInput, TOutput> = deepFreeze({
       ...job,
       budget: mergeBudget(job.budget, input.budget),
       permissions: input.permissions === undefined ? job.permissions : [...input.permissions],
@@ -258,15 +299,30 @@ export function createHarness(options: CreateHarnessOptions): Harness {
     // honest about that.
     const attempt = 1;
 
-    let sequence = 0;
-    const emit = async (type: string, payload: JsonObject): Promise<void> => {
-      await trace.append({
-        runId,
-        sequence: sequence++,
-        timestamp: clock.now().toISOString(),
-        type,
-        payload,
-      });
+    // The run's single sequence owner (M2-T3/M2-T4, ADR-0031). The harness's
+    // `run.*` events and the adapter's `agent.*`/`model.*`/`tool.*` events go
+    // through this one recorder, which is why a run now has one total order
+    // instead of two collections each numbered from 0.
+    //
+    // `behaviorFingerprint` is deliberately absent, which leaves it `null`:
+    // **M2-T8 is what computes one**, and a fabricated value would break every
+    // comparison built on it.
+    const recorder = createTraceRecorder({
+      runId,
+      writer: trace,
+      attempt,
+      clock,
+    });
+
+    const emit = async (
+      type: TraceEventType,
+      payload: JsonObject,
+      extra: TraceEmitExtra = {},
+    ): Promise<void> => {
+      // Every `run.*` event is a root: a run is already identified by `runId`,
+      // so it needs no pointer to itself. The adapter's `agent.started` hangs
+      // off `recorder.rootId` instead, which is this run's `run.started`.
+      await recorder.record({ type, payload, parentId: null, ...extra });
     };
 
     const context = createExecutionContext({
@@ -276,7 +332,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       attempt,
       budget: effectiveJob.budget,
       permissions: effectiveJob.permissions,
-      trace,
+      recorder,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
       // `runtime` is deliberately omitted: the harness does not yet know which
       // adapter will run this job. See `HARNESS_RUNTIME_INFO`.
@@ -299,13 +355,31 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       attempt,
     });
 
+    /**
+     * Record the run's terminal event and flush, then return the result.
+     *
+     * Usage, latency and error are derived from the result rather than passed
+     * in at each call site, so the three can never disagree with what the
+     * caller is handed back.
+     *
+     * **`flush()` is awaited and its failure is not caught.** A `StorageError`
+     * from the writer propagates out of `harness.run()`, which is M2's
+     * "storage failures cannot silently turn into successful runs" acceptance
+     * criterion: a run whose trace was not persisted is not a run anyone can
+     * inspect, evaluate or replay, so reporting it as `completed` would be a
+     * false record (ADR-0031).
+     */
     const finish = async <TResult extends HarnessRunResult<TOutput>>(
-      type: string,
+      type: TraceEventType,
       payload: JsonObject,
       result: TResult,
     ): Promise<TResult> => {
-      await emit(type, payload);
-      await trace.flush();
+      await emit(type, payload, {
+        usage: traceUsage(result.usage),
+        latencyMs: Math.max(0, clock.now().getTime() - startedAt),
+        error: result.status === "failed" ? result.error : null,
+      });
+      await recorder.flush();
       return result;
     };
 
@@ -338,7 +412,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
 
       return await finish(
         RUN_EVENTS.failed,
-        { error: serializeError(error) },
+        { jobId: effectiveJob.id, errorCode: error.code },
         {
           ...base,
           status: "failed",
@@ -362,7 +436,7 @@ export function createHarness(options: CreateHarnessOptions): Harness {
     if (execution.status === "failed") {
       return await finish(
         RUN_EVENTS.failed,
-        { error: execution.error },
+        { jobId: effectiveJob.id, errorCode: execution.error.code },
         { ...base, ...outcome, status: "failed", error: execution.error },
       );
     }
@@ -382,14 +456,14 @@ export function createHarness(options: CreateHarnessOptions): Harness {
 
       return await finish(
         RUN_EVENTS.failed,
-        { error },
+        { jobId: effectiveJob.id, errorCode: error.code },
         { ...base, ...outcome, status: "failed", error },
       );
     }
 
     return await finish(
       RUN_EVENTS.completed,
-      { jobId: effectiveJob.id, usage: { ...execution.usage } },
+      { jobId: effectiveJob.id },
       { ...base, ...outcome, status: "completed", output },
     );
   }

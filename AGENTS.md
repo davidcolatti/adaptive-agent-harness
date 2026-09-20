@@ -101,7 +101,8 @@ adaptive-agent-harness/
 │   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
 │   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
-│   └── testing/                 # shared test helpers; fake clock, fake AgentRuntime
+│   ├── testing/                 # shared test helpers; fake clock, fake AgentRuntime
+│   └── trace/                   # buffered order-preserving TraceWriter + sinks (M2-T4)
 ├── docs/
 │   ├── README.md
 │   ├── context/current-state.md
@@ -142,7 +143,7 @@ yet built (**planned**):
 
 ```
 apps/playground/                                              (planned, unscheduled)
-packages/trace/, storage-supabase/                            (planned, M2)
+packages/storage-supabase/                                    (planned, M2)
 packages/decision-jev/                                        (planned, M3)
 packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)

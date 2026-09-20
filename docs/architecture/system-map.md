@@ -156,7 +156,7 @@ Rules, as the plan states them:
 
 ## Current state (Milestone 1, in progress)
 
-Five packages and one application exist. Everything else in the repository layout is planned.
+Six packages and two applications exist. Everything else in the repository layout is planned.
 
 - `packages/config` (`@internal/config`) holds the shared TypeScript config bases
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
@@ -190,9 +190,12 @@ Five packages and one application exist. Everything else in the repository layou
     stack-free `SerializedHarnessError` shape that [ADR-0026](../decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md)
     records. Documented in [`../contracts/errors.md`](../contracts/errors.md).
   - A **JSON value model** (`JsonValue`, `JsonObject`) that every serializable field is typed
-    with, and a minimal `TraceEvent`/`TraceWriter` pair. `TraceWriter` is stated verbatim by
-    M2-T4 and lives here only because the execution context has to hold one; **M2-T3 owns the
-    full trace event schema and replaces `TraceEvent`**.
+    with, and the **trace contract** (M2-T3): the closed `TraceEventType` taxonomy, the
+    fifteen-field `TraceEvent`, the `TraceWriter` the build plan states verbatim, and
+    `createTraceRecorder()`, the per-run minter that owns a run's `sequence` and is what
+    `ExecutionContext.trace` holds. Persistence is deliberately elsewhere, in `packages/trace`.
+    Documented in [`../contracts/trace-event.md`](../contracts/trace-event.md) and
+    [ADR-0031](../decisions/0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md).
   - The **schema boundary**, `Job` and `DomainDefinition` (M1-T3): `Schema<TOutput, TInput>` is a
     harness-owned copy of the Standard Schema v1 interface, so a domain authors its schemas in
     `zod` while this package imports nothing
@@ -305,7 +308,7 @@ plan's milestone sections.
 | `packages/registry` | planned (M5), **workflow** registry; the *capability* registry is in `packages/core` (M1-T9) |
 | `apps/example-agent` | exists (M1-T2 eve project, M1-T3 domain, M1-T9 capabilities, M1-T6 `src/run.ts`; runs through `createHarness()` with either runtime) |
 | `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
-| `packages/trace` | planned (M2) |
+| `packages/trace` | exists (M2-T4): `createBufferedTraceWriter()`, `TraceSink`, and the in-memory and JSONL sinks |
 | `packages/storage-supabase` | planned (M2) |
 | `packages/observability` | planned (M2) |
 | `packages/decision-jev` | planned (M3) |
@@ -328,23 +331,36 @@ still calls nothing. The source files in the workspace packages are:
 - `packages/core/src/index.ts` (the named re-export barrel)
 - `packages/core/src/json.ts`, `context.ts`, `trace.ts`, `errors.ts` and their four co-located
   `*.test.ts` files (the M1-T7 and M1-T8 contracts described above)
-- `packages/core/src/schema.ts`, `job.ts`, `domain.ts`, `agent-runtime.ts` and the three
-  co-located `*.test.ts` files (`job.ts` is types only, exercised through `domain.test.ts`)
+- `packages/core/src/schema.ts`, `job.ts`, `domain.ts`, `agent-runtime.ts` and their four
+  co-located `*.test.ts` files. `job.ts` gained runtime code in M2-T2: `parseJob()` and `isJob()`,
+  the boundary that turns a stored value back into a `Job`, with `job.test.ts` covering them and
+  the JSON round trip.
 - `packages/core/src/harness.ts` (M1-T4), `capabilities.ts`, `fingerprint.ts` and
   `identifiers.ts` (M1-T9), with a co-located test for each except `identifiers.ts`, whose two
   rules are exercised through `domain.test.ts` and `capabilities.test.ts`
 - `packages/core/src/ids.ts` and `ids.test.ts` (M2-T1): the sortable RFC 9562 UUIDv7 scheme and
   the twelve branded entity-id types, minted at the two call sites in `domain.ts` and
   `harness.ts`. Distinct from `identifiers.ts`, which rules on the `{ id, version }` names a
-  human writes rather than the ids a machine mints.
+  human writes rather than the ids a machine mints. M2-T2 added `entityIdTimestamp()` here, which reads
+  a job's creation time out of its id and is why no entity carries a `createdAt` field.
+- `packages/core/src/freeze.ts` and `freeze.test.ts` (M2-T2): `deepFreeze()`, the whole of the
+  harness's freezing surface. It is what makes "jobs are immutable after execution begins" reach a
+  nested budget or tool grant, and it recurses into arrays and plain objects only, so a job is
+  deeply immutable exactly as far as it is JSON-representable (ADR-0032).
+- `packages/trace/src/index.ts`, `buffered-trace-writer.ts`, `sink.ts`, `jsonl-sink.ts` and the
+  two co-located `*.test.ts` files (M2-T4): the buffered, order-preserving `TraceWriter`, the
+  `TraceSink` interface beneath it, and the in-memory and JSONL sinks. `node:fs/promises` and
+  `node:path` only; no third-party dependency. M2-T5's Supabase sink is another `TraceSink`, and
+  belongs in `packages/storage-supabase` rather than here.
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
 - `packages/testing/src/fake-agent-runtime.ts` and `fake-agent-runtime.test.ts`
 - `packages/testing/src/recording-trace-writer.ts` and `recording-trace-writer.test.ts`
 - `packages/runtime-eve/src/index.ts` and `index.test.ts`
-- `packages/runtime-eve/src/eve-agent-runtime.ts` (the adapter), `eve-events.ts` (reading eve's
-  stream events and projecting them into trace payloads), `eve-schema.ts` (lowering a
+- `packages/runtime-eve/src/eve-agent-runtime.ts` (the adapter, including the M2-T3 mapping from
+  eve's stream events onto the trace taxonomy), `eve-events.ts` (reading eve's stream events and
+  projecting them into identity-only trace payloads), `eve-schema.ts` (lowering a
   `Schema<T>` to the JSON Schema eve wants), with `eve-agent-runtime.test.ts` (unit, faked
   transport) and `eve-agent-runtime.contract.test.ts` (contract, real server)
 - `packages/runtime-eve/src/testing/index.ts` and `testing/dev-server.ts` (the `./testing`

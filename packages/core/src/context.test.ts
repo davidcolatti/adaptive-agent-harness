@@ -8,6 +8,12 @@ import {
 import { ValidationError } from "./errors.js";
 import { type JobId, newJobId, newRunId, type RunId } from "./ids.js";
 import type { JsonObject } from "./json.js";
+import {
+  createNoopTraceWriter,
+  createTraceRecorder,
+  type TraceEvent,
+  type TraceRecorder,
+} from "./trace.js";
 
 const RUN_ID = newRunId();
 const JOB_ID = newJobId();
@@ -29,6 +35,9 @@ describe("ExecutionContext", () => {
     expectTypeOf<ExecutionContext["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<ExecutionContext["permissions"]>().toEqualTypeOf<readonly ToolGrant[]>();
     expectTypeOf<ExecutionContext["runtime"]["metadata"]>().toEqualTypeOf<JsonObject>();
+    // M2-T3/M2-T4 (ADR-0031): an execution holds the run's recorder, not a raw
+    // writer, because the recorder is what owns the run's single event order.
+    expectTypeOf<ExecutionContext["trace"]>().toEqualTypeOf<TraceRecorder>();
   });
 
   it("matches the budget dimensions the build plan fixes for Job.budget", () => {
@@ -81,19 +90,53 @@ describe("createExecutionContext", () => {
     expect(createExecutionContext(REQUIRED).runtime.metadata).toEqual({});
   });
 
-  it("defaults to a trace writer that accepts events", async () => {
+  it("defaults to a recorder over a writer that discards what it is given", async () => {
     const context = createExecutionContext(REQUIRED);
 
-    await expect(
-      context.trace.append({
-        runId: context.runId,
-        sequence: 0,
-        timestamp: "2026-01-02T03:04:05.000Z",
-        type: "run.started",
-        payload: {},
-      }),
-    ).resolves.toBeUndefined();
+    const event = await context.trace.record({ type: "run.started", payload: {} });
+
+    expect(event.runId).toBe(context.runId);
+    expect(event.sequence).toBe(0);
     await expect(context.trace.flush()).resolves.toBeUndefined();
+  });
+
+  it("wraps a supplied writer in a recorder that stamps this run and attempt", async () => {
+    const events: TraceEvent[] = [];
+    const context = createExecutionContext({
+      ...REQUIRED,
+      attempt: 2,
+      behaviorFingerprint: "sha256:feed",
+      clock: { now: () => new Date("2026-09-19T12:00:00.000Z") },
+      trace: {
+        append(event: TraceEvent): Promise<void> {
+          events.push(event);
+          return Promise.resolve();
+        },
+        flush: () => Promise.resolve(),
+      },
+    });
+
+    await context.trace.record({ type: "agent.started" });
+    await context.trace.record({ type: "agent.completed" });
+
+    expect(events.map((event) => event.sequence)).toEqual([0, 1]);
+    expect(events.every((event) => event.runId === RUN_ID && event.attempt === 2)).toBe(true);
+    expect(events[0]?.behaviorFingerprint).toBe("sha256:feed");
+    expect(events[0]?.timestamp).toBe("2026-09-19T12:00:00.000Z");
+  });
+
+  it("uses a supplied recorder as-is, so a run keeps one sequence across its callers", async () => {
+    const recorder = createTraceRecorder({ runId: RUN_ID, writer: createNoopTraceWriter() });
+    await recorder.record({ type: "run.started" });
+
+    const context = createExecutionContext({
+      ...REQUIRED,
+      recorder,
+      trace: createNoopTraceWriter(),
+    });
+
+    expect(context.trace).toBe(recorder);
+    expect((await context.trace.record({ type: "agent.started" })).sequence).toBe(1);
   });
 
   it("defaults to a signal that is not aborted and never will be", () => {

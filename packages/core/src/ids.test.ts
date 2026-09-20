@@ -6,6 +6,8 @@ import {
   ENTITY_ID_SCHEME,
   ENTITY_KINDS,
   type EntityId,
+  entityIdTimestamp,
+  entityIdTimestampMs,
   isEntityId,
   type JobId,
   newAttemptId,
@@ -265,5 +267,61 @@ describe("the brands", () => {
     const payload: Record<string, string> = { jobId: id };
 
     expect(JSON.parse(JSON.stringify(payload))).toEqual({ jobId: String(id) });
+  });
+});
+
+/**
+ * The creation time an id embeds (M2-T2, ADR-0032). This is why no entity in
+ * the harness carries a separate `createdAt`: the first 48 bits of a UUIDv7
+ * already are one, and a second field could disagree with it.
+ */
+describe("entityIdTimestampMs / entityIdTimestamp", () => {
+  it("reads back the millisecond the id was minted in", () => {
+    // Later than any instant the tests above mocked. The generator's monotonic
+    // guard never moves its timestamp down, so a mocked clock that is behind
+    // what this module has already issued would be held rather than honoured;
+    // that is the documented behaviour, not something to assert around.
+    vi.spyOn(Date, "now").mockReturnValue(2_000_000_000_000);
+
+    const id = newJobId();
+
+    expect(entityIdTimestampMs(id)).toBe(2_000_000_000_000);
+    expect(entityIdTimestamp(id)).toEqual(new Date(2_000_000_000_000));
+  });
+
+  it("is consistent with the ordering guarantee", () => {
+    const first = entityIdTimestampMs(newJobId());
+    const second = entityIdTimestampMs(newJobId());
+
+    expect(second).toBeGreaterThanOrEqual(first);
+  });
+
+  it("reads every kind of id, because the timestamp is in the scheme not the kind", () => {
+    for (const generate of Object.values(GENERATORS)) {
+      expect(entityIdTimestampMs(generate())).toBeGreaterThan(0);
+    }
+  });
+
+  it.each([
+    ["a v4 UUID", "3f2504e0-4f89-41d3-9a0c-0305e82c3301"],
+    ["an uppercase id", newJobId().toUpperCase()],
+    ["a truncated id", newJobId().slice(0, 30)],
+    ["an empty string", ""],
+    ["a plain word", "not-an-id"],
+  ])("refuses to invent a date from %s", (_label, value) => {
+    expect(() => entityIdTimestampMs(value)).toThrow(ValidationError);
+    expect(() => entityIdTimestamp(value)).toThrow(ValidationError);
+  });
+
+  it("points the issue at the path the caller supplies", () => {
+    try {
+      entityIdTimestampMs("nope", ["row", "job_id"]);
+      expect.unreachable("expected entityIdTimestampMs to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues).toEqual([
+        { path: ["row", "job_id"], message: ENTITY_ID_MESSAGE },
+      ]);
+    }
   });
 });

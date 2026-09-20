@@ -1,4 +1,4 @@
-import type { TraceEvent, TraceWriter } from "@internal/core";
+import type { TraceEvent, TraceEventType, TraceWriter } from "@internal/core";
 
 /**
  * A {@link TraceWriter} that keeps every event instead of discarding it.
@@ -10,8 +10,13 @@ import type { TraceEvent, TraceWriter } from "@internal/core";
  * recording writer is a test double, and test doubles belong in the testing
  * package.
  *
- * The real buffered, order-preserving writer is M2-T4's work and lives in
- * `packages/trace`.
+ * The real buffered, order-preserving writer is `createBufferedTraceWriter()`
+ * in `@internal/trace` (M2-T4). This one stays because a test wants the events
+ * in memory and wants them synchronously, not a sink it then has to drain.
+ *
+ * It is a **writer**, not a `TraceRecorder`: it receives events that a recorder
+ * has already stamped with their id, run, attempt and sequence, so a test that
+ * asserts on `sequence` here is asserting on what the recorder produced.
  */
 
 /** A {@link TraceWriter} that exposes what was written to it. */
@@ -19,7 +24,7 @@ export interface RecordingTraceWriter extends TraceWriter {
   /** Every appended event, in append order. */
   readonly events: readonly TraceEvent[];
   /** Every appended event's `type`, in append order. */
-  types(): readonly string[];
+  types(): readonly TraceEventType[];
   /** How many times {@link TraceWriter.flush} was called. */
   readonly flushCount: number;
 }
@@ -48,7 +53,7 @@ export function createRecordingTraceWriter(): RecordingTraceWriter {
 
   return {
     events,
-    types(): readonly string[] {
+    types(): readonly TraceEventType[] {
       return events.map((event) => event.type);
     },
     get flushCount(): number {

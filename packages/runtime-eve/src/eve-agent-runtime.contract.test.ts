@@ -1,6 +1,12 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createExecutionContext, type Job, newJobId, newRunId } from "@internal/core";
+import {
+  createExecutionContext,
+  isTraceEventType,
+  type Job,
+  newJobId,
+  newRunId,
+} from "@internal/core";
 import { createRecordingTraceWriter } from "@internal/testing";
 import { Client } from "eve/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -137,15 +143,24 @@ describe("EveAgentRuntime against a real eve server", () => {
       expect(typeof execution.runtime.metadata.sessionId).toBe("string");
       expect(typeof execution.runtime.metadata.turnId).toBe("string");
 
-      // Real events, in order, carrying eve's own durable ids.
+      // Real events, in order, on the closed taxonomy, carrying eve's own
+      // durable ids for cross-reference against its stream.
       expect(trace.events.length).toBeGreaterThan(3);
       expect(trace.events.map((event) => event.sequence)).toEqual(
         trace.events.map((_event, index) => index),
       );
-      expect(trace.events.every((event) => event.type.startsWith("eve."))).toBe(true);
-      expect(trace.events.every((event) => String(event.payload.eventId).startsWith("evt_"))).toBe(
-        true,
-      );
+      expect(trace.events.every((event) => isTraceEventType(event.type))).toBe(true);
+      expect(trace.types()).toContain("agent.started");
+      expect(trace.types()).toContain("model.started");
+      expect(trace.types()).toContain("model.completed");
+      expect(trace.types()).toContain("agent.completed");
+      expect(
+        trace.events.every((event) => String(event.payload.eveEventId).startsWith("evt_")),
+      ).toBe(true);
+      // Identity and order are stamped by the recorder, not by the adapter.
+      expect(trace.events.every((event) => event.runId === context.runId)).toBe(true);
+      expect(trace.events.every((event) => event.version === 1)).toBe(true);
+      expect(new Set(trace.events.map((event) => event.id)).size).toBe(trace.events.length);
     },
     TURN_TIMEOUT_MS,
   );
@@ -233,7 +248,7 @@ describe("EveAgentRuntime against a real eve server", () => {
       // Abort once the tool call is on the stream, as the streaming guide
       // requires: cancellation waits for the stream to identify the turn.
       await expect
-        .poll(() => trace.events.some((event) => event.type === "eve.actions.requested"), {
+        .poll(() => trace.events.some((event) => event.type === "tool.started"), {
           timeout: 10_000,
         })
         .toBe(true);

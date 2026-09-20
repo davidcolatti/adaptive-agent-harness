@@ -85,6 +85,33 @@ describe("workspace dependency boundaries", () => {
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",
       "@internal/testing",
+      // The buffered trace writer and its local sinks (M2-T4). A harness
+      // package, not an adapter: it carries the same bans `@internal/core`
+      // does, and a storage medium reaches it through its own `TraceSink`.
+      "@internal/trace",
+    ]);
+  });
+
+  it("covers every workspace package with a rule or a deliberate absence", () => {
+    // A package nobody added to the tables is a package the boundary test
+    // silently ignores, which is the failure mode the M2 status file warns
+    // about for `packages/trace`.
+    const governed = new Set([
+      ...BOUNDARY_RULES.adapterPackages,
+      ...Object.keys(BOUNDARY_RULES.forbiddenByPackage),
+    ]);
+
+    expect(
+      packages
+        .filter((pkg) => pkg.directory.startsWith("packages/") && !governed.has(pkg.name))
+        .map((pkg) => pkg.name)
+        .sort(),
+    ).toEqual([
+      // `@internal/config` ships no runtime code at all: it is tsconfig bases.
+      "@internal/config",
+      // `@internal/testing` is test-only and depends on core alone. The
+      // adapter-only rule already covers it; no extra ban is needed.
+      "@internal/testing",
     ]);
   });
 

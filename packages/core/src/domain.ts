@@ -1,5 +1,6 @@
 import type { Budget, DomainRef, ToolGrant } from "./context.js";
 import type { ValidationIssue } from "./errors.js";
+import { deepFreeze } from "./freeze.js";
 import {
   EXACT_VERSION_MESSAGE,
   IDENTIFIER_MESSAGE,
@@ -203,17 +204,27 @@ export function defineDomain<TInput, TOutput>(
 
     throwIfIssues(`${config.id}: createJob returned an incomplete job`, bodyIssues);
 
-    return Object.freeze({
+    // `deepFreeze`, not `Object.freeze` (M2-T2, ADR-0032). A one-level freeze
+    // stops `job.budget = {}` and does nothing about
+    // `job.budget.maxCostUsd = 1e9` or `job.permissions[0].mode = "write"`,
+    // which are the mutations that would silently widen what an execution may
+    // do while the run record still shows the original job. The freeze reaches
+    // the JSON-shaped part of `input` and `metadata` too, so a domain that
+    // returns a value it also holds elsewhere finds that value frozen; a
+    // domain that means to keep mutating one should return a copy.
+    return deepFreeze({
       // A sortable UUIDv7 (M2-T1, ADR-0030): jobs created in order sort in
-      // order, and the type is branded so it cannot be confused with a run id.
+      // order, the type is branded so it cannot be confused with a run id, and
+      // the creation time is read back from it with `entityIdTimestamp()`,
+      // which is why there is no `createdAt` field.
       id: newJobId(),
       domain,
       jobType: body.jobType,
       objective: body.objective,
       input: body.input,
-      contracts: Object.freeze({ ...body.contracts }),
-      budget: Object.freeze({ ...body.budget }),
-      permissions: Object.freeze([...(body.permissions ?? [])]),
+      contracts: { ...body.contracts },
+      budget: { ...body.budget },
+      permissions: [...(body.permissions ?? [])],
       metadata: body.metadata ?? {},
     });
   }

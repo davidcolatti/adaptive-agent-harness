@@ -1,5 +1,6 @@
 import {
   createExecutionContext,
+  createTraceRecorder,
   type Job,
   type JsonObject,
   type JsonValue,
@@ -49,6 +50,17 @@ function stamp(event: Omit<MessageStreamEvent, "meta">): MessageStreamEvent {
 
 const TURN = { turnId: "turn_0", sequence: 0, stepIndex: 0 } as const;
 
+/**
+ * Restamp one scripted event's emission time.
+ *
+ * `stamp` gives every fixture the same instant, which is what most of these
+ * tests want. A latency assertion needs two different ones, and eve's `meta.at`
+ * is exactly where the adapter reads them from.
+ */
+function at(event: MessageStreamEvent, iso: string): MessageStreamEvent {
+  return { ...event, meta: { ...event.meta, at: iso } };
+}
+
 const events = {
   sessionStarted: (): MessageStreamEvent =>
     stamp({ type: "session.started", data: { sessionId: "wrun_fixture" } } as never),
@@ -74,12 +86,18 @@ const events = {
         })),
       },
     } as never),
-  actionResult: (toolName: string): MessageStreamEvent =>
+  actionResult: (
+    toolName: string,
+    status: "completed" | "failed" | "rejected" = "completed",
+  ): MessageStreamEvent =>
     stamp({
       type: "action.result",
       data: {
         ...TURN,
-        status: "completed",
+        status,
+        ...(status === "failed"
+          ? { error: { code: "TOOL_THREW", message: "the tool threw" } }
+          : {}),
         result: { callId: "call_0", kind: "tool-result", output: {}, toolName },
       },
     } as never),
@@ -674,7 +692,7 @@ describe("EveAgentRuntime.run, cancellation", () => {
 });
 
 describe("EveAgentRuntime.run, trace", () => {
-  it("emits one namespaced event per stream event, in increasing sequence", async () => {
+  it("maps eve's stream onto the closed taxonomy, in one increasing sequence", async () => {
     const trace = createRecordingTraceWriter();
     const client = createFakeClient({
       script: [
@@ -692,27 +710,130 @@ describe("EveAgentRuntime.run, trace", () => {
 
     await createRuntime(client).run(createJob(), createContext({ trace }));
 
-    expect(trace.events).toHaveLength(9);
-    expect(trace.events.map((event) => event.type)).toEqual([
-      "eve.session.started",
-      "eve.turn.started",
-      "eve.step.started",
-      "eve.actions.requested",
-      "eve.action.result",
-      "eve.step.completed",
-      "eve.result.completed",
-      "eve.turn.completed",
-      "eve.session.waiting",
+    // Nine eve events in, six trace events out: `session.started`,
+    // `result.completed` and `session.waiting` have no counterpart in the
+    // taxonomy, so they are not trace events (ADR-0031).
+    expect(trace.types()).toEqual([
+      "agent.started",
+      "model.started",
+      "tool.started",
+      "tool.completed",
+      "model.completed",
+      "agent.completed",
     ]);
-    expect(trace.events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(trace.events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(trace.events.every((event) => event.runId === RUN_ID)).toBe(true);
+    expect(trace.events.every((event) => event.type.startsWith("eve."))).toBe(false);
     expect(trace.events[0]?.timestamp).toBe("2026-09-19T12:00:00.000Z");
+  });
+
+  it("nests model and tool spans inside the agent span", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [
+        events.turnStarted(),
+        events.stepStarted(),
+        events.actionsRequested("echo_fixture"),
+        events.actionResult("echo_fixture"),
+        events.stepCompleted(),
+        events.resultCompleted({ verdict: "proceed" }),
+        events.turnCompleted(),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    const byType = new Map(trace.events.map((event) => [event.type, event]));
+    const agent = byType.get("agent.started");
+    const model = byType.get("model.started");
+    const tool = byType.get("tool.started");
+
+    // The agent span is the root of this adapter's events; a `*.completed`
+    // points at its own `*.started`; model and tool events point at the
+    // enclosing `agent.started`.
+    expect(agent?.parentId).toBeNull();
+    expect(model?.parentId).toBe(agent?.id);
+    expect(tool?.parentId).toBe(agent?.id);
+    expect(byType.get("tool.completed")?.parentId).toBe(tool?.id);
+    expect(byType.get("model.completed")?.parentId).toBe(model?.id);
+    expect(byType.get("agent.completed")?.parentId).toBe(agent?.id);
+  });
+
+  it("continues the run's sequence rather than starting its own", async () => {
+    // The M1 defect this replaces: the harness numbered `run.*` from 0 and the
+    // adapter numbered its events from 0 again, so a run had no total order.
+    const trace = createRecordingTraceWriter();
+    const recorder = createTraceRecorder({ runId: RUN_ID, writer: trace });
+    await recorder.record({ type: "run.started" });
+
+    const client = createFakeClient({
+      script: [
+        events.turnStarted(),
+        events.resultCompleted({ verdict: "ok" }),
+        events.turnCompleted(),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ recorder }));
+    await recorder.record({ type: "run.completed" });
+
+    expect(trace.types()).toEqual([
+      "run.started",
+      "agent.started",
+      "agent.completed",
+      "run.completed",
+    ]);
+    expect(trace.events.map((event) => event.sequence)).toEqual([0, 1, 2, 3]);
+    // The adapter hangs its agent span off the run's own root event.
+    expect(trace.events[1]?.parentId).toBe(trace.events[0]?.id);
+  });
+
+  it("carries the step's usage, the run's totals, and measured latencies", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [
+        events.turnStarted(),
+        at(events.stepStarted(), "2026-09-19T12:00:00.000Z"),
+        events.actionsRequested("echo_fixture"),
+        at(events.actionResult("echo_fixture"), "2026-09-19T12:00:00.750Z"),
+        at(
+          events.stepCompleted({ inputTokens: 7, outputTokens: 3, costUsd: 0.01 }),
+          "2026-09-19T12:00:02.000Z",
+        ),
+        events.resultCompleted({ verdict: "proceed" }),
+        at(events.turnCompleted(), "2026-09-19T12:00:03.000Z"),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    const byType = new Map(trace.events.map((event) => [event.type, event]));
+
+    expect(byType.get("model.completed")?.usage).toEqual({
+      modelCalls: 1,
+      inputTokens: 7,
+      outputTokens: 3,
+      costUsd: 0.01,
+    });
+    expect(byType.get("model.completed")?.latencyMs).toBe(2_000);
+    expect(byType.get("tool.completed")?.usage).toEqual({ toolCalls: 1 });
+    expect(byType.get("tool.completed")?.latencyMs).toBe(750);
+    // The agent span closes with the run's totals, which is the same
+    // arithmetic `AgentExecution.usage` reports.
+    expect(byType.get("agent.completed")?.usage).toEqual({
+      modelCalls: 1,
+      toolCalls: 1,
+      costUsd: 0.01,
+    });
+    expect(byType.get("agent.completed")?.latencyMs).toBe(3_000);
+    expect(byType.get("model.started")?.latencyMs).toBeNull();
   });
 
   it("projects the shape of the run and none of its content", async () => {
     const trace = createRecordingTraceWriter();
     const client = createFakeClient({
       script: [
+        events.turnStarted(),
         events.stepStarted("harness-fixture"),
         events.actionsRequested("echo_fixture", "lookup_vendor_evidence"),
         events.actionResult("echo_fixture"),
@@ -731,26 +852,26 @@ describe("EveAgentRuntime.run, trace", () => {
     });
     await createRuntime(client).run(createJob(), context);
 
-    const byType = new Map(trace.events.map((event) => [event.type, event.payload]));
+    const payloads = new Map(trace.events.map((event) => [event.type, event.payload]));
 
-    expect(byType.get("eve.step.started")).toMatchObject({ modelId: "harness-fixture" });
-    expect(byType.get("eve.actions.requested")).toMatchObject({
-      tools: ["echo_fixture", "lookup_vendor_evidence"],
-      actionCount: 2,
-    });
-    expect(byType.get("eve.action.result")).toMatchObject({
+    expect(payloads.get("model.started")).toMatchObject({ modelId: "harness-fixture" });
+    expect(payloads.get("model.completed")).toMatchObject({ finishReason: "stop" });
+    expect(payloads.get("tool.completed")).toMatchObject({
       status: "completed",
       tool: "echo_fixture",
+      callId: "call_0",
     });
-    expect(byType.get("eve.step.completed")).toMatchObject({
-      finishReason: "stop",
-      usage: { inputTokens: 7, outputTokens: 3, costUsd: 0.01 },
-    });
+    // One `tool.started` per requested action, correlated by eve's call id.
+    expect(
+      trace.events
+        .filter((event) => event.type === "tool.started")
+        .map((event) => event.payload.tool),
+    ).toEqual(["echo_fixture", "lookup_vendor_evidence"]);
 
-    // Every event carries its durable identity, and the structured result's
-    // content appears in no payload. M2-T9 owns redaction; M1 carries nothing
-    // that would need it.
-    expect(trace.events.every((event) => typeof event.payload.eventId === "string")).toBe(true);
+    // Every event carries eve's own event id, so a harness trace lines up
+    // against eve's durable stream, and the structured result's content
+    // appears in no payload. M2-T9 owns redaction; nothing here needs it.
+    expect(trace.events.every((event) => typeof event.payload.eveEventId === "string")).toBe(true);
     expect(JSON.stringify(trace.events)).not.toContain("a secret the trace must not carry");
   });
 
@@ -758,6 +879,7 @@ describe("EveAgentRuntime.run, trace", () => {
     const trace = createRecordingTraceWriter();
     const client = createFakeClient({
       script: [
+        events.turnStarted(),
         events.turnFailed("MODEL_CALL_FAILED", "upstream provider said no"),
         events.sessionWaiting(),
       ],
@@ -765,7 +887,113 @@ describe("EveAgentRuntime.run, trace", () => {
 
     await createRuntime(client).run(createJob(), createContext({ trace }));
 
-    expect(trace.events[0]?.payload).toMatchObject({ code: "MODEL_CALL_FAILED" });
+    const failed = trace.events[1];
+
+    expect(failed?.type).toBe("agent.failed");
+    expect(failed?.payload).toMatchObject({ code: "MODEL_CALL_FAILED" });
+    expect(failed?.error?.code).toBe("AGENT_EXECUTION");
+    expect(failed?.error?.details).toMatchObject({ code: "MODEL_CALL_FAILED" });
     expect(JSON.stringify(trace.events)).not.toContain("upstream provider said no");
+  });
+
+  it("closes the model span with model.failed when a step fails", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [
+        events.turnStarted(),
+        events.stepStarted(),
+        events.stepFailed("PROVIDER_ERROR", "the provider said no"),
+        events.sessionWaiting(),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    const failed = trace.events[2];
+
+    expect(failed?.type).toBe("model.failed");
+    expect(failed?.parentId).toBe(trace.events[1]?.id);
+    expect(failed?.payload).toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(JSON.stringify(trace.events)).not.toContain("the provider said no");
+  });
+
+  it.each([
+    ["failed", "TOOL_EXECUTION"],
+    ["rejected", "PERMISSION_DENIED"],
+  ] as const)("records a %s action result as tool.failed", async (status, code) => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [
+        events.turnStarted(),
+        events.actionsRequested("echo_fixture"),
+        events.actionResult("echo_fixture", status),
+        events.turnCompleted(),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    const failed = trace.events.find((event) => event.type === "tool.failed");
+
+    // A rejected call was denied at an approval gate and never ran, which is a
+    // permission outcome rather than a tool defect (ADR-0026's line).
+    expect(failed?.error?.code).toBe(code);
+    expect(failed?.payload).toMatchObject({ status, tool: "echo_fixture" });
+  });
+
+  it("closes the agent span when the turn is cancelled, marking it as a cancellation", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [events.turnStarted(), events.stepStarted()],
+      afterCancel: [events.turnCancelled(), events.sessionWaiting()],
+    });
+    const controller = new AbortController();
+
+    const pending = createRuntime(client).run(
+      createJob(),
+      createContext({ trace, signal: controller.signal }),
+    );
+    await vi.waitFor(() => {
+      expect(client.created).toHaveLength(1);
+    });
+    controller.abort();
+    await pending;
+
+    const cancelled = trace.events.find((event) => event.type === "agent.failed");
+
+    // A span nothing closes makes a trace unreadable, so a cancelled turn still
+    // closes its agent span; `cancelled` is what tells it apart from a failure.
+    expect(cancelled?.payload).toMatchObject({ cancelled: true });
+    expect(cancelled?.parentId).toBe(trace.events[0]?.id);
+  });
+
+  it("maps eve's human-input events onto the approval members of the taxonomy", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [events.turnStarted(), events.inputRequested(), events.sessionWaiting()],
+      afterCancel: [events.turnCancelled()],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    const approval = trace.events.find((event) => event.type === "approval.requested");
+
+    expect(approval?.payload).toMatchObject({ requestCount: 1 });
+    expect(approval?.parentId).toBe(trace.events[0]?.id);
+  });
+
+  it("records nothing for eve events with no counterpart in the taxonomy", async () => {
+    const trace = createRecordingTraceWriter();
+    const client = createFakeClient({
+      script: [
+        events.sessionStarted(),
+        events.resultCompleted({ verdict: "ok" }),
+        events.sessionWaiting(),
+      ],
+    });
+
+    await createRuntime(client).run(createJob(), createContext({ trace }));
+
+    expect(trace.events).toEqual([]);
   });
 });

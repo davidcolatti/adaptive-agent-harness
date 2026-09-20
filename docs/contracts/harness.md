@@ -9,6 +9,8 @@ related:
   - docs/contracts/execution-context.md
   - docs/contracts/errors.md
   - docs/contracts/job.md
+  - docs/contracts/trace-event.md
+  - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
 implementation:
   - packages/core
   - packages/testing
@@ -45,7 +47,7 @@ be reset.
 | Option | Meaning |
 | --- | --- |
 | `agentRuntime` | Required. The [`AgentRuntime`](agent-runtime.md) every run goes through. |
-| `trace` | Where run events go. Defaults to `createNoopTraceWriter()`. |
+| `trace` | The `TraceWriter` run events are drained to. Defaults to `createNoopTraceWriter()`; `createBufferedTraceWriter()` in `@internal/trace` is the real one. |
 | `clock` | The time source for trace timestamps. Defaults to the system clock. |
 
 `createHarness` throws a `ValidationError` immediately if `agentRuntime` does
@@ -100,7 +102,8 @@ metadata a runtime reads.
    so there is no run to report a failure against and nothing has been spent.
    The runtime is never reached.
 2. **Build the job** with `domain.createJob(validInput)` and apply the
-   overrides.
+   overrides. What comes out is *the* job; see "The effective job is the job"
+   below.
 3. **Identify the run.** `runId` is `newRunId()`, a sortable RFC 9562 UUIDv7
    (M2-T1, [ADR-0030](../decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md)),
    so runs sort in start order and a run id works as a ledger cursor. `attempt`
@@ -113,6 +116,31 @@ metadata a runtime reads.
    `flush()`.
 6. **Call `agentRuntime.run(job, context)`** inside a `try`/`catch`.
 7. **Validate the output** when the execution completed.
+
+### The effective job is the job
+
+The overrides are part of **creating** the job, not an amendment to one. They
+are applied while it is built, before anything executes, and the value that
+comes out is the single authoritative job (M2-T2,
+[ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md)):
+
+- it is what `agentRuntime.run(job, context)` receives;
+- it is what the `ExecutionContext`'s `budget` and `permissions` come from;
+- it is what a trace records and what M2-T5 will persist;
+- it is what M6 will replay;
+- it carries the `jobId` the domain minted and the result reports, because it is
+  the same job rather than a successor.
+
+There is no second job and nothing mutates the first. `effectiveJob` in
+`harness.ts` is a local name for the second half of a two-step construction, not
+a second contract type; `Job` remains the only job type, and
+`domain.createJob(input)`'s signature is unchanged.
+
+The value is passed through `deepFreeze()`, so the merged budget, the replaced
+permission list and the merged metadata are immutable all the way down rather
+than one level: `job.budget.maxCostUsd = 1e9` and
+`job.permissions[0].mode = "write"` both throw. See
+[the job contract](job.md) for what deep means and where it stops.
 
 ### Cancellation
 
@@ -203,14 +231,47 @@ its own identity.
 ## Trace events
 
 The harness emits exactly two events per run: `run.started`, then one of
-`run.completed`, `run.failed` or `run.aborted`. `sequence` starts at `0`,
-timestamps are ISO 8601 strings from the configured clock, and `flush()` is
-called once before the result is returned.
+`run.completed`, `run.failed` or `run.aborted`. They are members of the closed
+taxonomy in [`trace-event.md`](trace-event.md), which M2-T3 settled; the
+adapter's `agent.*`, `model.*` and `tool.*` events sit between them in the same
+run, in one order.
 
-**These four type strings are M1 placeholders.** M2-T3 owns the event taxonomy
-and the full `TraceEvent` schema: event ID, parent span, node reference, event
-version, behavior fingerprint, usage, latency and error metadata. Nothing may
-branch on the payload shape until M2-T3 settles it.
+**The harness owns the run's `TraceRecorder`** (M2-T3/M2-T4,
+[ADR-0031](../decisions/0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md)).
+`createHarness` is still configured with a `TraceWriter`; for each run it builds
+a recorder over that writer from the run's own identity, records `run.started`
+through it, and passes the same recorder into the `ExecutionContext` as `trace`.
+That is why a run has one `sequence`, starting at `0` and strictly increasing,
+rather than one per event source.
+
+| Event | `payload` | Other fields |
+| --- | --- | --- |
+| `run.started` | `jobId`, `domain`, `domainVersion`, `jobType`, `attempt` | nothing measured yet |
+| `run.completed` | `jobId` | `usage` (the run's model calls, tool calls and cost), `latencyMs` |
+| `run.failed` | `jobId`, `errorCode` | `usage`, `latencyMs`, `error` (the trace-safe `SerializedHarnessError`) |
+| `run.aborted` | `reason` | `usage`, `latencyMs` |
+
+Every `run.*` event has `parentId: null`: a run is identified by its `runId` and
+needs no pointer to itself. The adapter's `agent.started` points at
+`run.started` instead, and everything inside the turn hangs off that.
+
+`behaviorFingerprint` is `null` on every event the harness writes today. M2-T8
+is what computes one; a fabricated value would break every comparison built on
+it.
+
+### A flush failure is a failed call, not a failed run
+
+`flush()` is awaited once, after the terminal event, and **its failure is not
+caught**. A `StorageError` from the writer propagates out of `harness.run()`
+rather than being reported as a `completed` result. That is M2's "storage
+failures cannot silently turn into successful runs" acceptance criterion: a run
+whose trace never reached its sink cannot be inspected, evaluated or replayed,
+so calling it a success would be a false record. A caller that wants the
+weaker behaviour catches the error itself, with the run's outcome unavailable
+to it, which is the honest trade.
+
+`createBufferedTraceWriter()` in `@internal/trace` keeps the events buffered
+when a sink rejects, so the run's trace is not lost by the same failure.
 
 `createRecordingTraceWriter()` in `@internal/testing` is what a test asserts
 against; it records events and counts `flush` calls, so "the harness flushed the
@@ -227,8 +288,9 @@ scripted runtime, trace writer and clock inline instead. Do not add
 
 - **M1-T6** supplies `EveAgentRuntime` as the `agentRuntime`, and
   `apps/example-agent/src/run.ts` plus `pnpm example:run` call this API.
-- **M2** adds the `storage` option, the real trace taxonomy and the sortable ID
-  scheme, and makes budgets enforced rather than declarative.
+- **M2** adds the `storage` option and makes budgets enforced rather than
+  declarative. The sortable ID scheme landed in M2-T1 and the trace taxonomy in
+  M2-T3; `behaviorFingerprint` waits for M2-T8.
 - **Retries** do not exist. `attempt` is always `1`; retry policy has no owner
   yet.
 - **The execution router** (build plan section 2, "workflow match / no match")

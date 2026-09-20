@@ -1,7 +1,13 @@
 import { ValidationError } from "./errors.js";
 import type { JobId, RunId } from "./ids.js";
 import type { JsonObject } from "./json.js";
-import { createNoopTraceWriter, type TraceWriter } from "./trace.js";
+import {
+  createNoopTraceWriter,
+  createTraceRecorder,
+  type TraceClock,
+  type TraceRecorder,
+  type TraceWriter,
+} from "./trace.js";
 
 /**
  * A reference to a versioned thing by stable ID.
@@ -134,8 +140,17 @@ export interface ExecutionContext {
    * is explicit, so the default is denial rather than open access.
    */
   readonly permissions: readonly ToolGrant[];
-  /** Where trace events go. */
-  readonly trace: TraceWriter;
+  /**
+   * Where trace events go: the run's {@link TraceRecorder}, not a raw writer.
+   *
+   * **The recorder, not the writer, is what an execution holds** (M2-T3/M2-T4,
+   * ADR-0031). A writer is a sink for complete events; a recorder stamps the
+   * identity and the order a run's events must share. Handing an adapter a
+   * writer is what let M1's harness and eve adapter each number `sequence` from
+   * 0 within one run. One recorder per run means one total order, whoever
+   * records into it.
+   */
+  readonly trace: TraceRecorder;
   /** Cancellation. An adapter must propagate this to the work it starts. */
   readonly signal: AbortSignal;
   /** What is executing. */
@@ -166,8 +181,36 @@ export interface CreateExecutionContextInput {
   readonly budget?: Budget;
   /** The tools this attempt may use. Defaults to `[]`, which grants nothing. */
   readonly permissions?: readonly ToolGrant[];
-  /** Where trace events go. Defaults to a no-op writer. */
+  /**
+   * Where trace events go. Defaults to a no-op writer.
+   *
+   * A **writer**: this function wraps it in a {@link TraceRecorder} built from
+   * the run identity it already has, so an ordinary caller never has to
+   * construct one. Ignored when {@link CreateExecutionContextInput.recorder} is
+   * supplied.
+   */
   readonly trace?: TraceWriter;
+  /**
+   * An already-built recorder to use instead of wrapping {@link trace}.
+   *
+   * This is how `createHarness()` makes its own `run.*` events and the
+   * adapter's `agent.*`/`model.*`/`tool.*` events share one sequence: the
+   * harness records `run.started` itself and then passes the *same* recorder
+   * down. Supplying both is not an error; the recorder wins, because it is the
+   * more specific statement.
+   */
+  readonly recorder?: TraceRecorder;
+  /**
+   * The time source for trace events that do not carry their own timestamp.
+   * Defaults to the system clock. Ignored when `recorder` is supplied, which
+   * already has one.
+   */
+  readonly clock?: TraceClock;
+  /**
+   * The run's behavior fingerprint, stamped on every event. Defaults to `null`.
+   * **M2-T8 is what supplies a real one**; ignored when `recorder` is supplied.
+   */
+  readonly behaviorFingerprint?: string | null;
   /** Cancellation. Defaults to a signal that never aborts. */
   readonly signal?: AbortSignal;
   /**
@@ -218,7 +261,15 @@ export function createExecutionContext(input: CreateExecutionContextInput): Exec
     attempt,
     budget: input.budget ?? {},
     permissions: input.permissions ?? [],
-    trace: input.trace ?? createNoopTraceWriter(),
+    trace:
+      input.recorder ??
+      createTraceRecorder({
+        runId: input.runId,
+        writer: input.trace ?? createNoopTraceWriter(),
+        attempt,
+        ...(input.clock === undefined ? {} : { clock: input.clock }),
+        behaviorFingerprint: input.behaviorFingerprint ?? null,
+      }),
     // The controller is intentionally discarded: nothing holds a reference to
     // it, so the signal it produced can never be aborted. That is the honest
     // "no cancellation was supplied" value, and it keeps `signal` non-optional

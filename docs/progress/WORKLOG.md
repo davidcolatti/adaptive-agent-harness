@@ -4047,3 +4047,514 @@ fields carry a brand from `packages/core/src/ids.ts`: M2-T2 owns whether an atte
 lands and whether the harness's `sequence` survives alongside a sortable event id. Neither is
 decided by M2-T1; ADR-0030's "What this does NOT decide" section says so explicitly.
 M2-T5 onward still need a local Supabase (M2-T11 first).
+
+## 2026-09-19 21:51 — M2-T2 — Job contract
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
+**Commit:** not committed
+
+### Goal
+
+Finalize the `Job` schema per M2-T2: "Jobs are immutable after execution begins." Settle seven
+questions the M1 shape left open — deep versus shallow immutability, which job is the one that
+"begins execution", whether a `createdAt` field is needed now that a `JobId` is a UUIDv7, a
+boundary validator for reading a job back as `unknown`, whether an attempt belongs on the job,
+whether `JobContracts` needs a fourth field — and record the contract decisions in ADR-0032.
+
+### Implementation references
+
+- package/version: **not framework-facing.** No Vercel primitive is touched: no `eve`, no `ai`, no
+  AI Gateway, no Jev, no Workflow, no Sandbox, no Supabase. The work is entirely inside
+  `@internal/core`, which declares zero third-party dependencies and may use only Node built-ins
+  (ADR-0029, ADR-0030). The source-of-truth protocol's research checkpoint therefore has no
+  external API to establish; what follows is the in-repository material read instead.
+- installed docs read: none applicable (no third-party package involved). Node's own
+  `Object.freeze`/`Object.isFrozen` semantics are ECMAScript, not a dependency.
+- official docs/repos/examples read: none applicable.
+- public types/exports inspected: `packages/core/src/job.ts`, `domain.ts`, `harness.ts` (step 2,
+  the `effectiveJob` construction), `context.ts` (`Budget`, `ToolGrant`, `DomainRef`,
+  `ExecutionContext.attempt`), `ids.ts` (the UUIDv7 layout, `parseEntityId`, `ENTITY_ID_PATTERN`),
+  `identifiers.ts` (`collectRefIssues`, `IDENTIFIER_PATTERN`, `isCapabilityIdentifier`),
+  `capabilities.ts` (`parseCapabilityRefString`), `json.ts` (the JSON value model),
+  `fingerprint.ts` (`canonicalJson`'s JSON-shape walk, as the style precedent for a recursive
+  value walk in core), `errors.ts` (`ValidationError`, `ValidationIssue`), `schema.ts`, and
+  `apps/example-agent/src/domain/index.ts` (the real `contracts`, `budget` and `permissions` a job
+  carries today, including the bare `procurement-sop` SOP reference with no version).
+- selected documented pattern: none imposed externally. The choices are harness-owned and are
+  recorded in ADR-0032, in the style ADR-0029 and ADR-0030 set for the two previous
+  AD-016 "unprescribed internal choice" decisions.
+- ADRs read: `0029` (canonical JSON, `node:crypto` in a zero-dependency core), `0030` (UUIDv7
+  entity identifiers, and its explicit "What this does NOT decide" list handing the attempt-id
+  question to M2-T2), `0026` (trace-safe errors), `0027` (Standard Schema), `0000-template.md`.
+- Docs read: `AGENTS.md` in full, `docs/context/current-state.md`, the build plan's §5 `Job`
+  section and its M2-T2 and M2 acceptance criteria, the M2 status file's "Before starting",
+  `docs/contracts/job.md`, `harness.md`, `domain-definition.md`, `identifiers.md`,
+  `docs/contracts/README.md`, `docs/decisions/README.md`.
+
+### Work completed
+
+- Nothing yet; this is the pre-implementation entry required by AGENTS.md rule 7.
+
+### Files changed
+
+- `docs/progress/WORKLOG.md` (this entry).
+
+### Verification
+
+- Not yet run. The `completed` entry carries the results.
+
+### Decisions / deviations
+
+- Recorded in the `completed` entry and in ADR-0032.
+
+### Known issues / blockers
+
+- Another agent is working concurrently on M2-T3/M2-T4 (the trace schema and `packages/trace`).
+  `trace.ts`, the emit/finish machinery in `harness.ts`, and `context.ts` are off limits to this
+  task; only the step-2 job-construction block of `harness.ts` is touched.
+
+### Next exact step
+
+Implement the deep-freeze helper, `parseJob`, and the id-timestamp helper; then the docs and
+ADR-0032; then verify.
+
+## 2026-09-19 21:58 — M2-T3, M2-T4 — Trace event schema and buffered trace writer
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
+**Commit:** not committed
+
+### Goal
+
+Define the real `TraceEvent` schema (M2-T3) and the buffered, order-preserving trace writer
+(M2-T4) together, because the one question both depend on is the same: **who owns `sequence`**.
+Today the harness numbers its `run.*` events from 0 and `EveAgentRuntime` numbers its `eve.*`
+events from 0 again, so a run's events collide and no total order exists (the M2 status file's
+"Before starting", first bullet).
+
+Concretely: a closed `TraceEventType` taxonomy from the build plan's list plus `run.aborted`; the
+twelve-field event the plan requires ("every event contains"); a run-scoped `TraceRecorder` in
+core that is the single owner of `sequence`, `id`, `attempt`, `version` and `behaviorFingerprint`;
+`EveAgentRuntime` mapped onto the taxonomy instead of emitting raw `eve.<type>`; a new
+`@internal/trace` package with `createBufferedTraceWriter`, a `TraceSink` interface, an in-memory
+sink and a JSONL file sink; and `pnpm example:run:mock` writing a real ordered trace to disk.
+
+### Implementation references
+
+- package/version: **`eve` 0.63.0**, resolved from
+  `node_modules/.pnpm/eve@0.63.0_ai@7.0.107_zod@4.6.5_/node_modules/eve` via
+  `require.resolve('eve/package.json', { paths: ['packages/runtime-eve'] })`, matching
+  `packages/runtime-eve/package.json` and `pnpm-lock.yaml`. This half of the task is
+  framework-facing: the adapter maps eve's stream-event taxonomy onto the harness taxonomy, so
+  every eve event type and field relied on is verified against the installed package rather than
+  recalled. The rest (the core schema, the recorder, `packages/trace`) touches no third-party
+  surface: `@internal/core` and `@internal/trace` declare zero third-party dependencies and use
+  Node built-ins only (`node:fs/promises`, `node:path`), per ADR-0029 and ADR-0030.
+- installed docs read: `eve/docs/concepts/sessions-runs-and-streaming.md` (the event envelope,
+  `meta.id`/`meta.at`, turn boundaries), `eve/docs/concepts/execution-model-and-durability.mdx`
+  (durable step retries, which is why a retried `step.completed` is counted), `eve/docs/README.md`
+  and `eve/docs/meta.json` for the docs map.
+- official docs/repos/examples read: none beyond the installed package; eve is preview software
+  and AGENTS.md makes `node_modules/eve/docs/` authoritative for it.
+- public types/exports inspected: `eve/dist/src/protocol/message.d.ts` in full — the
+  `UnstampedMessageStreamEvent` union (all 32 members), `MessageStreamEvent`,
+  `MessageStreamEventMeta` (`id`, `at`, `deliveryIds`), `TurnStartedStreamEvent`,
+  `TurnCompletedStreamEvent`, `TurnFailedStreamEvent`, `TurnCancelledStreamEvent`,
+  `StepStartedStreamEvent` (`modelId`, `stepIndex`), `StepCompletedStreamEvent`
+  (`finishReason`, optional `usage.{costUsd,inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}`,
+  `providerMetadata.gateway.generationId`), `StepFailedStreamEvent` (`code`, `message`,
+  `details`), `ActionsRequestedStreamEvent` (`actions`, `stepIndex`), `ActionResultStreamEvent`
+  (`result`, `status`, optional `error: { code, message }`), `ActionResultStatus`
+  (`"completed" | "failed" | "rejected"`, where `rejected` is a HITL-denied call that never ran),
+  `ActionPartialStreamEvent`, `InputRequestedStreamEvent`, `InputResolvedStreamEvent`
+  (`resolutions[].outcome`), `ApprovalCandidateStreamEvent`, `ApprovalSettledStreamEvent`,
+  `AuthorizationRequiredStreamEvent`, `AuthorizationCompletedStreamEvent`,
+  `SessionStartedStreamEvent`, `SessionWaitingStreamEvent`, `SessionFailedStreamEvent`,
+  `SessionCompletedStreamEvent`, `ResultCompletedStreamEvent`, `MessageReceivedStreamEvent`,
+  `MessageAppendedStreamEvent`, `MessageCompletedStreamEvent`, `ReasoningAppendedStreamEvent`,
+  `ReasoningCompletedStreamEvent`, `ActionInputAppendedStreamEvent`, `ContextClearedStreamEvent`,
+  `CompactionRequestedStreamEvent`, `CompactionCompletedStreamEvent`, the four `subagent.*`
+  events, `isTurnFailureEvent` and `isCurrentTurnBoundaryEvent`. Also
+  `eve/dist/src/shared/action-types.d.ts`: `RuntimeActionRequest` (five members, every one with a
+  `callId`) and `RuntimeActionResult` (`tool-result`, `subagent-result`, `load-skill-result`,
+  every one with a `callId`), which is what makes a tool span correlatable.
+- selected documented pattern: correlate action lifecycles **by `callId`**, which
+  `ActionsRequestedStreamEvent`'s own doc comment requires ("consumers must correlate action
+  lifecycles by call ID rather than assume one event contains every call from an assistant
+  step"); correlate model spans by `turnId` + `stepIndex`; take each event's instant from
+  `meta.at` (ISO-8601, stamped once and stable across re-reads) and its cross-reference identity
+  from `meta.id`; read terminal state from turn boundary events, never `MessageResult.status`
+  (ADR-0028, unchanged).
+- ADRs read: `0010` (observability is a product surface), `0026` (trace-safe error
+  serialization), `0028` (the eve adapter observes the event stream), `0029` (canonical JSON),
+  `0030` (`TraceEventId`, `RunId`, and its explicit hand-off of the attempt-id question),
+  `0000-template.md`.
+- Docs read: `AGENTS.md` in full, `docs/context/current-state.md`, the build plan's M2-T3, M2-T4,
+  M2 acceptance criteria and AD-010, the M2 status file's "Before starting",
+  `docs/contracts/README.md`, `harness.md`, `execution-context.md`,
+  `docs/architecture/runtime.md`, `system-map.md`, `docs/decisions/README.md`.
+
+### Work completed
+
+- Nothing yet; this is the pre-implementation entry required by AGENTS.md rule 7 and the
+  research checkpoint AD-011 requires before framework-facing code.
+
+### Files changed
+
+- `docs/progress/WORKLOG.md` (this entry).
+
+### Verification
+
+- Not yet run. The `completed` entry carries the results.
+
+### Decisions / deviations
+
+- Recorded in the `completed` entry and in ADR-0031.
+
+### Known issues / blockers
+
+- Another agent is working concurrently on M2-T2 (`job.ts`, `domain.ts`, `docs/contracts/job.md`,
+  ADR-0032). Those files, plus `ids.ts`, `json.ts`, `identifiers.ts`, `capabilities.ts` and the
+  step-2 job-construction block of `harness.ts`, are off limits to this task.
+
+### Next exact step
+
+Write the taxonomy, `TraceEvent` and `TraceRecorder` in `packages/core/src/trace.ts`, then the
+`ExecutionContext` and `createHarness` changes, then the adapter mapping, then `packages/trace`.
+
+## 2026-09-19 22:10 — M2-T2 — Job contract
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
+**Commit:** not committed
+
+### Goal
+
+Finalize the `Job` schema per M2-T2, "jobs are immutable after execution begins": settle deep
+versus shallow immutability, which of the two values called "the job" is authoritative, whether a
+`createdAt` field is needed, how an untrusted value becomes a `Job`, whether an attempt belongs on
+a job, and whether `JobContracts` needs a fourth field. Record the contract decisions in ADR-0032.
+
+### Implementation references
+
+Not framework-facing: no Vercel primitive is touched (no `eve`, `ai`, AI Gateway, Jev, Workflow,
+Sandbox, Supabase). The work is inside `@internal/core`, which declares zero third-party
+dependencies and may use only Node built-ins (ADR-0029, ADR-0030), so the source-of-truth protocol
+has no external API to establish. The in-repository material read instead:
+
+- core sources: `job.ts`, `domain.ts`, `harness.ts` (the step-2 `effectiveJob` block), `context.ts`
+  (`Budget`, `ToolGrant`, `DomainRef`, `ExecutionContext.attempt`), `ids.ts` (UUIDv7 layout,
+  `parseEntityId`), `identifiers.ts` (`collectRefIssues`, `IDENTIFIER_PATTERN`),
+  `capabilities.ts` (`parseCapabilityRefString`), `json.ts`, `fingerprint.ts` (`canonicalJson`'s
+  recursive JSON walk, the style precedent), `errors.ts`, `schema.ts`, `index.ts`
+- the real job a domain produces: `apps/example-agent/src/domain/index.ts`, including the bare
+  unversioned `procurement-sop` SOP reference
+- ADRs: 0029, 0030 (whose "What this does NOT decide" hands the attempt-id question here), 0026,
+  0027, `0000-template.md`
+- docs: `AGENTS.md`, `docs/context/current-state.md`, build plan §5 and M2-T2 and the M2
+  acceptance criteria, the M2 status file's "Before starting", `docs/contracts/job.md`,
+  `harness.md`, `domain-definition.md`, `identifiers.md`, `docs/contracts/README.md`,
+  `docs/decisions/README.md`
+- ECMAScript semantics relied on, stated rather than assumed: `Object.freeze` freezes own
+  properties and not the objects they reference; a `Date`'s time and a `Map`'s entries live in
+  internal slots, so freezing one does not stop `setTime()` or `set()`; every module here is an ES
+  module and therefore strict, so a write to a frozen property throws a `TypeError` rather than
+  failing silently, which is what makes deep immutability assertable in a test
+
+### Work completed
+
+- **`packages/core/src/freeze.ts` (new), `deepFreeze()`.** The whole of the harness's freezing
+  surface. Recurses into arrays and plain objects only; a `Date`, `Map`, `Set`, class instance or
+  function is left as found, neither frozen nor walked. Cycle-guarded with a `WeakSet` rather than
+  `Object.isFrozen`, because an already-frozen object can hold an unfrozen child.
+- **`defineDomain()`'s `createJob` and `createHarness()`'s job construction now `deepFreeze`.** The
+  three `Object.freeze` calls inside `createJob` became one deep one. Only the step-2 block of
+  `harness.ts` was touched, plus its import line.
+- **`packages/core/src/json.ts`:** added `isPlainObject`, `isJsonValue` and `isJsonObject`, the
+  runtime half of the value model. `isJsonValue` rejects non-finite numbers, `undefined`, symbols,
+  bigints, functions, exotic objects and cycles, and accepts an `undefined` object property (which
+  `JSON.stringify` drops) while rejecting an `undefined` array element (which it turns into `null`).
+- **`packages/core/src/ids.ts`:** added `entityIdTimestampMs(id, path?)` and
+  `entityIdTimestamp(id, path?)`, which read the 48-bit creation time out of any id in the scheme
+  and throw `ValidationError` for anything that is not one.
+- **`packages/core/src/job.ts`:** added `parseJob(value, path?)` and `isJob(value)` over one shared
+  validation pass, and rewrote the `Job` and `JobContracts` doc comments as the finalized contract.
+- **`packages/core/src/index.ts`:** exported `deepFreeze`, `entityIdTimestamp`,
+  `entityIdTimestampMs`, `isJob`, `parseJob`, `isJsonObject`, `isJsonValue`, `isPlainObject`.
+- **Tests:** new `freeze.test.ts` (11) and `job.test.ts` (48); additions to `json.test.ts` (+10),
+  `ids.test.ts` (+9), `domain.test.ts` (+1) and `harness.test.ts` (+2). Among them: nested mutation of
+  a job's budget, grant, metadata and input each throws `TypeError`; the JSON round trip
+  `parseJob(JSON.parse(JSON.stringify(job)))` deep-equals the job the harness built, for a job
+  built through `defineDomain()` mirroring the example domain; the effective job the runtime
+  receives carries the result's `jobId` and is deep-frozen; and `isJob` freezes nothing.
+- **Docs:** `docs/contracts/job.md` rewritten as the finalized contract; `harness.md` gained a
+  "The effective job is the job" section; `identifiers.md` gained "Reading the creation time back"
+  and had its `AttemptId` row and open question resolved; `domain-definition.md`'s `createJob` step
+  5 now states the deep freeze; `docs/contracts/README.md`'s job row and closing paragraph;
+  `docs/architecture/system-map.md`'s core file list (`freeze.ts` added, `job.ts` no longer types
+  only); `docs/decisions/README.md` gained the ADR-0032 paragraph.
+
+### Files changed
+
+- `packages/core/src/freeze.ts`, `freeze.test.ts` (new)
+- `packages/core/src/job.ts`, `job.test.ts` (new test file)
+- `packages/core/src/json.ts`, `json.test.ts`
+- `packages/core/src/ids.ts`, `ids.test.ts`
+- `packages/core/src/domain.ts`, `domain.test.ts`
+- `packages/core/src/harness.ts` (step-2 block and one import), `harness.test.ts`
+- `packages/core/src/index.ts`
+- `docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md` (new)
+- `docs/decisions/README.md`
+- `docs/contracts/job.md`, `harness.md`, `identifiers.md`, `domain-definition.md`, `README.md`
+- `docs/architecture/system-map.md`
+- `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (the M2-T2 subsection only)
+- `docs/progress/WORKLOG.md`
+
+### Verification
+
+- `pnpm vitest run --project unit packages/core` — **PASS**. 13 files, 360 tests, against 11 files
+  and 279 before this task: **+81**, being two new files (`freeze.test.ts` 11, `job.test.ts` 48)
+  and four extended ones (`json.test.ts` +10, `ids.test.ts` +9, `domain.test.ts` +1,
+  `harness.test.ts` +2).
+- `pnpm typecheck` — **PASS**, 6/6 tasks.
+- `pnpm test` (all four projects) — **PASS**, 33 files, 545 tests, 12.8 s. The `contract` project
+  booted real `eve dev` servers as usual.
+- `pnpm build` — **PASS**, 7/7 tasks.
+- `pnpm example:run:mock` — **PASS**, exit 0, `"status": "completed"`, against a real `eve dev`
+  server with `mockModel`. This is the deep-frozen effective job travelling the real path into
+  `EveAgentRuntime`.
+- `biome check --formatter-enabled=false` and `biome format` over the twelve files this task
+  touched — **PASS**, no findings.
+- **`pnpm check` — FAIL, and not on this task's work.** It stops at its first stage,
+  `format:check`, on `packages/runtime-eve/src/eve-agent-runtime.ts`,
+  `eve-agent-runtime.test.ts` and `packages/trace/src/buffered-trace-writer.test.ts`; `pnpm lint`
+  then fails on `packages/core/src/trace.ts`
+  (`assist/source/organizeImports`); and `pnpm check:handoff` fails with
+  `[missing-decision-record] … references decision record 0031, but no file starting with "0031-"
+  exists`. All three are the concurrent M2-T3/M2-T4 task's in-progress files, every one of which is
+  on this task's do-not-edit list, and ADR-0031 is the number reserved for it. Re-run once after an
+  interval: the same stages failed, on the same task's files and no others (the second run's
+  `format:check` listed one more of its files, `packages/trace/src/buffered-trace-writer.test.ts`,
+  as that package was still being written). Every stage that does not depend on those
+  files passes, as listed above.
+
+### Decisions / deviations
+
+All seven questions were settled as recommended; the reasoning and the alternatives are in
+[ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md).
+
+- **Deep immutability, with a stated boundary.** `deepFreeze` recurses into arrays and plain
+  objects only. This is a deviation in detail from "freeze everything": freezing a `Date` does not
+  stop `setTime()` and freezing a `Map` does not stop `set()`, because that state is in internal
+  slots, so the protection would be advertised and absent; and freezing a memoizing class instance
+  breaks it at a distance from the code that froze it. **The input is frozen** on the same terms.
+  The rule is stated positively: a job is deeply immutable exactly as far as it is
+  JSON-representable, which is exactly as far as it is persistable, traceable and replayable.
+- **`deepFreeze` lives in a new `freeze.ts`, not in `json.ts`.** `json.ts` was types only and is
+  the value model; immutability is a different concern and is now one module rather than a
+  `freeze` call per field. `json.ts` did gain runtime code, but only the three guards `parseJob`
+  needs to ask "is this JSON".
+- **The effective job is the job.** Recorded in `job.md` and `harness.md`. `createJob(input)`'s
+  signature is unchanged and `defineDomain()` gained no clock.
+- **No `createdAt`.** `entityIdTimestampMs`/`entityIdTimestamp` added to `ids.ts` with tests; both
+  refuse a non-id rather than reading a v4 UUID's random bits as a confident wrong date. The two
+  monotonicity caveats inherited from ADR-0030 (marginally ahead after a burst, marginally behind
+  through a backwards clock step) are documented at the function and in `identifiers.md`.
+- **`parseJob` is strict about unknown fields** at the top level, in `contracts`, in `budget` and
+  in a `ToolGrant`, and lenient only where the contract is open (`metadata`, and `input` beyond
+  "is it JSON"). Dropping a field on read loses data from the record whose purpose is
+  reproducibility, and a mistyped budget dimension would otherwise read as unlimited. The cost —
+  a job written by a future version with a tenth field is rejected rather than degraded — is
+  recorded as an open question in the ADR.
+- **Budget dimensions: `maxCostUsd` may be fractional, the other three must be whole.** Money is
+  fractional; a model call is not, and `Date.now()` cannot express a fractional millisecond.
+- **`contracts.sop` is a bare identifier**, matching what the example domain writes and what M1-T9
+  deliberately left unregistered. `IDENTIFIER_PATTERN` excludes `@`, so a versioned SOP reference
+  would not pass today. Per the task, this is recorded as an **open question for M2-T8** in
+  ADR-0032 rather than answered with a fourth `JobContracts` field.
+- **No attempt field on `Job`**, answering the question ADR-0030 deferred here.
+- **`AGENTS.md` was deliberately not edited.** Its "next free number" line still says 0031; the
+  orchestrator reconciles it once both M2-T2 (ADR-0032) and the concurrent trace task (ADR-0031)
+  have landed. `docs/context/current-state.md` and `docs/milestones/build-plan.md` were also left
+  alone, as were `trace.ts`, the trace machinery in `harness.ts`, `context.ts`, and everything
+  under `packages/runtime-eve`, `packages/testing`, `packages/trace`, `apps/` and `tests/`.
+
+### Known issues / blockers
+
+- `pnpm check` cannot be made to pass from inside this task: all three of its failing stages fail
+  on the concurrent task's files (see Verification). This is not a blocker for M2-T2's own work,
+  which is verified by the targeted runs, but the milestone cannot be declared clean until
+  `packages/runtime-eve/src/eve-agent-runtime.ts`, `eve-agent-runtime.test.ts` and
+  `packages/trace/src/buffered-trace-writer.test.ts` are formatted, `packages/core/src/trace.ts`'s
+  imports are sorted, and ADR-0031 exists.
+- One forward-compatibility consequence worth carrying into M2-T5: `parseJob` rejects an unknown
+  field, so the moment a tenth field is wanted, the stored record needs a version discriminator or
+  a coordinated migration. The ADR records it as an open question rather than pre-solving it.
+- `parseJob` walks the whole `input` to prove it is JSON, so reading a very large stored job costs
+  a full traversal. Accepted against the alternative, which is trusting a database row.
+
+### Next exact step
+
+M2-T3 and M2-T4 are in progress concurrently. When they land: run `pnpm format`, sort
+`packages/core/src/trace.ts`'s imports, land ADR-0031, then run `pnpm check` to green and update `docs/context/current-state.md`
+and `AGENTS.md`'s next-free-ADR line (now 0033). After that, **M2-T5 (Supabase schema)** is the
+next task on this milestone and `parseJob`'s rules in `docs/contracts/job.md` are the written
+specification its `jobs` table columns and constraints have to match; it still needs M2-T11's local
+Supabase first.
+
+## 2026-09-19 22:25 — M2-T3, M2-T4 — Trace event schema and buffered trace writer
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent under the M2 orchestrator)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. The event taxonomy and the twelve-field event (M2-T3), the buffered
+order-preserving writer and the `packages/trace` package (M2-T4), and the one question both turn
+on: who owns a run's `sequence`.
+
+### Implementation references
+
+As recorded in the `started` entry above (eve 0.63.0, `dist/src/protocol/message.d.ts` and
+`dist/src/shared/action-types.d.ts` read in full, `docs/concepts/sessions-runs-and-streaming.md`).
+Nothing in the source list changed during implementation. Two documented facts decided the adapter
+design: `ActionsRequestedStreamEvent`'s "consumers must correlate action lifecycles by call ID"
+(so tool spans are keyed by `callId`, not by event), and `ActionResultStatus`'s `"rejected"` being
+a call denied at an approval gate that never ran (so it maps to `PermissionDeniedError`, not
+`ToolExecutionError`).
+
+### Work completed
+
+- **Taxonomy (M2-T3).** `TRACE_EVENT_TYPES` is the build plan's list plus `run.aborted`, exported
+  as a runtime constant with `isTraceEventType()`. `TraceEventType` is the closed union.
+  `TRACE_EVENT_VERSION` is the literal `1`.
+- **Event.** `TraceEvent` carries `id`, `runId`, `attempt`, `sequence`, `timestamp`, `type`,
+  `parentId`, `node`, `version`, `behaviorFingerprint`, `payload`, `usage`, `latencyMs`, `error`.
+  Declared as a type alias so it is assignable to `JsonObject` and needs no conversion to be
+  canonicalized, written as JSONL or stored as JSONB. `TraceEventUsage` is the union of what
+  `AgentExecutionUsage` and eve's step usage already report, every field optional.
+- **`TraceRecorder` (the M2-T3/M2-T4 joint decision).** `createTraceRecorder()` in
+  `@internal/core` is the single owner of a run's `sequence` and stamps the six fields a caller
+  must not choose. `record()` assigns `sequence` synchronously and chains appends, so the writer
+  sees events in order under concurrency; a rejected append does not poison later ones. `span()`
+  returns a handle whose `end()` sets `parentId` and measures `latencyMs`. `rootId` exposes the
+  run's `run.started` so an adapter parents its `agent.started` without bookkeeping.
+- **`ExecutionContext.trace` is now a `TraceRecorder`.** `createExecutionContext` accepts either a
+  `TraceWriter` (wrapped) or a `recorder` (used as-is), plus `clock` and `behaviorFingerprint`.
+- **`createHarness()`** builds one recorder per run, records `run.started` through it, passes the
+  same recorder into the context, and derives each terminal event's `usage`, `latencyMs` and
+  `error` from the result. `flush()` is awaited and **not** caught, so a `StorageError` leaves
+  `harness.run()`.
+- **`EveAgentRuntime`** maps eve's stream onto the taxonomy instead of emitting `eve.<type>`, with
+  agent/model/tool spans; `state.sequence` deleted. Table and drops in ADR-0031 and
+  `docs/architecture/runtime.md`.
+- **`packages/trace`** (`@internal/trace`): `TraceSink`, `createBufferedTraceWriter()`,
+  `createInMemoryTraceSink()`, `createJsonlFileTraceSink()`, `createJsonlDirectoryTraceSink()`.
+  Added to `BOUNDARY_RULES` as a non-adapter with core's bans, and the boundary test now fails if
+  a `packages/*` package is governed by no rule at all.
+- **`pnpm example:run:mock`** writes `apps/<agent>/.harness/traces/<runId>.jsonl` and prints the
+  path; `.harness/` is git-ignored.
+- **Docs:** new `docs/contracts/trace-event.md`; `harness.md`, `execution-context.md`,
+  `docs/contracts/README.md`, `docs/architecture/runtime.md`, `system-map.md`, the AGENTS.md
+  layout tree and ADR-0031 updated or written.
+
+### Files changed
+
+- `packages/core/src/trace.ts` — rewritten: taxonomy, `TraceEvent`, `TraceEventUsage`,
+  `TraceWriter`, `TraceClock`, `TraceEventInput`, `TraceSpan`, `TraceRecorder`,
+  `createTraceRecorder()`.
+- `packages/core/src/trace.test.ts` — rewritten (4 -> 30 `it` blocks, 63 cases).
+- `packages/core/src/context.ts` — `trace` is a `TraceRecorder`; new `recorder`, `clock`,
+  `behaviorFingerprint` inputs.
+- `packages/core/src/context.test.ts` — recorder assertions (11 -> 13).
+- `packages/core/src/harness.ts` — trace code only: `RUN_EVENTS` typed against the taxonomy,
+  `TraceEmitExtra`, `traceUsage()`, recorder construction, `emit`/`finish`, terminal payloads.
+- `packages/core/src/harness.test.ts` — trace assertions (16 -> 21), including the flush-failure
+  test.
+- `packages/core/src/index.ts` — trace exports.
+- `packages/trace/package.json`, `tsconfig.json`, `tsconfig.build.json`, `src/index.ts`,
+  `src/sink.ts`, `src/buffered-trace-writer.ts`, `src/jsonl-sink.ts`,
+  `src/buffered-trace-writer.test.ts`, `src/jsonl-sink.test.ts` — new package.
+- `packages/runtime-eve/src/eve-events.ts` — `traceEventType`/`projectEveEvent` replaced by
+  `eveEventIdentity()`, `stepTraceUsage()`, `actionResultCallId()`, `readErrorCode()`.
+- `packages/runtime-eve/src/eve-agent-runtime.ts` — `#trace()` mapping, `TurnSpans`, span helpers,
+  `toolFailure()`; `state.sequence` removed.
+- `packages/runtime-eve/src/eve-agent-runtime.test.ts` — trace suite rewritten (29 -> 37).
+- `packages/runtime-eve/src/eve-agent-runtime.contract.test.ts` — taxonomy assertions.
+- `packages/testing/src/recording-trace-writer.ts`, `recording-trace-writer.test.ts` — typed
+  `types()`, events built through a recorder.
+- `tests/architecture/boundaries.ts`, `package-boundaries.test.ts` — `@internal/trace`.
+- `apps/example-agent/package.json`, `src/run.ts` — JSONL trace wiring and printed path.
+- `.gitignore` — `.harness/`.
+- `docs/contracts/trace-event.md` (new), `harness.md`, `execution-context.md`, `README.md`;
+  `docs/architecture/runtime.md`, `system-map.md`; `docs/decisions/0031-...md` (new),
+  `docs/decisions/README.md`; `AGENTS.md` (layout tree line);
+  `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (M2-T3, M2-T4 subsections);
+  `docs/progress/WORKLOG.md`.
+
+### Verification
+
+- `pnpm vitest run --project unit packages/core packages/trace packages/testing packages/runtime-eve` — PASS (450 tests, 21 files)
+- `pnpm vitest run --project contract` — PASS (7 tests, 12.7 s, real `eve dev` server)
+- `pnpm check` — PASS (format, lint, typecheck, 569 tests across 35 files, build, handoff). Run
+  with M2-T2's concurrent work also in the tree.
+- `pnpm example:run:mock` — PASS, exit 0, `"status": "completed"`, trace written to
+  `apps/eve-fixture-agent/.harness/traces/01a0bc9c-25f8-7000-ab91-a4f665e1af2b.jsonl`: six lines,
+  sequences `0,1,2,3,4,5`, types `run.started agent.started model.started model.completed
+  agent.completed run.completed`, each `agent.*`/`model.*` event parented on the event before it
+  and both `run.*` events parented on `null`.
+
+### Decisions / deviations
+
+All recorded in **ADR-0031**. The ones that are deviations or additions rather than restatements
+of the task brief:
+
+- **`createJsonlDirectoryTraceSink(directory)` exists alongside `createJsonlFileTraceSink(path)`.**
+  The brief asked for a JSONL sink taking a path and for the example to write
+  `.harness/traces/<runId>.jsonl`. Those cannot both be true with a path alone: a run id is minted
+  inside `harness.run()`, so a caller cannot name the file before the run starts. The file sink is
+  exactly as specified; the directory sink names each file from the `runId` on the events it is
+  handed.
+- **`ExecutionContext.trace` keeps its name** and takes the recorder; `createExecutionContext`
+  gains a `recorder` input so the harness can share one recorder with the adapter.
+- **`run.*` events all have `parentId: null`**, including the terminal ones, per the brief's "run.*
+  has null". `agent.started` points at `run.started`, so the run is still the top of the tree.
+- **A cancelled eve turn is `agent.failed` with `payload.cancelled: true`**, not silence: an
+  unclosed span makes a trace unreadable and the taxonomy has no `agent.aborted`.
+- **eve's `input.requested`/`input.resolved` map to `approval.requested`/`approval.resolved`.**
+  They have a counterpart in the taxonomy, so dropping them would lose why a run stopped.
+- **eve's own approval-gate events (`approval.candidate`, `approval.settled`) and connection
+  authorization events are dropped**, and named in ADR-0031 as M5's producers for `approval.*`
+  once the harness can answer one. `subagent.*` is dropped and should become a child run with its
+  own `runId`, not a taxonomy member.
+- **A trace event's error carries eve's failure `code`, never its `message`.** A harness
+  `run.failed` event does carry the full `SerializedHarnessError` including `details`, which is
+  where an adapter's message reaches a trace; M2-T9 must sanitize it.
+- **`append` auto-flushes at `maxBufferedEvents`, default 256**, and a failed batch stays buffered
+  rather than being reported lost.
+- **AGENTS.md:** the brief said to add only the `packages/trace/` line. One more token changed in
+  the same file: the "planned" block's `packages/trace/, storage-supabase/ (planned, M2)` became
+  `packages/storage-supabase/ (planned, M2)`, because leaving `packages/trace` listed as planned
+  directly under a tree that now contains it would be stale on the same screen.
+
+### Known issues / blockers
+
+- **`pnpm example:run:mock` produces no `tool.*` events.** The fixture agent's scripted model only
+  calls `echo_fixture` when the prompt contains `FIXTURE_TOOLCALL`, and the vendor-triage objective
+  does not; the domain does not grant `echo_fixture` either. Tool spans are covered by the adapter
+  unit tests and by the contract suite, which polls for a real `tool.started` against a live
+  `eve dev` server. Making the demo exercise a tool would mean changing the domain's objective or
+  its grants, which is out of this task's scope.
+- `behaviorFingerprint` is `null` on every event until M2-T8; `node` is `null` until M4.
+- The recorder is per-run mutable state. Nothing shares one across runs, but the type cannot stop
+  a caller doing so.
+
+### Next exact step
+
+M2-T5 (Supabase schema) adds a `trace_events` table whose columns mirror
+`docs/contracts/trace-event.md`'s field table, and a Supabase `TraceSink` in
+`packages/storage-supabase` behind the same `createBufferedTraceWriter()`. It also decides when an
+attempt becomes a row, which is the question `TraceEvent.attempt` deliberately leaves open. M2-T11
+(local Supabase) must land first.

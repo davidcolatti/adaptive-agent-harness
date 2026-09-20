@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "@internal/core";
+import type { JsonObject, TraceEventUsage } from "@internal/core";
 import type {
   ActionResultStreamEvent,
   ActionsRequestedStreamEvent,
@@ -136,81 +136,49 @@ export function failureDetail(event: MessageStreamEvent): EveFailureDetail {
 }
 
 /**
- * The trace-event `type` for one eve stream event.
+ * The usage one completed model call reports, in the harness's own shape.
  *
- * `TraceEvent.type` is an open string in M1 and M2-T3 narrows it to a closed
- * taxonomy, so the adapter namespaces its events rather than guessing at
- * taxonomy members that do not exist yet. `eve.step.completed` stays readable
- * and stays obviously adapter-owned.
+ * eve's four token counters and its optional `costUsd` map one-for-one onto
+ * {@link TraceEventUsage}. `modelCalls: 1` is always present, because one
+ * completed step *is* one model call and that is true whether or not eve
+ * costed it; the token and cost fields appear only when eve reported them,
+ * because a mock or direct-provider model reports none and writing `0` would
+ * turn "unknown" into a measurement.
  */
-export function traceEventType(event: MessageStreamEvent): string {
-  return `eve.${event.type}`;
+export function stepTraceUsage(event: MessageStreamEvent): TraceEventUsage {
+  return { modelCalls: 1, ...stepUsage(event) };
 }
 
 /**
- * The JSON-safe projection of one eve stream event.
+ * The identity and coordinates of one eve stream event, as a trace payload.
  *
  * **A whitelist, never a dump**, for the same reason `serializeError` is one
  * (ADR-0026): the payload is persisted, and copying an event wholesale would
  * put model output, tool arguments and tool results into a trace nothing has
- * redacted yet. M2-T9 owns redaction; until it exists the honest move is to
- * carry the shape of the run and none of its content.
+ * redacted yet. M2-T9 owns redaction; the rule this package keeps is that the
+ * trace carries the shape of the run and none of its content.
  *
- * What is kept: the event's durable identity and coordinates, which model ran,
- * what it spent, which tools were requested and how their calls settled, and
- * any failure code. What is never kept: assistant text, reasoning, tool inputs,
- * tool outputs, the structured result, and the text of an input request.
+ * What is kept here is the cross-reference a reader needs to line a harness
+ * trace up against eve's own durable stream: the event's `meta.id`, its turn,
+ * and its step index. Each caller in `EveAgentRuntime` adds the few typed
+ * fields its taxonomy member needs on top — a model id, a tool name, a status,
+ * a failure code. What is never added: assistant text, reasoning, tool inputs,
+ * tool outputs, the structured result, or the text of an input request.
  */
-export function projectEveEvent(event: MessageStreamEvent): JsonObject {
-  const base: JsonObject = {
-    eventId: event.meta.id,
-    ...(eventTurnId(event) === undefined ? {} : { turnId: eventTurnId(event) }),
-    ...(stepIndexOf(event) === undefined ? {} : { stepIndex: stepIndexOf(event) }),
+export function eveEventIdentity(event: MessageStreamEvent): JsonObject {
+  const turnId = eventTurnId(event);
+  const stepIndex = stepIndexOf(event);
+
+  return {
+    eveEventId: event.meta.id,
+    ...(turnId === undefined ? {} : { turnId }),
+    ...(stepIndex === undefined ? {} : { stepIndex }),
   };
+}
 
-  switch (event.type) {
-    case "step.started":
-      return { ...base, modelId: event.data.modelId };
-
-    case "step.completed": {
-      const usage = stepUsage(event);
-      return {
-        ...base,
-        finishReason: event.data.finishReason,
-        ...(usage === undefined ? {} : { usage: usage as JsonObject }),
-      };
-    }
-
-    case "actions.requested":
-      return {
-        ...base,
-        tools: event.data.actions.map(actionRequestToolName),
-        actionCount: event.data.actions.length,
-      };
-
-    case "action.result": {
-      const tool = actionResultToolName(event.data.result);
-      return {
-        ...base,
-        status: event.data.status,
-        ...(tool === undefined ? {} : { tool }),
-        ...(event.data.error === undefined ? {} : { errorCode: readErrorCode(event.data.error) }),
-      };
-    }
-
-    case "input.requested":
-      return { ...base, requestCount: event.data.requests.length };
-
-    case "step.failed":
-    case "turn.failed":
-    case "session.failed": {
-      const { code } = failureDetail(event);
-      return { ...base, code };
-    }
-
-    default:
-      return base;
-  }
+/** The `callId` one action result settles, which is what binds it to its request. */
+export function actionResultCallId(result: EveActionResult): string {
+  return result.callId;
 }
 
 function stepIndexOf(event: MessageStreamEvent): number | undefined {
@@ -221,7 +189,8 @@ function stepIndexOf(event: MessageStreamEvent): number | undefined {
   return numberOrUndefined((event.data as { readonly stepIndex?: unknown }).stepIndex);
 }
 
-function readErrorCode(error: unknown): JsonValue {
+/** The `code` of an `action.result` error, or `"UNKNOWN"` when it carries none. */
+export function readErrorCode(error: unknown): string {
   if (typeof error !== "object" || error === null) {
     return "UNKNOWN";
   }

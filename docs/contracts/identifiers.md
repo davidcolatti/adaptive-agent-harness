@@ -5,6 +5,7 @@ last_verified: 2026-09-19
 related:
   - docs/milestones/build-plan.md
   - docs/decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md
+  - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
   - docs/contracts/job.md
   - docs/contracts/execution-context.md
   - docs/contracts/harness.md
@@ -95,7 +96,7 @@ nothing has to convert it to put it in a trace payload.
 |---|---|---|---|
 | `JobId` | One unit of work | `newJobId()` | `Job.id`, `ExecutionContext.jobId`, `HarnessRunResult.jobId` |
 | `RunId` | One run of a job | `newRunId()` | `ExecutionContext.runId`, `TraceEvent.runId`, `HarnessRunResult.runId` |
-| `AttemptId` | One attempt within a run | `newAttemptId()` | nowhere yet; M2-T2/M2-T3 decide |
+| `AttemptId` | One attempt within a run | `newAttemptId()` | nowhere yet; not on `Job` (M2-T2), so M2-T3/M2-T5 decide |
 | `TraceEventId` | One trace event | `newTraceEventId()` | nowhere yet; M2-T3 decides |
 | `WorkflowId` | One workflow across versions | `newWorkflowId()` | nowhere yet; M4 |
 | `WorkflowVersionId` | One version of one workflow | `newWorkflowVersionId()` | nowhere yet; M4 |
@@ -148,6 +149,37 @@ kind-agnostic, since the scheme encodes a timestamp, a counter and entropy and
 nothing about which entity an id names. No guard can recover a kind from a
 string; the surrounding type is what carries that knowledge.
 
+## Reading the creation time back
+
+The first 48 bits of an id **are** its creation time, so an entity does not need
+a separate `createdAt` field and `Job` deliberately has none (M2-T2,
+[ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md)).
+Two sources of truth for one instant can disagree, with no rule for which wins.
+
+```ts
+import { entityIdTimestamp, entityIdTimestampMs } from "@internal/core";
+
+entityIdTimestamp(job.id);   // a Date
+entityIdTimestampMs(job.id); // Unix milliseconds
+```
+
+Both throw a `ValidationError` for anything that is not a well-formed id in this
+scheme, and both take the same optional issue-path argument as `parseEntityId`,
+so a caller reading a database row can point at the column. Refusing rather than
+returning a plausible-looking date is the point: a v4 UUID's leading bits are
+random, and reading them as a timestamp would produce a confident wrong answer.
+
+The value is the creation time **to millisecond resolution**, and it inherits
+two bounded caveats from the ordering guarantee above:
+
+| Situation | Effect on the derived time |
+|---|---|
+| A burst past 4096 ids in one millisecond | The timestamp is borrowed forward, so it reads marginally **ahead** of the wall clock. |
+| The system clock steps backwards | The timestamp is held, so it reads marginally **behind** it until the clock catches up. |
+
+Both are the price of an id that never goes down. Treat the value as the
+creation time, not as an audited clock reading.
+
 ## What an entity id is not
 
 **It is not a capability token.** The timestamp and counter are not secret, and
@@ -162,8 +194,10 @@ orders locally and exactly.
 
 ## Open for later milestones
 
-- **M2-T2** finalizes `Job` and decides whether an attempt surfaces as an
-  `AttemptId` alongside the existing numeric `ExecutionContext.attempt`.
+- **M2-T2 decided that an attempt is not part of a job** (ADR-0032). An attempt
+  belongs to a run, a retry reuses the job unchanged, and `AttemptId` therefore
+  still has no field. Where attempt identity surfaces is M2-T3's and M2-T5's
+  decision; `ExecutionContext.attempt` stays a number.
 - **M2-T3** defines the real trace-event schema, including where `TraceEventId`
   lands.
 - **M2-T5** chooses the column type. A `uuid` column is the obvious fit, with

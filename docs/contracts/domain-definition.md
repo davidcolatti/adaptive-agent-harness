@@ -7,6 +7,7 @@ related:
   - docs/contracts/job.md
   - docs/contracts/errors.md
   - docs/decisions/0027-standard-schema-is-the-harness-schema-contract.md
+  - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
   - docs/examples/README.md
 implementation:
   - packages/core
@@ -156,7 +157,16 @@ The wrapper then:
    `createExecutionContext()` uses: `budget` defaults to `{}` (unlimited, not
    zero), `permissions` to `[]` (permission is explicit, so the default is
    denial), `metadata` to `{}`;
-5. freezes the job, its `contracts` and its `permissions`.
+5. **deep-freezes** the job with `deepFreeze()`, so the nested `budget`,
+   `permissions`, `contracts`, `metadata` and the JSON-shaped part of `input`
+   are immutable too, not just the top level (M2-T2,
+   [ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md)).
+   A one-level `Object.freeze` would have left `job.budget.maxCostUsd` and
+   `job.permissions[0].mode` writable, which are the two values that decide
+   what an execution may spend and may do. The freeze is in place and reaches
+   whatever `input` and `metadata` the domain returned, so a domain that means
+   to keep mutating one of those should return a copy. See
+   [the job contract](job.md) for where the depth stops.
 
 ### What it deliberately does not do
 

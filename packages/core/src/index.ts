@@ -6,7 +6,8 @@
 // `DomainDefinition` and `defineDomain()` (M1-T3), `AgentRuntime` with
 // `AgentExecution` (M1-T5), `createHarness()` (M1-T4), and the capability
 // registry with its canonical-JSON fingerprint scheme (M1-T9). Milestone 2 adds
-// the sortable entity-ID scheme and its twelve brands (M2-T1).
+// the sortable entity-ID scheme and its twelve brands (M2-T1), and the
+// finalized `Job` contract with `deepFreeze` and `parseJob` (M2-T2).
 //
 // Re-exports are listed by name rather than starred, so this file states the
 // package's public surface and a symbol becomes public deliberately. Their
@@ -99,6 +100,10 @@ export {
 // what is fingerprinted, not how.
 export { canonicalJson, FINGERPRINT_ALGORITHM_PREFIX, fingerprint } from "./fingerprint.js";
 
+// Deep immutability for contract values (M2-T2; ADR-0032). What makes "jobs
+// are immutable after execution begins" reach a nested budget or grant.
+export { deepFreeze } from "./freeze.js";
+
 // The public entry point (M1-T4).
 export type {
   AbortedHarnessRunResult,
@@ -139,6 +144,8 @@ export {
   ENTITY_ID_PATTERN,
   ENTITY_ID_SCHEME,
   ENTITY_KINDS,
+  entityIdTimestamp,
+  entityIdTimestampMs,
   isEntityId,
   newAttemptId,
   newCompilerRunId,
@@ -155,11 +162,13 @@ export {
   parseEntityId,
 } from "./ids.js";
 
-// The immutable unit of work (M1-T3; M2-T2 finalizes the schema).
+// The immutable unit of work (M1-T3; finalized by M2-T2, ADR-0032).
 export type { Job, JobContracts } from "./job.js";
+export { isJob, parseJob } from "./job.js";
 
-// JSON value model.
+// JSON value model, and the runtime guards M2-T2's boundary validator needs.
 export type { JsonArray, JsonObject, JsonPrimitive, JsonValue } from "./json.js";
+export { isJsonObject, isJsonValue, isPlainObject } from "./json.js";
 
 // The schema boundary: a harness-owned copy of Standard Schema v1, so that a
 // domain can author schemas in any conforming library while this package keeps
@@ -179,7 +188,26 @@ export type {
 } from "./schema.js";
 export { assertIsSchema, isSchema, validateWith } from "./schema.js";
 
-// Trace boundary. The full event schema is M2-T3; `TraceWriter` is stated by
-// M2-T4 and declared here because the execution context has to hold one.
-export type { TraceEvent, TraceWriter } from "./trace.js";
-export { createNoopTraceWriter } from "./trace.js";
+// The trace contract (M2-T3) and the run-scoped recorder that owns a run's
+// event order (M2-T3/M2-T4; ADR-0031). `TraceWriter` is the interface M2-T4
+// states verbatim; the buffered implementation lives in `@internal/trace`.
+export type {
+  CreateTraceRecorderOptions,
+  TraceClock,
+  TraceEvent,
+  TraceEventInput,
+  TraceEventType,
+  TraceEventUsage,
+  TraceEventVersion,
+  TraceRecorder,
+  TraceSpan,
+  TraceSpanEndInput,
+  TraceWriter,
+} from "./trace.js";
+export {
+  createNoopTraceWriter,
+  createTraceRecorder,
+  isTraceEventType,
+  TRACE_EVENT_TYPES,
+  TRACE_EVENT_VERSION,
+} from "./trace.js";

@@ -1,7 +1,7 @@
 # Milestone 2, Job, Trace, Supabase, and Run Ledger
 
-**Status:** M2-T1 is `completed`; M2-T2, M2-T3 and M2-T4 are `in_progress`; M2-T5 through M2-T11
-are `not started`.
+**Status:** M2-T1 through M2-T4 are `completed`; M2-T8, M2-T9 and M2-T11 are `in_progress`; M2-T5,
+M2-T6, M2-T7 and M2-T10 are `not started`.
 
 **Goal (from the build plan):** make every execution reproducible enough to inspect and later
 replay.
@@ -348,7 +348,7 @@ agent version
 
 ### M2-T8, Behavior fingerprint
 
-**Status:** not started.
+**Status:** in_progress.
 
 Hash canonicalized behavior-affecting inputs:
 
@@ -365,7 +365,7 @@ Do not hash timestamps or irrelevant metadata.
 
 ### M2-T9, Secret and sensitive-data redaction
 
-**Status:** not started.
+**Status:** in_progress.
 
 Redact before persistence.
 
@@ -401,7 +401,7 @@ Display:
 
 ### M2-T11, Reproducible local Supabase environment
 
-**Status:** not started.
+**Status:** in_progress.
 
 Install the Supabase CLI as a project dev dependency and initialize the repository-local
 configuration.

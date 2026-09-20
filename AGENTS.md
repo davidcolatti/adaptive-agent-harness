@@ -550,7 +550,15 @@ M2-T1 identifier scheme: harness-owned RFC 9562 UUIDv7 with a monotonic counter,
 branded into twelve per-entity types. Node 24's own `crypto.randomUUIDv7()` is
 **not** used, because its documentation and its measured behaviour agree that it
 is not strictly increasing within a millisecond.
-The next free number is 0031.
+ADR-0031 records the M2-T3/M2-T4 trace design: the closed event taxonomy plus
+`run.aborted`, the run-scoped `TraceRecorder` that owns sequencing, the
+eve-to-taxonomy mapping, and the buffered writer's ordering and failure
+semantics. ADR-0032 records M2-T2: jobs are deeply immutable as far as they are
+JSON-representable, the effective job built by `createHarness()` is the job,
+creation time is derived from the UUIDv7 id, and `parseJob()` is the strict read
+boundary.
+ADR numbers 0033, 0034 and 0035 are reserved for the in-flight M2-T11, M2-T8 and
+M2-T9 tasks; the next free number after those is 0036.
 
 ## Scope discipline
 

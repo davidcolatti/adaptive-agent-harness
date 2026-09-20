@@ -1,4 +1,4 @@
-import { newRunId, type RunId, type TraceEvent } from "@internal/core";
+import { newRunId, newTraceEventId, type RunId, type TraceEvent } from "@internal/core";
 import { createInMemoryStorage } from "@internal/testing";
 import { describe, expect, it } from "vitest";
 import { recordFixtureRun } from "./fixtures.js";
@@ -23,6 +23,57 @@ function traceSource(events: readonly TraceEvent[]): TraceOnlySource {
       return Promise.resolve(events.filter((event) => event.runId === runId));
     },
   };
+}
+
+/**
+ * Two `decision.*` pairs, of the shape the M4 workflow runtime writes for a
+ * `jev` node: a `questionId` payload and a terminal event parented on its own
+ * start (ADR-0031's pairing rule).
+ *
+ * Built from a recorded run's own events so the run id, attempt and behavior
+ * fingerprint are the real ones, and appended after them so the sequence stays
+ * strictly increasing.
+ */
+function decisionPairs(events: readonly TraceEvent[]): readonly TraceEvent[] {
+  const last = events.at(-1);
+
+  if (last === undefined) {
+    throw new Error("decisionPairs: the fixture run recorded no events");
+  }
+
+  return ["vendor-triage.classify-route", "vendor-triage.evidence-supports"].flatMap(
+    (questionId, index): readonly TraceEvent[] => {
+      const startId = newTraceEventId();
+      const payload = { questionId, questionKind: "choice" };
+
+      return [
+        {
+          ...last,
+          id: startId,
+          parentId: last.parentId,
+          sequence: last.sequence + 1 + index * 2,
+          type: "decision.started",
+          node: "classify",
+          payload,
+          usage: null,
+          latencyMs: null,
+          error: null,
+        },
+        {
+          ...last,
+          id: newTraceEventId(),
+          parentId: startId,
+          sequence: last.sequence + 2 + index * 2,
+          type: "decision.completed",
+          node: "classify",
+          payload,
+          usage: { modelCalls: 1 },
+          latencyMs: 3,
+          error: null,
+        },
+      ];
+    },
+  );
 }
 
 describe("inspectRun: a completed run", () => {
@@ -113,6 +164,31 @@ describe("inspectRun: a completed run", () => {
     expect(calls.jev.count).toBe(0);
     expect(calls.jevCalls).toBe(0);
     expect(calls.jevNote).toContain("M3");
+  });
+
+  it("carries the zero-Jev note only when the run made no Jev call", async () => {
+    const { storage, result } = await recordFixtureRun();
+    const events = storage.events.filter((event) => event.runId === result.runId);
+
+    // Without decisions, the zero needs explaining.
+    expect((await inspectRun(traceSource(events), result.runId)).calls.jevNote).toContain(
+      "0 is a real measurement",
+    );
+
+    // With them, it does not, and printing it beside two listed decisions was
+    // the bug M4-T10 fixed: the M4 workflow runtime emits a `decision.*` pair
+    // per `jev` node long before M3's engine exists.
+    const { calls } = await inspectRun(
+      traceSource([...events, ...decisionPairs(events)]),
+      result.runId,
+    );
+
+    expect(calls.jev.count).toBe(2);
+    expect(calls.jev.calls.map((call) => call.id)).toEqual([
+      "vendor-triage.classify-route",
+      "vendor-triage.evidence-supports",
+    ]);
+    expect(calls.jevNote).toBeNull();
   });
 
   it("reports no errors and a completed result", async () => {

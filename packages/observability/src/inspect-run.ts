@@ -152,12 +152,16 @@ export interface CallsInspection {
   readonly model: CallGroup;
   /** `tool.*` events. */
   readonly tool: CallGroup;
-  /** `decision.*` events: Jev. Empty until M3. */
+  /** `decision.*` events. A `jev` node produces a pair; so will M3's engine. */
   readonly jev: CallGroup;
   /** How many Jev calls the ledger recorded, or `null` with no ledger row. */
   readonly jevCalls: number | null;
-  /** Why the Jev count is zero, so a reader does not read it as a measurement failure. */
-  readonly jevNote: string;
+  /**
+   * Why the Jev count is zero, so a reader does not read it as a measurement
+   * failure — and `null` when the run made Jev calls, because a note explaining
+   * a zero that is not there explains nothing.
+   */
+  readonly jevNote: string | null;
 }
 
 /** Which path the run took, and what executed it. */
@@ -329,10 +333,17 @@ const OUTPUT_NOTE =
   "payload is identity-only by rule (ADR-0031), so no durable record of it exists. The " +
   "`artifacts` table is where a durable output goes; M5 is what fills it.";
 
-/** Why the Jev count is zero, stated once. */
+/**
+ * Why a Jev count of zero is a measurement rather than a gap, stated once.
+ *
+ * It is attached only to a run that made **no** Jev call. A run that made some
+ * needs no explanation, and printing this beside two listed decisions was wrong
+ * from the moment M4-T6 started emitting `decision.*` (fixed in M4-T10).
+ */
 const JEV_NOTE =
-  "0 is a real measurement, not a gap: the `decision.*` taxonomy exists and nothing produces one " +
-  "until M3 adds the Jev decision engine.";
+  "0 is a real measurement, not a gap: nothing in this run asked for a judgment. Milestone 4's " +
+  "workflow runtime emits a `decision.*` pair for every `jev` node it executes, through a " +
+  "decision port; M3 is when Jev itself answers them.";
 
 /** The payload keys a `run.started` carries the behavior digests under. */
 const BEHAVIOR_KEY = "behavior";
@@ -738,7 +749,8 @@ export async function inspectRun(
       tool,
       jev,
       jevCalls: run?.jevCalls ?? null,
-      jevNote: JEV_NOTE,
+      // Only when there is a zero to explain.
+      jevNote: jev.count === 0 ? JEV_NOTE : null,
     },
     errors,
     result: {

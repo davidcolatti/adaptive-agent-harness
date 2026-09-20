@@ -284,7 +284,8 @@ export function renderRunInspection(
       renderCallGroup(palette, "model", calls.model),
       renderCallGroup(palette, "tool", calls.tool),
       renderCallGroup(palette, "jev", calls.jev),
-      `  ${palette.dim(`jev: ${calls.jevNote}`)}`,
+      // Absent when the run made Jev calls: there is no zero to explain.
+      ...(calls.jevNote === null ? [] : [`  ${palette.dim(`jev: ${calls.jevNote}`)}`]),
     ].join("\n"),
   );
 

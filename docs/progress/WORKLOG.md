@@ -7548,3 +7548,210 @@ port stands in until then.
 Register the new schemas and handlers in `src/capabilities.ts`, author
 `src/workflow/vendor-triage-workflow.ts`, then the fixture decision port and the
 tests.
+
+## 2026-09-20 17:40 — M4-T10 — Hand-authored compiled vendor workflow and M4 acceptance verification
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above: author Milestone 4's vendor workflow for real in
+`apps/example-agent`, with the typed DSL, against the domain's own capability
+registry, run it through `createHarness()` on the local deterministic runtime,
+and verify all eight of the milestone's acceptance criteria with dated evidence.
+
+### Implementation references
+
+Unchanged from the `started` entry. No third-party dependency was added; the one
+dependency added is the workspace package `@internal/workflow` (`workspace:*`),
+which updates `pnpm-lock.yaml`. Nothing framework-facing was touched: the `eve`
+surface used is `startEveDevServer` and `EveAgentRuntime` from
+`@internal/runtime-eve`, unchanged since M1-T6, and nothing under `agent/` was
+edited.
+
+### Work completed
+
+- **`src/workflow/vendor-triage-workflow.ts`**: the seven-node graph, authored
+  with the DSL. `vendorTriageWorkflowDefinition` is the IR;
+  `compileVendorTriageWorkflow(registry)` produces the `CompiledWorkflow`.
+  Fingerprint `sha256:27da4abdb90051185735663c32ea8767abe56d70bd30bcba0f626b6e0cbf612a`.
+  Three bindings are stated rather than derived: `research` binds
+  `{ kind: "input" }` because the registered agent capability declares both its
+  schemas and the validator requires the node's to equal them, and `finalize` and
+  `decide` each bind a `{ kind: "object" }` composite because a node bound to its
+  predecessor would see half of what it needs. Both composites name nodes that
+  dominate their reader.
+- **Six new capabilities in `src/capabilities.ts`**, with Milestone 1's six left
+  byte-identical: four `zod` schemas in `src/domain/schemas.ts`
+  (`vendor-triage.classification`, `.verification`, `.finalize-input`,
+  `.decision-input`) and two handlers. Both handlers **declare** the schemas they
+  are registered for, so the validator's step-3 equality check has something to
+  compare rather than nothing to say.
+- **`src/handlers/finalize-clear-triage.ts`**: the `clear` route's whole triage in
+  deterministic code — category from the vendor's own stated offering, SOP gaps
+  from five text-checkable requirements, the existing `detectPaymentDetailChange`
+  for the sixth, one evidence item per document on file, and a recommendation
+  that is never an unconditional `proceed` while anything is unestablished. Pure,
+  total, and valid for a vendor that is not on file.
+- **`src/handlers/decide-verified-triage.ts`**: the `research` route's policy
+  step. Two rules, both narrowing only: an unsupported triage escalates, and
+  `noProceedWithOpenRiskFlags` escalates rather than being softened to
+  `proceed_with_conditions`, because this code cannot invent the condition that
+  would make an open risk flag acceptable. It never edits the record it escalates
+  with.
+- **`src/workflow/fixture-decision-port.ts`**: the deterministic
+  `WorkflowDecisionPort`, documented at length as a placeholder until M3. It
+  answers `classify` from the frozen fixture evidence and `verify` from whether
+  the triage cites a source, and it **refuses** any question it does not
+  recognize rather than answering by default.
+- **`src/run.ts`**: `--workflow` / `EXAMPLE_RUN_MODE=workflow` swaps the
+  harness's `AgentRuntime` for `WorkflowRuntime.asAgentRuntime(compiled)` and
+  hands the workflow's `agent` node the same `EveAgentRuntime` the agent path
+  would have used, so `--mock --workflow` still needs no credential. The ledger
+  records `target = <agent>+workflow`. `--vendor <name>` /
+  `EXAMPLE_RUN_VENDOR` chooses the vendor, because the workflow routes on the
+  vendor's own evidence.
+- **Behavior fingerprint**: `loadVendorTriageBehavior()` takes an optional
+  `workflowIr`, and `createVendorTriageDomain({ workflowIr })` supplies it, so a
+  compiled run and a full-agent run of the same domain fingerprint differently.
+  `vendorTriage` is unchanged and still means the full agent.
+- **Tests**: 50 new cases across five files —
+  `src/workflow/vendor-triage-workflow.test.ts` (12),
+  `src/workflow/vendor-triage-run.test.ts` (13),
+  `src/workflow/fixture-decision-port.test.ts` (11),
+  `src/handlers/finalize-clear-triage.test.ts` (8),
+  `src/handlers/decide-verified-triage.test.ts` (6). Two existing tests were
+  updated for the six new capabilities (`src/capabilities.test.ts`,
+  `src/behavior.test.ts`); the manifest sorts within a kind, so the expected
+  lists are registration-order independent.
+- **Docs**: `docs/examples/README.md` gained a section on the workflow, its
+  files and how to run all three routes, plus rows in the "What is in it" and
+  capability-manifest tables; `docs/runbooks/inspecting-a-run.md` gained a
+  section on what a workflow run looks like in `pnpm harness run show` and the
+  four things it does not yet show; the M4 status file's `### M4-T10` and the
+  whole `## Acceptance criteria` section were rewritten with dated evidence.
+
+### Files changed
+
+- `apps/example-agent/package.json`, `pnpm-lock.yaml` (`@internal/workflow`)
+- `apps/example-agent/src/workflow/vendor-triage-workflow.ts` (new)
+- `apps/example-agent/src/workflow/fixture-decision-port.ts` (new)
+- `apps/example-agent/src/workflow/vendor-triage-workflow.test.ts` (new)
+- `apps/example-agent/src/workflow/vendor-triage-run.test.ts` (new)
+- `apps/example-agent/src/workflow/fixture-decision-port.test.ts` (new)
+- `apps/example-agent/src/handlers/finalize-clear-triage.ts` (new) + test
+- `apps/example-agent/src/handlers/decide-verified-triage.ts` (new) + test
+- `apps/example-agent/src/domain/schemas.ts` (four schemas, four types)
+- `apps/example-agent/src/domain/index.ts` (`createVendorTriageDomain`)
+- `apps/example-agent/src/capabilities.ts` (six registrations)
+- `apps/example-agent/src/behavior.ts` (`LoadVendorTriageBehaviorOptions`)
+- `apps/example-agent/src/run.ts` (`--workflow`, `--vendor`)
+- `apps/example-agent/src/capabilities.test.ts`, `src/behavior.test.ts`
+- `packages/observability/src/inspect-run.ts` (one line; see deviations)
+- `docs/examples/README.md`, `docs/runbooks/inspecting-a-run.md`
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `pnpm check` — **PASS**. 1197 tests passed, 43 skipped across 67 files (2 files
+  skipped). The 43 are the Supabase legs of the storage and inspector contract
+  suites, which skip without `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` in the
+  test process.
+- `pnpm vitest run --project unit apps/example-agent` — **PASS**, 119 tests
+  across 13 files.
+- `pnpm supabase:start` — PASS (Docker running on this host).
+- `pnpm example:run:mock -- --workflow` — **PASS**, exit 0, run
+  `01a0bfa7-4484-7000-9060-dcba9756a378`. `clear` route, `modelCalls: 1`,
+  `toolCalls: 0`, no agent call. Trace: `run.started`, `node.started(classify)`,
+  `decision.started`, `decision.completed`, `node.completed(classify)`,
+  `node.started(route)`, `node.completed(route)`, `node.started(finalize)`,
+  `node.completed(finalize)`, `run.completed`.
+- `pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"` —
+  **PASS**, exit 0, run `01a0bfa7-71aa-7001-8d36-e62ee08c5bae`. `research` route
+  through the real eve fixture agent, `modelCalls: 3`, twenty trace events.
+- `pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"` — **PASS**
+  (exit 1 by design), run `01a0bfa7-9ce9-7001-8075-74110e84dce6`. Escalation:
+  `node.completed(full-agent)`, `fallback.started`, `run.failed`, with the whole
+  `FallbackContext` in the `WorkflowError`'s `details`.
+- `pnpm harness run show <runId>` and `... --jsonl <path>` for all three runs —
+  **PASS**. Both sources render the `node.*` events in the timeline; see the
+  runbook for the four gaps.
+- Cited tests from other tasks, each re-run individually with `-t`, all **PASS**:
+  `compile.test.ts` > "rejects an intentional unbounded cycle";
+  `runtime/idempotency.test.ts` > "A retry does not duplicate a protected side
+  effect"; `runtime/grants.test.ts` > "An agent node cannot call an ungranted
+  tool"; `runtime/workflow-runtime.test.ts` > "A human-authored workflow runs
+  locally", "Every node validates inputs and outputs", "A failed node is visible
+  in the trace"; `dsl/builder.test.ts` > "survives a JSON round trip, which is
+  the acceptance criterion", "gives the same fingerprint to two builds of the
+  same workflow".
+- `pnpm example:run:mock` with **no** flags — **PASS**, exit 0, run
+  `01a0bfad-b44f-7001-afd1-cfa5aafa72ac`, `mode: "agent"`, `workflow: null`,
+  `runtime.name: "eve"`. Existing behaviour is unchanged.
+- Behavior fingerprints of the two runs above differ in exactly one component:
+  the agent run has `workflowIr = sha256:74234e98…` (the digest of `null`) and
+  composite `sha256:d3fd7841…`; the workflow run has
+  `workflowIr = sha256:27da4abd…`, equal to the compiled workflow's own
+  fingerprint, and composite `sha256:4f57ec9a…`.
+- `eve info` — not run, and not required: nothing under `agent/` was touched.
+  `eve build` ran as part of `pnpm check` and succeeded.
+
+### Decisions / deviations
+
+- **The fixture decision port lives in `apps/example-agent/src/workflow/`, not in
+  `@internal/workflow`.** No ADR: it is this domain's fixture answering this
+  domain's two questions, not a harness capability, and putting it in the
+  package would have made a placeholder look like part of the contract. The
+  module says in its own header what has to happen when M3 lands and that it is
+  then deleted.
+- **`--vendor <name>` was added beyond the task's scope**, because the workflow
+  routes on the vendor's own frozen evidence and the default vendor,
+  `Northwind Ledger`, takes the `clear` route. Without it, the `research` route
+  through the real eve agent and the escalation route could not be demonstrated
+  from the command line at all, and two thirds of the acceptance evidence would
+  have rested on unit tests alone.
+- **The `research` node uses `vendor-triage-agent@1.0.0` and therefore binds the
+  job input.** The validator requires a node's schemas to equal the ones its
+  resolved capability declares, and the registered agent declares
+  `vendor-triage.input`/`vendor-triage.output`. The alternative — registering a
+  second, narrower `vendor-researcher` agent capability — would have invented a
+  capability the domain does not ship in order to make a binding prettier.
+- **One line changed outside `apps/example-agent`.**
+  `packages/observability/src/inspect-run.ts`'s decision-identity key list now
+  tries `questionId` first, because a `jev` node names a **question** (M4-T2) and
+  every Jev call row printed `(none)` without it. Nothing else in the inspector
+  was touched; the other gaps are reported, not fixed.
+- **`registerVendorTriageCapabilities` grew rather than being split.** The
+  registry `compileWorkflow()` resolves against must be the domain's one
+  registry; a second would be a second answer to "what can this domain do?".
+- `packages/workflow` and `packages/core` were not modified, and no bug in either
+  was found: the DSL expressed the graph, the validator accepted it, and the
+  runtime ran all three routes without a workaround.
+
+### Known issues / blockers
+
+- **The inspector predates workflows in four ways**, all reported in
+  `docs/runbooks/inspecting-a-run.md` and none of them misleading about what ran:
+  `route:` always prints `full-agent` (it reads `runs.workflow_version_id`, an
+  M5 placeholder); `fallbacks:` reads `0 (from the ledger)` even for a run that
+  escalated (`runs.fallback_count` is also a placeholder); `TraceEvent.node` has
+  no column of its own, so a node id is visible only via the payload's `nodeId`
+  and truncates on a long line; and the note "jev: 0 is a real measurement …
+  until M3 adds the Jev decision engine" prints even when the run made Jev calls.
+  Making that note conditional changes a field's type and the renderer, so it was
+  left for whoever owns the inspector next.
+- **The workflow has no `call` node**, so it cannot exercise M4-T7's protection
+  itself. That is a property of the graph the milestone specified, and the
+  criterion is covered by `packages/workflow/src/runtime/idempotency.test.ts`.
+- `pnpm example:run -- --workflow` against a live Gateway model is unverified, for
+  the same reason `pnpm example:run` has always been: no credential on this host.
+
+### Next exact step
+
+Milestone 4 close-out, which is the orchestrator's: commit M4-T10, write the
+`docs/progress/milestones/m4.md` snapshot, and rewrite
+`docs/context/current-state.md` for the end of M4 and the start of M5 (workflow
+registry, router and fallback), with M3 still available to run beside it.

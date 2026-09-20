@@ -426,7 +426,10 @@ function buildTimeline(events: readonly TraceEvent[]): readonly TimelineEntry[] 
 const IDENTITY_KEYS: Readonly<Record<"model" | "tool" | "decision", readonly string[]>> = {
   model: ["modelId", "model"],
   tool: ["tool", "toolId", "name"],
-  decision: ["decision", "decisionId", "name"],
+  // `questionId` first: the M4 workflow runtime names a `jev` node's subject
+  // that way, because a `jev` node names a **question** (M4-T2). The other
+  // three stay for whatever M3's own engine emits.
+  decision: ["questionId", "decision", "decisionId", "name"],
 };
 
 function identityOf(event: TraceEvent, kind: "model" | "tool" | "decision"): string | null {

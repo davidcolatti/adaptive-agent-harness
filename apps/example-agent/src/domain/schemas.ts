@@ -87,3 +87,82 @@ export type VendorTriageRiskFlag = z.infer<typeof riskFlagSchema>;
 
 /** What a triage produces. */
 export type VendorTriageOutput = z.infer<typeof vendorTriageOutputSchema>;
+
+/**
+ * The four schemas the hand-authored vendor workflow introduces (M4-T10).
+ *
+ * They exist because a workflow has more edges than a full-agent run does. A
+ * full agent takes a `vendor-triage.input` and returns a `vendor-triage.output`
+ * and nothing in between is a contract; a compiled workflow types **every**
+ * edge (north-star invariant 5), so the classification a `jev` node produces,
+ * the verification a second one produces, and the two composite inputs the
+ * `code` nodes read all need schemas of their own.
+ *
+ * They live here, beside the domain's own two, rather than in
+ * `src/workflow/`, because they are the domain's vocabulary rather than the
+ * workflow's wiring: a second workflow over the same domain would reuse them,
+ * and `src/capabilities.ts` registers all six from one place.
+ */
+
+/** What the classification step decides, and why. */
+export const vendorTriageClassificationSchema = z.object({
+  category: z
+    .enum(["clear", "research", "uncertain"])
+    .describe(
+      "`clear` when the frozen evidence is good enough to finalize deterministically, `research` when it needs the full agent's reading, `uncertain` when neither is established.",
+    ),
+  rationale: z.string().min(1).describe("Why this category, in one sentence."),
+  vendorName: z.string().min(1).describe("The vendor the classification is about."),
+});
+
+/** What the verification step decides about a triage's own evidence. */
+export const vendorTriageVerificationSchema = z.object({
+  supported: z
+    .boolean()
+    .describe(
+      "Whether the triage cites evidence for what it concluded. `false` means it does not.",
+    ),
+  rationale: z.string().min(1).describe("Why, in one sentence."),
+  citedSources: z
+    .array(z.string().min(1))
+    .describe("The sources the triage cited, as it cited them. Empty means it cited none."),
+});
+
+/**
+ * What the `finalize` node reads: the classification **and** the original
+ * request.
+ *
+ * A `code` node bound to the branch would receive the classification only, and
+ * finalizing needs the vendor name and the SOP the request carried. The
+ * workflow therefore binds an explicit `{ kind: "object" }` binding, and this is
+ * the schema that binding satisfies.
+ */
+export const vendorTriageFinalizeInputSchema = z.object({
+  classification: vendorTriageClassificationSchema,
+  request: vendorTriageInputSchema,
+});
+
+/**
+ * What the `decide` node reads: the researching agent's triage **and** the
+ * verification of it.
+ *
+ * The same reason as above: a node bound to its predecessor would see the
+ * verification alone, and applying the policy needs the triage the verification
+ * is about.
+ */
+export const vendorTriageDecisionInputSchema = z.object({
+  triage: vendorTriageOutputSchema,
+  verification: vendorTriageVerificationSchema,
+});
+
+/** What the classification step decides. */
+export type VendorTriageClassification = z.infer<typeof vendorTriageClassificationSchema>;
+
+/** What the verification step decides. */
+export type VendorTriageVerification = z.infer<typeof vendorTriageVerificationSchema>;
+
+/** The `finalize` node's composite input. */
+export type VendorTriageFinalizeInput = z.infer<typeof vendorTriageFinalizeInputSchema>;
+
+/** The `decide` node's composite input. */
+export type VendorTriageDecisionInput = z.infer<typeof vendorTriageDecisionInputSchema>;

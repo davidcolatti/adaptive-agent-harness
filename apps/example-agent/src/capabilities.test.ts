@@ -11,19 +11,48 @@ import { detectPaymentDetailChange } from "./handlers/detect-payment-detail-chan
 import { noProceedWithOpenRiskFlags } from "./policies/no-proceed-with-open-risk-flags.js";
 
 describe("the vendor-triage capability manifest", () => {
-  it("registers the five kinds Milestone 1 requires", () => {
+  it("registers the five kinds Milestone 1 requires, and the six M4-T10 added", () => {
+    // The manifest sorts within a kind, so this list is independent of the order
+    // `registerVendorTriageCapabilities` happens to register in.
     expect(
       vendorTriageManifest.entries.map(
         (entry) => `${entry.kind}:${formatCapabilityRef(entry.ref)}`,
       ),
     ).toEqual([
+      "schema:vendor-triage.classification@1.0.0",
+      "schema:vendor-triage.decision-input@1.0.0",
+      "schema:vendor-triage.finalize-input@1.0.0",
       "schema:vendor-triage.input@1.0.0",
       "schema:vendor-triage.output@1.0.0",
+      "schema:vendor-triage.verification@1.0.0",
       "agent:vendor-triage-agent@1.0.0",
       "tool:lookup_vendor_evidence@1.0.0",
+      "handler:decide-verified-triage@1.0.0",
       "handler:detect-payment-detail-change@1.0.0",
+      "handler:finalize-clear-triage@1.0.0",
       "policy:no-proceed-with-open-risk-flags@1.0.0",
     ]);
+  });
+
+  it("points both workflow handlers at the schemas they are registered for", () => {
+    const byId = new Map(vendorTriageManifest.entries.map((entry) => [entry.ref.id, entry]));
+
+    expect(byId.get("finalize-clear-triage")?.inputSchema).toEqual({
+      id: "vendor-triage.finalize-input",
+      version: "1.0.0",
+    });
+    expect(byId.get("finalize-clear-triage")?.outputSchema).toEqual({
+      id: "vendor-triage.output",
+      version: "1.0.0",
+    });
+    expect(byId.get("decide-verified-triage")?.inputSchema).toEqual({
+      id: "vendor-triage.decision-input",
+      version: "1.0.0",
+    });
+    expect(byId.get("decide-verified-triage")?.outputSchema).toEqual({
+      id: "vendor-triage.output",
+      version: "1.0.0",
+    });
   });
 
   it("records module and export metadata for every entry, with a fingerprint", () => {
@@ -116,7 +145,7 @@ describe("the vendor-triage runtime registry", () => {
   it("registers into a caller-supplied registry", () => {
     const registry = registerVendorTriageCapabilities(createCapabilityRegistry());
 
-    expect(registry.entries()).toHaveLength(6);
+    expect(registry.entries()).toHaveLength(12);
     expect(registry.has("tool", "lookup_vendor_evidence@1.0.0")).toBe(true);
   });
 });

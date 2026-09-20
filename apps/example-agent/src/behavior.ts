@@ -9,6 +9,7 @@ import type {
   BehaviorSkill,
   BehaviorTool,
   JsonObject,
+  JsonValue,
 } from "@internal/core";
 import { formatCapabilityRef } from "@internal/core";
 import { EXAMPLE_AGENT_CONFIG } from "../agent/lib/agent-config.js";
@@ -36,7 +37,7 @@ import { NO_PROCEED_WITH_OPEN_RISK_FLAGS_THRESHOLDS } from "./policies/no-procee
  * | `tools` | the `tool` entries of the capability manifest, plus eve's `load_skill` |
  * | `model` | `EXAMPLE_AGENT_CONFIG`, the same constant `agent/agent.ts` passes to `defineAgent` |
  * | `schemas` | the `schema` entries of the capability manifest |
- * | `workflowIr` | `null`; this domain runs the full agent, and M4 owns the IR |
+ * | `workflowIr` | the compiled workflow's canonical IR when one ran, and `null` when the full agent did |
  * | `policy` | the domain's policy thresholds |
  *
  * **The files are read at run time, not at import time.** An `agent/` edit
@@ -211,6 +212,23 @@ function loadPolicy(): JsonObject {
   };
 }
 
+/** What {@link loadVendorTriageBehavior} accepts. */
+export interface LoadVendorTriageBehaviorOptions {
+  /**
+   * The compiled workflow IR this run executes, or `null` for a full-agent run
+   * (M4-T10).
+   *
+   * A parameter rather than a constant, because one domain runs two ways: the
+   * full agent through `EveAgentRuntime`, and the compiled vendor workflow
+   * through `WorkflowRuntime.asAgentRuntime()`. Those are different behaviors
+   * and must fingerprint differently, which is what ADR-0034's `workflowIr`
+   * component is for. `src/domain/index.ts` supplies it through
+   * `createVendorTriageDomain({ workflowIr })`; `src/run.ts` passes the
+   * canonical IR of the workflow it is about to run.
+   */
+  readonly workflowIr?: JsonValue | null;
+}
+
 /**
  * Gather everything that decides how a vendor-triage run behaves.
  *
@@ -226,7 +244,9 @@ function loadPolicy(): JsonObject {
  * `createHarness()` lets that out rather than recording a run with a `null`
  * fingerprint (ADR-0034).
  */
-export async function loadVendorTriageBehavior(): Promise<BehaviorDescriptor> {
+export async function loadVendorTriageBehavior(
+  options: LoadVendorTriageBehaviorOptions = {},
+): Promise<BehaviorDescriptor> {
   const [instructions, skills] = await Promise.all([
     readFile(join(APP_ROOT, INSTRUCTIONS_PATH), "utf8"),
     loadSkills(),
@@ -245,9 +265,11 @@ export async function loadVendorTriageBehavior(): Promise<BehaviorDescriptor> {
     // limits) is fingerprinted the moment it is set, with no second edit here.
     model: { ...EXAMPLE_AGENT_CONFIG },
     schemas: loadSchemas(),
-    // M4 owns the workflow IR. Until one exists, this domain runs the full
-    // agent, and `null` says so.
-    workflowIr: null,
+    // The compiled workflow's canonical IR when this run executes one, and
+    // `null` when it runs the full agent (M4-T10). Two runs of the same domain
+    // through different execution paths are different behaviors, and this is
+    // the component that says so.
+    workflowIr: options.workflowIr ?? null,
     policy: loadPolicy(),
   };
 }

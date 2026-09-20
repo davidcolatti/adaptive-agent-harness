@@ -1,7 +1,15 @@
 import { existsSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHarness, type HarnessRunResult, type Storage, StorageError } from "@internal/core";
+import {
+  type AgentRuntime,
+  createHarness,
+  type DomainDefinition,
+  type HarnessRunResult,
+  type JsonValue,
+  type Storage,
+  StorageError,
+} from "@internal/core";
 import { EveAgentRuntime } from "@internal/runtime-eve";
 import { type EveDevServer, startEveDevServer } from "@internal/runtime-eve/testing";
 import { createSupabaseStorage } from "@internal/storage-supabase";
@@ -13,7 +21,17 @@ import {
   createStorageTraceSink,
   type TraceSink,
 } from "@internal/trace";
-import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/index.js";
+import { createWorkflowRuntime } from "@internal/workflow";
+import { createVendorTriageRegistry } from "./capabilities.js";
+import {
+  createVendorTriageDomain,
+  PROCUREMENT_SOP,
+  type VendorTriageInput,
+  type VendorTriageOutput,
+  vendorTriage,
+} from "./domain/index.js";
+import { createFixtureDecisionPort } from "./workflow/fixture-decision-port.js";
+import { compileVendorTriageWorkflow } from "./workflow/vendor-triage-workflow.js";
 
 /**
  * `pnpm example:run` and `pnpm example:run:mock`: Milestone 1's acceptance
@@ -66,6 +84,28 @@ import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/
  * domain, the real adapter, a real eve server and a real durable session; only
  * the model is scripted. What it cannot show is whether a real model produces a
  * useful triage, which is the live target's job.
+ *
+ * ## Two execution paths
+ *
+ * `--workflow` (or `EXAMPLE_RUN_MODE=workflow`) runs the job through the
+ * hand-authored compiled workflow (M4-T10) instead of straight through the full
+ * agent. The workflow's one `agent` node is handed the **same**
+ * `EveAgentRuntime` the agent path would have used, so `--mock --workflow`
+ * still needs no credential, and the ledger row records
+ * `<agent>+workflow` as its target.
+ *
+ * ```sh
+ * pnpm example:run:mock -- --workflow                              # the `clear` route
+ * pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"   # the `research` route
+ * pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"        # escalation
+ * ```
+ *
+ * `--vendor <name>` exists because the workflow routes on the vendor's own
+ * frozen evidence, so it is the only way to reach all three routes from the
+ * command line. Without either flag nothing about this command has changed.
+ *
+ * The two `jev` nodes are answered by a deterministic placeholder until M3
+ * lands a `DecisionEngine`; see `src/workflow/fixture-decision-port.ts`.
  */
 
 /** The output the harness prints. Printed as JSON so it can be piped. */
@@ -73,6 +113,22 @@ interface RunSummary {
   readonly target: string;
   readonly agent: string;
   readonly host: string;
+  /** Which execution path ran the job: the full agent, or the compiled workflow. */
+  readonly mode: RunMode;
+  /** The vendor this run triaged. */
+  readonly vendorName: string;
+  /**
+   * The compiled workflow this run executed, or `null` when the full agent did.
+   *
+   * The fingerprint, not the IR: the whole IR would drown the summary, and it is
+   * already in the behavior fingerprint's `workflowIr` component and readable
+   * from the source.
+   */
+  readonly workflow: {
+    readonly id: string;
+    readonly version: string;
+    readonly fingerprint: string;
+  } | null;
   /** The JSONL file this run's ordered trace was written to (M2-T4). */
   readonly tracePath: string;
   /**
@@ -161,14 +217,46 @@ type TargetName = keyof typeof TARGETS;
 /** The credentials the AI Gateway accepts, either of which is enough. */
 const GATEWAY_CREDENTIALS = ["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"] as const;
 
-/** The fixture request. `Northwind Ledger` is one of the three vendors on file. */
-const INPUT: VendorTriageInput = {
-  vendorName: "Northwind Ledger",
-  procurementSop: PROCUREMENT_SOP,
-};
+/** The fixture request's default vendor. One of the three on file. */
+const DEFAULT_VENDOR_NAME = "Northwind Ledger";
+
+/** Which execution path runs the job. */
+type RunMode = "agent" | "workflow";
 
 function chooseTarget(argv: readonly string[]): TargetName {
   return argv.includes("--mock") || process.env.EXAMPLE_RUN_TARGET === "mock" ? "mock" : "live";
+}
+
+/**
+ * Whether to run the job through the compiled vendor workflow (M4-T10) rather
+ * than straight through the full agent.
+ *
+ * `--workflow`, or `EXAMPLE_RUN_MODE=workflow`, mirroring how `--mock` and
+ * `EXAMPLE_RUN_TARGET=mock` choose the target. The two are independent: the
+ * workflow runs against whichever agent the target names, because its `agent`
+ * node is handed the same `EveAgentRuntime` the agent path would have used.
+ */
+function chooseMode(argv: readonly string[]): RunMode {
+  return argv.includes("--workflow") || process.env.EXAMPLE_RUN_MODE === "workflow"
+    ? "workflow"
+    : "agent";
+}
+
+/**
+ * Which vendor to triage: `--vendor <name>`, `EXAMPLE_RUN_VENDOR`, or the
+ * default.
+ *
+ * It exists because the compiled workflow routes on the vendor's own evidence:
+ * `Northwind Ledger` takes the deterministic `clear` route, `Tessellate
+ * Analytics` and `Cobalt Harbor Logistics` take the `research` route through
+ * the agent, and anything not on file escalates. Without this, only one of the
+ * three routes could be demonstrated.
+ */
+function chooseVendorName(argv: readonly string[]): string {
+  const index = argv.indexOf("--vendor");
+  const stated = index === -1 ? undefined : argv[index + 1];
+
+  return stated ?? process.env.EXAMPLE_RUN_VENDOR ?? DEFAULT_VENDOR_NAME;
 }
 
 /**
@@ -285,8 +373,12 @@ function credentialEnv(): Record<string, string> {
 }
 
 async function main(): Promise<number> {
-  const name = chooseTarget(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const name = chooseTarget(argv);
+  const mode = chooseMode(argv);
+  const vendorName = chooseVendorName(argv);
   const target = TARGETS[name];
+  const input: VendorTriageInput = { vendorName, procurementSop: PROCUREMENT_SOP };
 
   if (target.requiresCredential && presentCredentials().length === 0) {
     process.stderr.write(
@@ -356,14 +448,52 @@ async function main(): Promise<number> {
       sinks.push(createStorageTraceSink({ storage }));
     }
 
+    // The eve adapter for whichever target was chosen. In workflow mode it is
+    // not the harness's runtime: it is what the workflow's one `agent` node
+    // runs, under that node's own grants and budget rather than the job's.
+    const eveRuntime = new EveAgentRuntime({
+      host: server.host,
+      // M1-T9's capability registry will resolve a job's contract references
+      // to schemas; until it does, the runtime is handed the domains it may
+      // request structured output for.
+      domains: [vendorTriage],
+    });
+
+    // M4-T10. In `workflow` mode the harness drives the local deterministic
+    // runtime over the compiled vendor workflow, and the eve adapter above
+    // becomes one node inside it. `asAgentRuntime()` is what makes that
+    // invisible to `createHarness()`, so trace, storage, the run ledger and
+    // `pnpm harness run show` keep working with no router (M5 adds one).
+    let domain: DomainDefinition<VendorTriageInput, VendorTriageOutput> = vendorTriage;
+    let agentRuntime: AgentRuntime = eveRuntime;
+    let workflow: RunSummary["workflow"] = null;
+
+    if (mode === "workflow") {
+      const registry = createVendorTriageRegistry();
+      const compiled = compileVendorTriageWorkflow(registry);
+
+      agentRuntime = createWorkflowRuntime({
+        registry,
+        agentRuntime: eveRuntime,
+        // A placeholder until M3 lands a `DecisionEngine`; see
+        // `src/workflow/fixture-decision-port.ts`.
+        decisionEngine: createFixtureDecisionPort(),
+      }).asAgentRuntime(compiled);
+      // The behavior fingerprint's `workflowIr` component (ADR-0034): a run
+      // through the compiled path is a different behavior from a run through
+      // the full agent, and this is what makes the two fingerprints differ.
+      domain = createVendorTriageDomain({
+        workflowIr: JSON.parse(compiled.canonicalJson) as JsonValue,
+      });
+      workflow = {
+        id: compiled.definition.id,
+        version: compiled.definition.version,
+        fingerprint: compiled.fingerprint,
+      };
+    }
+
     const harness = createHarness({
-      agentRuntime: new EveAgentRuntime({
-        host: server.host,
-        // M1-T9's capability registry will resolve a job's contract references
-        // to schemas; until it does, the runtime is handed the domains it may
-        // request structured output for.
-        domains: [vendorTriage],
-      }),
+      agentRuntime,
       // Redaction (M2-T9) wraps the buffered writer rather than the sink, so an
       // unredacted event never reaches the buffer, let alone the file. The default
       // policy applies; adapter payloads are identity-only today, so a healthy run
@@ -377,8 +507,11 @@ async function main(): Promise<number> {
       // Which agent actually ran, recorded on the run row. A behavior
       // fingerprint describes the *domain*, and this file runs one domain
       // against two different agents, so without this the ledger could not tell
-      // a mock run from a live one (ADR-0034's open question).
-      target: target.agent,
+      // a mock run from a live one (ADR-0034's open question). In workflow mode
+      // it additionally says *how*: the same agent behind a compiled workflow is
+      // a different execution path, and the ledger has to be able to tell them
+      // apart before M5 can ask whether the workflow carried its weight.
+      target: mode === "workflow" ? `${target.agent}+workflow` : target.agent,
     });
 
     // A storage failure during the run reaches here as a `StorageError`
@@ -390,7 +523,7 @@ async function main(): Promise<number> {
     let result: HarnessRunResult<unknown>;
 
     try {
-      result = await harness.run({ domain: vendorTriage, input: INPUT });
+      result = await harness.run({ domain, input });
     } catch (error) {
       if (error instanceof StorageError) {
         reportStorageFailure(error);
@@ -405,6 +538,9 @@ async function main(): Promise<number> {
       target: name,
       agent: target.agent,
       host: server.host,
+      mode,
+      vendorName,
+      workflow,
       tracePath: traces.pathFor(result.runId),
       // The URL only. The service-role key is never printed.
       storage: storage === null ? null : (process.env.SUPABASE_URL ?? null),

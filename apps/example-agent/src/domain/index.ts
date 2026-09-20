@@ -1,8 +1,14 @@
-import { type CreateJobInput, defineDomain } from "@internal/core";
+import {
+  type CreateJobInput,
+  type DomainDefinition,
+  defineDomain,
+  type JsonValue,
+} from "@internal/core";
 import { loadVendorTriageBehavior } from "../behavior.js";
 import { PROCUREMENT_SOP } from "./procurement-sop.js";
 import {
   type VendorTriageInput,
+  type VendorTriageOutput,
   vendorTriageInputSchema,
   vendorTriageOutputSchema,
 } from "./schemas.js";
@@ -71,56 +77,94 @@ function createJob(input: VendorTriageInput): CreateJobInput<VendorTriageInput> 
   };
 }
 
-export const vendorTriage = defineDomain({
-  id: "vendor-triage",
-  version: "1.0.0",
-  inputSchema: vendorTriageInputSchema,
-  outputSchema: vendorTriageOutputSchema,
-  createJob,
-  // What this domain's behavior is made of (M2-T8, ADR-0034). The harness
-  // resolves it once per run, before `run.started`, and stamps the resulting
-  // `sha256:` fingerprint on every trace event and on the run result. It is a
-  // loader rather than a literal because gathering it means reading
-  // `agent/instructions.md` and `agent/skills/`, and because reading them per
-  // run is what makes an edit between two runs show up as a changed behavior.
-  behavior: loadVendorTriageBehavior,
-  evals: [
-    {
-      id: "northwind-ledger-well-documented",
-      description:
-        "A vendor whose evidence meets most of the SOP should not be escalated, and should cite what it rests on.",
-      input: {
-        vendorName: "Northwind Ledger",
-        procurementSop: PROCUREMENT_SOP,
+/** What {@link createVendorTriageDomain} accepts. */
+export interface CreateVendorTriageDomainOptions {
+  /**
+   * The compiled workflow IR this domain's runs execute, or `null` for the full
+   * agent (M4-T10).
+   *
+   * It reaches the behavior descriptor's `workflowIr` component and nothing
+   * else: the schemas, the job factory and the evals are the same either way,
+   * because the *domain* is the same. What differs is how a job is executed,
+   * and ADR-0034 is why that has to change the fingerprint.
+   */
+  readonly workflowIr?: JsonValue | null;
+}
+
+/**
+ * Build the vendor-triage domain.
+ *
+ * ```ts
+ * const domain = createVendorTriageDomain({ workflowIr: JSON.parse(compiled.canonicalJson) });
+ * ```
+ *
+ * A factory beside {@link vendorTriage} rather than in place of it: almost
+ * every caller wants the default, and only `src/run.ts --workflow` needs a
+ * domain whose behavior descriptor names the workflow it is about to run.
+ */
+export function createVendorTriageDomain(
+  options: CreateVendorTriageDomainOptions = {},
+): DomainDefinition<VendorTriageInput, VendorTriageOutput> {
+  return defineDomain({
+    id: "vendor-triage",
+    version: "1.0.0",
+    inputSchema: vendorTriageInputSchema,
+    outputSchema: vendorTriageOutputSchema,
+    createJob,
+    // What this domain's behavior is made of (M2-T8, ADR-0034). The harness
+    // resolves it once per run, before `run.started`, and stamps the resulting
+    // `sha256:` fingerprint on every trace event and on the run result. It is a
+    // loader rather than a literal because gathering it means reading
+    // `agent/instructions.md` and `agent/skills/`, and because reading them per
+    // run is what makes an edit between two runs show up as a changed behavior.
+    behavior: () => loadVendorTriageBehavior({ workflowIr: options.workflowIr ?? null }),
+    evals: [
+      {
+        id: "northwind-ledger-well-documented",
+        description:
+          "A vendor whose evidence meets most of the SOP should not be escalated, and should cite what it rests on.",
+        input: {
+          vendorName: "Northwind Ledger",
+          procurementSop: PROCUREMENT_SOP,
+        },
+        expect(output) {
+          if (output.recommendation.decision === "escalate") {
+            throw new Error("a well-documented vendor should not be escalated");
+          }
+          if (output.evidence.length === 0) {
+            throw new Error("every triage must cite its evidence");
+          }
+        },
       },
-      expect(output) {
-        if (output.recommendation.decision === "escalate") {
-          throw new Error("a well-documented vendor should not be escalated");
-        }
-        if (output.evidence.length === 0) {
-          throw new Error("every triage must cite its evidence");
-        }
+      {
+        id: "cobalt-harbor-payment-change",
+        description:
+          "A vendor with an unverified banking-detail change must raise a risk flag and must not be waved through.",
+        input: {
+          vendorName: "Cobalt Harbor Logistics",
+          procurementSop: PROCUREMENT_SOP,
+        },
+        expect(output) {
+          if (output.riskFlags.length === 0) {
+            throw new Error("the payment-change evidence must raise at least one risk flag");
+          }
+          if (output.recommendation.decision === "proceed") {
+            throw new Error("no triage may recommend proceeding while a risk flag is open");
+          }
+        },
       },
-    },
-    {
-      id: "cobalt-harbor-payment-change",
-      description:
-        "A vendor with an unverified banking-detail change must raise a risk flag and must not be waved through.",
-      input: {
-        vendorName: "Cobalt Harbor Logistics",
-        procurementSop: PROCUREMENT_SOP,
-      },
-      expect(output) {
-        if (output.riskFlags.length === 0) {
-          throw new Error("the payment-change evidence must raise at least one risk flag");
-        }
-        if (output.recommendation.decision === "proceed") {
-          throw new Error("no triage may recommend proceeding while a risk flag is open");
-        }
-      },
-    },
-  ],
-});
+    ],
+  });
+}
+
+/**
+ * The vendor-triage domain, running the full agent.
+ *
+ * This is the domain every caller means unless it is deliberately running the
+ * compiled workflow instead: `pnpm example:run`, `pnpm example:run:mock`, every
+ * test, and any consuming code.
+ */
+export const vendorTriage = createVendorTriageDomain();
 
 export { PROCUREMENT_SOP } from "./procurement-sop.js";
 export type { VendorTriageInput, VendorTriageOutput } from "./schemas.js";

@@ -25,10 +25,14 @@ research-like while staying uncoupled from any future real domain.
 | `src/domain/schemas.ts` | The `zod` input and output schemas, field names matching the instructions. |
 | `src/domain/procurement-sop.ts` | The invented SOP the fixture evals triage against. |
 | `src/domain/index.ts` | The `defineDomain()` call: `vendorTriage`, with its job factory and two fixture evals. |
-| `src/capabilities.ts` | The capability registrations: both schemas, the agent, the tool, the handler and the policy. |
+| `src/capabilities.ts` | The capability registrations: six schemas, the agent, the tool, three handlers and the policy. |
 | `src/handlers/detect-payment-detail-change.ts` | The deterministic handler: an unverified banking-detail change, found by a pure function. |
 | `src/policies/no-proceed-with-open-risk-flags.ts` | The policy: no unconditional `proceed` while a risk flag is open. |
-| `src/run.ts` | The `pnpm example:run` entrypoint: start an eve server, build an `EveAgentRuntime`, run the domain through `createHarness()`, print the result. |
+| `src/workflow/vendor-triage-workflow.ts` | M4-T10's compiled workflow, authored with the typed DSL. |
+| `src/workflow/fixture-decision-port.ts` | The deterministic `WorkflowDecisionPort` standing in for Jev until M3. |
+| `src/handlers/finalize-clear-triage.ts` | The workflow's `clear` route: a whole triage in deterministic code. |
+| `src/handlers/decide-verified-triage.ts` | The workflow's policy step over an agent triage and its verification. |
+| `src/run.ts` | The `pnpm example:run` entrypoint: start an eve server, build an `EveAgentRuntime`, run the domain through `createHarness()`, print the result. `--workflow` runs the compiled workflow instead. |
 | `src/dependency-pins.test.ts` | ADR-0024's installed-version assertion for `eve`, `ai` and `zod`. |
 
 ### The two halves, and the line between them
@@ -124,7 +128,8 @@ closed".
 
 ### The capability manifest
 
-`src/capabilities.ts` registers the five kinds M1-T9 requires, in the order registration demands
+`src/capabilities.ts` registers the five kinds M1-T9 requires, plus the six M4-T10 added, in the
+order registration demands
 (schemas first, because a capability naming a schema reference is rejected unless that schema is
 already registered):
 
@@ -132,9 +137,15 @@ already registered):
 | --- | --- | --- |
 | `schema` | `vendor-triage.input@1.0.0` | the `zod` input schema |
 | `schema` | `vendor-triage.output@1.0.0` | the `zod` output schema |
+| `schema` | `vendor-triage.classification@1.0.0` | M4-T10: what the `classify` node decides |
+| `schema` | `vendor-triage.verification@1.0.0` | M4-T10: what the `verify` node decides |
+| `schema` | `vendor-triage.finalize-input@1.0.0` | M4-T10: the `finalize` node's composite input |
+| `schema` | `vendor-triage.decision-input@1.0.0` | M4-T10: the `decide` node's composite input |
 | `agent` | `vendor-triage-agent@1.0.0` | a plain descriptor naming the authored `eve` files |
 | `tool` | `lookup_vendor_evidence@1.0.0` | the pure `lookupVendorEvidence` function |
 | `handler` | `detect-payment-detail-change@1.0.0` | a pure detector over the fixture evidence |
+| `handler` | `finalize-clear-triage@1.0.0` | M4-T10: the `clear` route's whole triage (declares its schemas) |
+| `handler` | `decide-verified-triage@1.0.0` | M4-T10: the `research` route's policy step (declares its schemas) |
 | `policy` | `no-proceed-with-open-risk-flags@1.0.0` | a pure threshold over a `VendorTriageOutput` |
 
 `vendorTriageManifest` is the serializable form. Its test asserts that it round-trips through
@@ -175,6 +186,69 @@ check that the harness path still works.
 
 **What the mock run cannot tell you** is whether a real model produces a useful triage. Its output
 is built from the domain's own output schema, so it is correctly shaped and says nothing.
+
+### The hand-authored compiled workflow (M4-T10)
+
+Milestone 4's deliverable, and the first workflow authored against a real capability registry
+rather than a test fixture. `src/workflow/vendor-triage-workflow.ts` builds it with the
+[typed DSL](../contracts/workflow-dsl.md) and exports `vendorTriageWorkflowDefinition` (the IR) and
+`compileVendorTriageWorkflow(registry)` (the `CompiledWorkflow`).
+
+```text
+jev classify ──┬── clear     → code finalize                      (→ vendor-triage.output)
+               ├── research  → agent research → jev verify → code decide
+               └── default   → escalate full-agent
+```
+
+Seven nodes. The `clear` route spends one decision and finishes in deterministic code; the
+`research` route spends a second decision and one full agent run; anything else hands the job back
+with what was established, which is north-star invariant 1 written into the graph. Which route a
+request takes is decided by the vendor's own frozen evidence, so all three are reachable from the
+command line.
+
+| Path | What it holds |
+| --- | --- |
+| `src/workflow/vendor-triage-workflow.ts` | The DSL authoring of the graph, and `compileVendorTriageWorkflow()`. |
+| `src/workflow/fixture-decision-port.ts` | A deterministic `WorkflowDecisionPort`, **a placeholder until M3**. It is not Jev. |
+| `src/handlers/finalize-clear-triage.ts` | The `clear` route's whole triage, in code: category, SOP gaps, risk flags, evidence. |
+| `src/handlers/decide-verified-triage.ts` | The `research` route's policy step, applying `no-proceed-with-open-risk-flags`. |
+
+M4-T10 added six capabilities to `src/capabilities.ts` beside Milestone 1's six: four schemas
+(`vendor-triage.classification`, `.verification`, `.finalize-input`, `.decision-input`) and the two
+handlers above. A compiled workflow types every edge, so a classification and a verification need
+schemas of their own, and the two `code` nodes read composite inputs built by `{ kind: "object" }`
+bindings — `finalize` needs the request as well as the classification, and `decide` needs the
+agent's triage as well as the verification of it.
+
+#### Running it
+
+```sh
+pnpm example:run:mock -- --workflow                                    # the `clear` route
+pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"    # the `research` route
+pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"         # escalation, exit 1
+```
+
+`--workflow` (or `EXAMPLE_RUN_MODE=workflow`) swaps the harness's `AgentRuntime` for
+`WorkflowRuntime.asAgentRuntime(compiled)`. The workflow's one `agent` node is handed the **same**
+`EveAgentRuntime` the agent path would have used, under that node's own grants and budget, so
+`--mock --workflow` still needs no credential. `--vendor <name>` (or `EXAMPLE_RUN_VENDOR`) exists
+only because the routing is evidence-driven; without it only one route could be demonstrated.
+Without either flag nothing about `pnpm example:run` has changed.
+
+The ledger row records `target = <agent>+workflow`, and the behavior fingerprint's `workflowIr`
+component is the compiled workflow's canonical IR rather than `null`, so a compiled run and a
+full-agent run of the same domain are different behaviors and fingerprint differently.
+[`docs/runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md) says what
+`pnpm harness run show` prints for one.
+
+#### What the Jev nodes really are
+
+Nothing answers a Jev question yet: M3 owns questions, the engine and the answer shape, and a
+question is deliberately not a capability kind, which is what lets M3 and M4 be built in parallel.
+`createFixtureDecisionPort()` answers both of this workflow's questions from the input with a
+handful of string matches. It is deterministic, pure, and refuses any question it does not
+recognize rather than answering by default. When M3 lands it is replaced by an adapter over the
+real `DecisionEngine` and deleted; nothing in the workflow definition changes.
 
 ### `apps/eve-fixture-agent` — the credential-free fixture
 

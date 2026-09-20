@@ -152,10 +152,10 @@ describe("a retry does not duplicate a protected side effect", () => {
     const toolStarts = trace.events.filter((event) => event.type === "tool.started");
 
     expect(toolStarts).toHaveLength(2);
-    expect(toolStarts[0]?.payload["replayed"]).toBeUndefined();
+    expect(toolStarts[0]?.payload.replayed).toBeUndefined();
     // The second attempt's span says the effect was replayed rather than made.
-    expect(toolStarts[1]?.payload["replayed"]).toBe(true);
-    expect(toolStarts[1]?.payload["idempotencyKey"]).toBe(
+    expect(toolStarts[1]?.payload.replayed).toBe(true);
+    expect(toolStarts[1]?.payload.idempotencyKey).toBe(
       `${context.runId}:test-workflow@1.0.0:send:-`,
     );
   });
@@ -310,7 +310,7 @@ describe("a retry does not duplicate a protected side effect", () => {
 
     const keys = trace.events
       .filter((event) => event.type === "node.started")
-      .map((event) => event.payload["idempotencyKey"]);
+      .map((event) => event.payload.idempotencyKey);
 
     expect(keys).toEqual([
       `${context.runId}:test-workflow@1.0.0:flaky:-:1`,

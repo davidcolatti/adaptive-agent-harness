@@ -113,8 +113,12 @@ describe("loadVendorTriageBehavior", () => {
     expect(lookup?.definitionFingerprint).toBe(registered?.fingerprint);
 
     expect(descriptor.schemas.map((schema) => schema.ref)).toEqual([
+      "vendor-triage.classification@1.0.0",
+      "vendor-triage.decision-input@1.0.0",
+      "vendor-triage.finalize-input@1.0.0",
       "vendor-triage.input@1.0.0",
       "vendor-triage.output@1.0.0",
+      "vendor-triage.verification@1.0.0",
     ]);
     expect(descriptor.schemas.every((schema) => schema.fingerprint.startsWith("sha256:"))).toBe(
       true,

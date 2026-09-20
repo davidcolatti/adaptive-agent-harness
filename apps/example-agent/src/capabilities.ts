@@ -4,8 +4,17 @@ import {
   createCapabilityRegistry,
 } from "@internal/core";
 import { lookupVendorEvidence } from "../agent/lib/vendor-evidence.js";
-import { vendorTriageInputSchema, vendorTriageOutputSchema } from "./domain/schemas.js";
+import {
+  vendorTriageClassificationSchema,
+  vendorTriageDecisionInputSchema,
+  vendorTriageFinalizeInputSchema,
+  vendorTriageInputSchema,
+  vendorTriageOutputSchema,
+  vendorTriageVerificationSchema,
+} from "./domain/schemas.js";
+import { decideVerifiedTriage } from "./handlers/decide-verified-triage.js";
 import { detectPaymentDetailChange } from "./handlers/detect-payment-detail-change.js";
+import { finalizeClearTriage } from "./handlers/finalize-clear-triage.js";
 import { noProceedWithOpenRiskFlags } from "./policies/no-proceed-with-open-risk-flags.js";
 
 /**
@@ -16,6 +25,12 @@ import { noProceedWithOpenRiskFlags } from "./policies/no-proceed-with-open-risk
  * policy. All five are here, and the manifest they produce is the artifact
  * AD-015 describes: enough metadata for validation, fingerprints, replay
  * lineage and deterministic source imports, and no executable source or secret.
+ *
+ * **M4-T10 added six more**: the four schemas the hand-authored vendor workflow
+ * introduces and the two handlers its `code` nodes call. They are registered
+ * here rather than in `src/workflow/` because this is the registry
+ * `compileWorkflow()` resolves every reference against, and a second one would
+ * be a second answer to "what can this domain do?".
  *
  * **Module specifiers are repository-relative paths.** `apps/example-agent`
  * publishes no subpath exports, and two of the five capabilities live under
@@ -82,6 +97,42 @@ export function registerVendorTriageCapabilities(registry: CapabilityRegistry): 
     value: vendorTriageOutputSchema,
   });
 
+  // The four schemas the hand-authored workflow introduces (M4-T10). They are
+  // registered here, beside the domain's own two and before anything that names
+  // them, because a compiled workflow types every edge and those edges are the
+  // domain's vocabulary rather than one workflow's wiring.
+  registry.register("schema", {
+    id: "vendor-triage.classification",
+    version: "1.0.0",
+    module: `${APP}/src/domain/schemas.ts`,
+    exportName: "vendorTriageClassificationSchema",
+    value: vendorTriageClassificationSchema,
+  });
+
+  registry.register("schema", {
+    id: "vendor-triage.verification",
+    version: "1.0.0",
+    module: `${APP}/src/domain/schemas.ts`,
+    exportName: "vendorTriageVerificationSchema",
+    value: vendorTriageVerificationSchema,
+  });
+
+  registry.register("schema", {
+    id: "vendor-triage.finalize-input",
+    version: "1.0.0",
+    module: `${APP}/src/domain/schemas.ts`,
+    exportName: "vendorTriageFinalizeInputSchema",
+    value: vendorTriageFinalizeInputSchema,
+  });
+
+  registry.register("schema", {
+    id: "vendor-triage.decision-input",
+    version: "1.0.0",
+    module: `${APP}/src/domain/schemas.ts`,
+    exportName: "vendorTriageDecisionInputSchema",
+    value: vendorTriageDecisionInputSchema,
+  });
+
   // The full agent. `read` is the whole of what it may do: its one enabled
   // tool reads frozen fixture evidence, and `web_search`/`web_fetch` are
   // disabled at eve's own slots.
@@ -115,6 +166,30 @@ export function registerVendorTriageCapabilities(registry: CapabilityRegistry): 
     module: `${APP}/src/handlers/detect-payment-detail-change.ts`,
     exportName: "detectPaymentDetailChange",
     value: detectPaymentDetailChange,
+  });
+
+  // The workflow's two `code` nodes (M4-T10). Both declare the schemas they are
+  // registered for, so the validator's step-3 check — a node's `inputSchema` and
+  // `outputSchema` must equal the ones the resolved capability declares — has
+  // something to compare rather than nothing to say.
+  registry.register("handler", {
+    id: "finalize-clear-triage",
+    version: "1.0.0",
+    module: `${APP}/src/handlers/finalize-clear-triage.ts`,
+    exportName: "finalizeClearTriage",
+    inputSchema: { id: "vendor-triage.finalize-input", version: "1.0.0" },
+    outputSchema: { id: "vendor-triage.output", version: "1.0.0" },
+    value: finalizeClearTriage,
+  });
+
+  registry.register("handler", {
+    id: "decide-verified-triage",
+    version: "1.0.0",
+    module: `${APP}/src/handlers/decide-verified-triage.ts`,
+    exportName: "decideVerifiedTriage",
+    inputSchema: { id: "vendor-triage.decision-input", version: "1.0.0" },
+    outputSchema: { id: "vendor-triage.output", version: "1.0.0" },
+    value: decideVerifiedTriage,
   });
 
   registry.register("policy", {

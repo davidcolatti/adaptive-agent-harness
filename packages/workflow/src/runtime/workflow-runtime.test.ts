@@ -139,9 +139,7 @@ describe("createWorkflowRuntime", () => {
         itemIndex: null,
         input: { secretless: "value" },
       });
-      expect(started?.payload["idempotencyKey"]).toBe(
-        `${context.runId}:test-workflow@1.0.0:only:-:1`,
-      );
+      expect(started?.payload.idempotencyKey).toBe(`${context.runId}:test-workflow@1.0.0:only:-:1`);
       expect(completed?.payload).toMatchObject({ output: { secretless: "value" } });
     });
 
@@ -629,7 +627,7 @@ describe("createWorkflowRuntime", () => {
       expect(
         nodeEvents(trace.events)
           .filter((event) => event.node === "shout" && event.type === "node.started")
-          .map((event) => event.payload["itemIndex"]),
+          .map((event) => event.payload.itemIndex),
       ).toEqual([0, 1, 2]);
     });
 
@@ -839,7 +837,7 @@ describe("createWorkflowRuntime", () => {
       expect(
         trace.events
           .filter((event) => event.type === "node.started")
-          .map((event) => event.payload["idempotencyKey"]),
+          .map((event) => event.payload.idempotencyKey),
       ).toEqual([
         `${context.runId}:test-workflow@1.0.0:fails:-:1`,
         `${context.runId}:test-workflow@1.0.0:fails:-:2`,
@@ -1109,7 +1107,7 @@ describe("createWorkflowRuntime", () => {
       }
 
       expect(execution.error.code).toBe("WORKFLOW");
-      expect(execution.error.details?.["fallback"]).toMatchObject({
+      expect(execution.error.details?.fallback).toMatchObject({
         reason: "escalate-node",
         workflow: { id: "test-workflow", version: "1.0.0" },
       });
@@ -1320,11 +1318,11 @@ describe("createWorkflowRuntime", () => {
         })
         .build();
 
-      expect(definition.nodes["route"]).toMatchObject({
+      expect(definition.nodes.route).toMatchObject({
         inputSchema: "vendor.classification@1.0.0",
         outputSchema: "vendor.classification@1.0.0",
       });
-      expect(definition.nodes["finalize"]).toMatchObject({
+      expect(definition.nodes.finalize).toMatchObject({
         input: { kind: "node", node: "route" },
         inputSchema: "vendor.classification@1.0.0",
       });

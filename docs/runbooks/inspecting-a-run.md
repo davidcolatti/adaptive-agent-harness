@@ -167,6 +167,36 @@ Fingerprints
   flush leaves a `running` row with no trace; the inspector prints the row and
   `note: no trace events for this run`.
 
+## A workflow run (M4-T10)
+
+`pnpm example:run:mock -- --workflow` runs the job through the compiled vendor workflow instead of
+straight through the full agent, and the inspector reads it with no change: a workflow is an
+`AgentRuntime` as far as `createHarness()` is concerned. What is different in the output is the
+timeline, which now carries a `node.started`/`node.completed` pair per executed node, each with
+`nodeId=<id> type=<node type> attempt=<n> idempotencyKey=<key>` in its detail column, and with the
+adapter's own `agent.*`, `model.*` and `decision.*` events nested between the pair of the node that
+produced them. The `Route` section's `runtime` line reads `@internal/workflow@0.0.0` and `target`
+reads `<agent>+workflow`, which is how a workflow run is told from a full-agent run today. An
+escalated run ends `node.completed <escalate node>`, `fallback.started`, `run.failed`, and its
+`Errors` section prints the whole `FallbackContext` from the `WorkflowError`'s `details` — the
+reason, the workflow's id, version and fingerprint, the nodes that completed with whether each is
+trusted, and the remaining budget.
+
+**Four things the inspector does not yet show for a workflow run**, all of them M2 code that
+predates workflows and none of them wrong in a way that misleads about what ran:
+
+- **`route:` always prints `full-agent`.** It is `runs.workflow_version_id`, a placeholder column
+  that M5's workflow registry fills; the run's actual workflow is in the `runtime` line's metadata
+  and in the behavior fingerprint's `workflowIr` component.
+- **`fallbacks:` reads `0 (from the ledger)` even for a run that escalated**, because
+  `runs.fallback_count` is a placeholder too. The trace count is right and is used only when there
+  is no ledger row.
+- **`TraceEvent.node` has no column of its own.** The node id is visible only because the runtime
+  repeats it in the payload as `nodeId`, and a long detail line truncates.
+- **The note "jev: 0 is a real measurement … until M3 adds the Jev decision engine" prints even
+  when the run made Jev calls.** M4's fixture decision port is not Jev, so the note is still true
+  in spirit, but it should become conditional when M3 lands.
+
 ## Exit codes
 
 | Code | Meaning |

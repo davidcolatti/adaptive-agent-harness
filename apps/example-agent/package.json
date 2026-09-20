@@ -16,6 +16,7 @@
     "@internal/runtime-eve": "workspace:*",
     "@internal/storage-supabase": "workspace:*",
     "@internal/trace": "workspace:*",
+    "@internal/workflow": "workspace:*",
     "ai": "7.0.107",
     "eve": "0.63.0",
     "zod": "4.6.5"

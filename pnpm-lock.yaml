@@ -239,6 +239,9 @@ importers:
       '@internal/trace':
         specifier: workspace:*
         version: link:../../packages/trace
+      '@internal/workflow':
+        specifier: workspace:*
+        version: link:../../packages/workflow
       ai:
         specifier: 7.0.107
         version: 7.0.107(zod@4.6.5)

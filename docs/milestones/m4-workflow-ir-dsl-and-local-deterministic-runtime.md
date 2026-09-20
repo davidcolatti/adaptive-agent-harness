@@ -1,7 +1,9 @@
 # Milestone 4, Workflow IR, DSL, and Local Deterministic Runtime
 
-**Status:** in progress. M4-T1 through M4-T9 are `completed` (commits `4c03e2e`, `0d12b43`).
-M4-T10, the hand-authored vendor workflow and acceptance verification, is in progress.
+**Status:** all ten tasks are `completed` (M4-T1 and M4-T2 in commit `4c03e2e`; M4-T3 through
+M4-T9 in `0d12b43`; M4-T10 not yet committed), and all eight acceptance criteria are verified with
+dated evidence below. Milestone close-out — the `docs/progress/milestones/m4.md` snapshot and the
+`current-state.md` rewrite — is the only thing left.
 
 **Goal (from the build plan):** create the inspectable compiled representation before attempting
 automatic compilation. Humans should be able to author workflows first.
@@ -483,7 +485,7 @@ research -> jev verify -> code decide, uncertain -> escalate}) against a registr
 
 ### M4-T10, Hand-authored compiled example
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Create vendor workflow:
 
@@ -503,15 +505,180 @@ Jev classify
     +-- uncertain -> full-agent escalation
 ```
 
+**Result.** The workflow is `apps/example-agent/src/workflow/vendor-triage-workflow.ts`, authored
+with the typed DSL (M4-T5) and compiled against the domain's **own** capability registry (M1-T9)
+rather than a test fixture. That is the difference from
+`packages/workflow/src/dsl/vendor-triage.test.ts`, which proved the DSL could express the shape
+with placeholder references: this one resolves every reference to a schema, handler, agent or tool
+the example agent actually ships, so it is the milestone's deliverable, "the first inspectable
+compiled workflow". Seven nodes, fingerprint
+`sha256:27da4abdb90051185735663c32ea8767abe56d70bd30bcba0f626b6e0cbf612a`.
+
+**Three bindings are stated rather than derived, and each one is a rule being obeyed.** The
+`research` node runs the registered `vendor-triage-agent@1.0.0`, whose manifest entry declares both
+its schemas, and the validator requires a node's schemas to equal the ones its resolved capability
+declares — so it binds `{ kind: "input" }` and is handed the original request, which is also what a
+vendor triage agent needs. `finalize` and `decide` each read a `{ kind: "object" }` binding with a
+composite schema, because a `code` node bound to its predecessor would see half of what it needs:
+finalizing needs the request as well as the classification, and applying the policy needs the
+agent's triage as well as the verification *of* that triage. Both name nodes that **dominate** the
+reader, which is ADR-0039's rule and the one an author gets wrong most easily.
+
+**Six capabilities were added to `src/capabilities.ts`**, beside Milestone 1's six and leaving
+those byte-identical: four schemas (`vendor-triage.classification`, `.verification`,
+`.finalize-input`, `.decision-input`), authored as real `zod` schemas in
+`src/domain/schemas.ts`, and two handlers, `finalize-clear-triage` (the whole `clear` triage in
+deterministic code: category, SOP gaps, the existing payment-change detector, evidence, and a
+recommendation that is never an unconditional `proceed` while anything is unestablished) and
+`decide-verified-triage` (the existing `noProceedWithOpenRiskFlags` policy applied to the agent's
+triage and the verification). Both handlers **declare** the schemas they are registered for, so the
+validator's step-3 equality check has something to compare; both are pure and total, and both have
+their own unit test. A compiled workflow types every edge (north-star invariant 5), which is why a
+classification and a verification need schemas at all.
+
+**The Jev questions are answered by a documented placeholder**,
+`src/workflow/fixture-decision-port.ts`. It is **not Jev** and does not approximate it: M3 owns
+questions, the engine and the answer shape, and a question is deliberately not a capability kind,
+which is what lets the two milestones be built in parallel (ADR-0038). It answers `classify` from
+the frozen fixture evidence — `clear` for a vendor on file with nothing that needs reading,
+`research` for one whose evidence carries an indicator, `uncertain` for anything else — and
+`verify` from whether the triage cites a source, which it says out loud is the most a pure function
+can honestly claim. It refuses any question it does not recognize rather than answering by default.
+When M3 lands, an adapter over the real `DecisionEngine` replaces it and this file is deleted;
+nothing in the workflow definition changes. It is kept in `apps/example-agent` rather than in
+`@internal/workflow` because it is this domain's fixture, not a harness capability, so no ADR was
+needed.
+
+**`src/run.ts` gained `--workflow`** (or `EXAMPLE_RUN_MODE=workflow`), which swaps the harness's
+`AgentRuntime` for `WorkflowRuntime.asAgentRuntime(compiled)` and hands the workflow's one `agent`
+node the **same** `EveAgentRuntime` the agent path would have used — so `--mock --workflow` still
+needs no credential, and the ledger records `target = <agent>+workflow`. It also gained
+`--vendor <name>` (or `EXAMPLE_RUN_VENDOR`), because the workflow routes on the vendor's own
+evidence and without it only one of the three routes could be demonstrated from the command line.
+Neither flag changes anything about `pnpm example:run` without them.
+
+**The behavior fingerprint now names the workflow.** `loadVendorTriageBehavior()` takes an optional
+`workflowIr`, `createVendorTriageDomain({ workflowIr })` supplies it, and `--workflow` passes the
+compiled workflow's canonical IR — so a compiled run and a full-agent run of the same domain are
+different behaviors and fingerprint differently, which is what ADR-0034's `workflowIr` component
+was reserved for. `vendorTriage` is unchanged and still means the full agent. Measured on two real
+runs of the same domain against the same agent: `pnpm example:run:mock`
+(`01a0bfad-b44f-7001-afd1-cfa5aafa72ac`) has `workflowIr = sha256:74234e98…`, the digest of `null`,
+and composite `sha256:d3fd7841…`; `pnpm example:run:mock -- --workflow`
+(`01a0bfa7-4484-7000-9060-dcba9756a378`) has `workflowIr = sha256:27da4abd…`, which is the compiled
+workflow's own fingerprint, and composite `sha256:4f57ec9a…`. `workflowIr` is the only component
+that moved.
+
+Documented in [`../examples/README.md`](../examples/README.md) (the workflow, its files, and how to
+run all three routes) and [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md)
+(what a workflow run looks like in `pnpm harness run show`, and the four things it does not yet
+show). One **one-line fix** was made outside this app: the inspector's decision-identity key list
+(`packages/observability/src/inspect-run.ts`) now tries `questionId` first, because a `jev` node
+names a *question* (M4-T2) and the Jev call rows printed `(none)` without it.
+
+Verification: `pnpm check` PASS (1197 passed, 43 skipped across 67 files), and the three routes run
+end to end against the real eve fixture agent and real Supabase; run ids and event sequences are in
+the acceptance criteria below.
+
 ## Acceptance criteria
 
-From the build plan.
+From the build plan. Every criterion is verified against code in the tree on 2026-09-20; where a
+criterion is proven by a test another task wrote, that test is named by file and title and was
+re-run for this record.
 
-- A human-authored workflow runs locally. **not yet verified**
-- Every node validates inputs and outputs. **not yet verified**
-- Workflow validation rejects an intentional unbounded cycle. **not yet verified**
-- An agent node cannot call an ungranted tool. **not yet verified**
-- A failed node is visible in the trace. **not yet verified**
-- A retry does not duplicate a protected side effect in tests. **not yet verified**
-- DSL output can be serialized to canonical IR. **not yet verified**
-- Same IR produces same workflow fingerprint. **not yet verified**
+- A human-authored workflow runs locally. **verified 2026-09-20** (M4-T10, M4-T6): all three
+  routes of the real vendor workflow, through `createHarness()` on
+  `WorkflowRuntime.asAgentRuntime()`, against the credential-free eve fixture agent and local
+  Supabase. `pnpm example:run:mock -- --workflow` (run `01a0bfa7-4484-7000-9060-dcba9756a378`)
+  completed the `clear` route with `modelCalls: 1`, `toolCalls: 0` and **no agent call at all**,
+  and its trace is `run.started`, `node.started(classify)`, `decision.started`,
+  `decision.completed`, `node.completed(classify)`, `node.started(route)`,
+  `node.completed(route)`, `node.started(finalize)`, `node.completed(finalize)`, `run.completed`.
+  `-- --workflow --vendor "Tessellate Analytics"` (run
+  `01a0bfa7-71aa-7001-8d36-e62ee08c5bae`) completed the `research` route with `modelCalls: 3`,
+  its trace adding `node.started(research)`, `agent.started`, `model.started`, `model.completed`,
+  `agent.completed`, `node.completed(research)`, then `verify` and `decide`.
+  `-- --workflow --vendor "Aurelia Freight"` (run `01a0bfa7-9ce9-7001-8075-74110e84dce6`)
+  escalated: `node.completed(full-agent)`, `fallback.started`, `run.failed`, exit 1. All three
+  wrote a `runs` row with `target = @internal/eve-fixture-agent+workflow` and
+  `runtime_name = @internal/workflow`. In unit tests the same three routes are
+  `apps/example-agent/src/workflow/vendor-triage-run.test.ts`, whose thirteen cases cover the
+  clear, research and default routes, the branch label recorded in the trace, the ledger row and
+  the run's `runtime` metadata. The runtime's own version of the criterion is
+  `packages/workflow/src/runtime/workflow-runtime.test.ts` > "A human-authored workflow runs
+  locally" (re-run, PASS).
+- Every node validates inputs and outputs. **verified 2026-09-20** (M4-T6, M4-T10): the
+  interpreter validates a node's bound input against its `inputSchema` before executing and its
+  result against its `outputSchema` after, for every node type, which is
+  `packages/workflow/src/runtime/workflow-runtime.test.ts` > "Every node validates inputs and
+  outputs" (re-run, PASS). Against the real domain it is
+  `vendor-triage-run.test.ts` > "validates every node's input and output, with `node` set on each
+  event": every `node.*` event of a real run carries a non-null `node` and a `nodeId` payload
+  field, and `node.started`/`node.completed` carry the validated `input`/`output` (ADR-0040's
+  amendment to ADR-0031). Two of those schemas are composites the workflow builds with
+  `{ kind: "object" }` bindings, so the check is over a value nothing else in the run produces.
+  The strongest end-to-end evidence is `finalize-clear-triage.test.ts` > "produces a valid
+  `vendor-triage.output` for every fixture vendor and for an unknown one", because a `code` node
+  whose handler can produce an invalid output turns a deterministic route into an escalation.
+- Workflow validation rejects an intentional unbounded cycle. **verified 2026-09-20** (M4-T4):
+  `packages/workflow/src/compile.test.ts` > "rejects an intentional unbounded cycle" (re-run,
+  PASS). ADR-0039 records why the rule is "any cycle is invalid" rather than "any cycle that is
+  not a declared loop": repetition is expressed by `map` or `loop` **containment**, never by a
+  back edge, so there is no legitimate cycle to distinguish from an illegitimate one and no
+  judgment call in the one place that must not have one.
+- An agent node cannot call an ungranted tool. **verified 2026-09-20** (M4-T8, M4-T10): two
+  checks, both failing closed, both before anything executes.
+  `packages/workflow/src/runtime/grants.test.ts` > "An agent node cannot call an ungranted tool"
+  (re-run, PASS) is the unit form. Against the real workflow,
+  `vendor-triage-run.test.ts` > "refuses to run a node granting a tool the job does not, before
+  anything executes" narrows the job's permissions to `lookup_vendor_evidence` alone while the
+  `research` node still grants `load_skill`: the run comes back `failed` with
+  `code: "PERMISSION_DENIED"` naming `load_skill`, the fake agent runtime was **never called**,
+  and the trace shows the `research` node never started. The positive half is "hands the agent
+  node exactly its own grants and never the job's wider list": with three grants on the job and
+  two on the node, the sub-run's `ExecutionContext.permissions` is exactly the node's two. A
+  `code` node needs no such check, because the interpreter calls its handler with one argument —
+  its validated input — and no context, registry, tool table or signal.
+- A failed node is visible in the trace. **verified 2026-09-20** (M4-T6, M4-T10):
+  `packages/workflow/src/runtime/workflow-runtime.test.ts` > "A failed node is visible in the
+  trace" (re-run, PASS). Against the real workflow,
+  `vendor-triage-run.test.ts` > "is visible in the trace, and the run escalates rather than
+  reporting success" registers a deliberately throwing variant of the `finalize-clear-triage`
+  handler in the test's own registry and runs the `clear` route: the trace carries a
+  `node.failed` event with `node: "finalize"` and the thrower's message in its serialized error,
+  followed by `fallback.started` with `reason: "node-failed"` and `nodeId: "finalize"`, and the
+  harness result is `failed` rather than a silently degraded success.
+- A retry does not duplicate a protected side effect in tests. **verified 2026-09-20** (M4-T7):
+  `packages/workflow/src/runtime/idempotency.test.ts` > "A retry does not duplicate a protected
+  side effect" (re-run, PASS). The mechanism is the two keys the runtime derives per node
+  execution: the per-attempt key is the build plan's formula verbatim, and the **protection** key
+  is the same string without the attempt, because a retry is by definition a different attempt and
+  a protection key containing it would never match. A replayed effect records a `tool.*` pair
+  marked `replayed` and charges **no** tool call. The vendor workflow has no `call` node, so it
+  cannot exercise this itself; that is a property of the graph the milestone asked for, not a gap
+  in the evidence.
+- DSL output can be serialized to canonical IR. **verified 2026-09-20** (M4-T5, M4-T10):
+  `packages/workflow/src/dsl/builder.test.ts` > "survives a JSON round trip, which is the
+  acceptance criterion" (re-run, PASS). Against the real workflow,
+  `apps/example-agent/src/workflow/vendor-triage-workflow.test.ts` > "survives a JSON round trip
+  with the same canonical bytes and the same fingerprint" takes
+  `JSON.parse(JSON.stringify(compiled.definition))` and asserts that `canonicalWorkflowIr()` of it
+  equals `compiled.canonicalJson` **and** that `workflowFingerprint()` of it equals
+  `compiled.fingerprint`. The same bytes are what `--workflow` puts in the behavior
+  fingerprint's `workflowIr` component, so the serialization is exercised by every workflow run,
+  not only by a test.
+- Same IR produces same workflow fingerprint. **verified 2026-09-20** (M4-T5, M4-T9, M4-T10):
+  `packages/workflow/src/dsl/builder.test.ts` > "gives the same fingerprint to two builds of the
+  same workflow" (re-run, PASS). Against the real workflow, three cases in
+  `vendor-triage-workflow.test.ts`: two independent compiles give the same
+  `sha256:27da4abdb90051185735663c32ea8767abe56d70bd30bcba0f626b6e0cbf612a`; a definition whose
+  top-level key order is reversed fingerprints identically, because `canonicalJson` sorts keys
+  (ADR-0029); and changing one node's `timeoutMs` changes it, which is the half that makes the
+  property worth having. Observed end to end: the `workflowIr` component digest printed by all
+  three demo runs equals the compiled workflow's own fingerprint.
+- **Beyond the eight**, M4-T9's "a workflow with a missing capability MUST fail validation before
+  any node executes" is a type-level fact rather than a check —
+  `createWorkflowRuntime().run()` takes a `CompiledWorkflow`, and `compileWorkflow()` is the only
+  way to make one — held by `compile.test.ts` and, for the real workflow, by
+  `vendor-triage-workflow.test.ts` > "fails to compile against a registry that does not hold its
+  capabilities".

@@ -10,5 +10,10 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  // `*.test-fixtures.ts` and `test-fixtures.ts` hold values several test files
+  // share. They are ordinary modules rather than `*.test.ts` ones, so importing
+  // them does not re-run another file's suite, and they are excluded here so
+  // test-only code and its `@internal/testing` devDependency never reach
+  // `dist/`. `tsconfig.json` still typechecks them.
+  "exclude": ["src/**/*.test.ts", "src/**/test-fixtures.ts"]
 }

@@ -89,6 +89,9 @@ and related ADRs that motivated it.
 | [0036](0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md) | `Storage` is a core port over a Supabase schema, and `runs` is the ledger | accepted |
 | [0037](0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md) | The run inspector is a library over the `Storage` port, with a `parseArgs` CLI | accepted |
 | [0038](0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md) | The workflow IR is a core contract; validation, the DSL and the runtime live in `@internal/workflow` | accepted |
+| [0039](0039-workflow-validation-is-a-graph-model-with-one-owner-per-node.md) | Workflow validation is a graph model with one owner per node, and schema compatibility is reference equality | accepted |
+| [0040](0040-the-local-workflow-runtime-interprets-a-compiled-workflow-and-escalates-rather-than-fails.md) | The local workflow runtime interprets a `CompiledWorkflow`, records into the run's trace, and escalates rather than fails | accepted |
+| [0041](0041-the-typed-dsl-is-a-wiring-front-end-that-parses-its-own-ir.md) | The typed DSL is a wiring front end that parses its own IR | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19

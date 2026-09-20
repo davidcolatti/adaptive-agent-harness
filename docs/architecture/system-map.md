@@ -14,6 +14,7 @@ related:
   - docs/research/vercel/2026-09-19-m1-eve-project-scaffold.md
   - docs/research/vercel/2026-09-19-m1-eve-programmatic-execution.md
   - docs/architecture/runtime.md
+  - docs/architecture/workflow-runtime.md
   - docs/decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md
   - docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md
   - docs/decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md
@@ -572,7 +573,11 @@ lives in ADR-0024.
 
 The build plan's repository layout lists further documents under `docs/architecture/`:
 `runtime.md`, `workflow-ir.md`, `compiler.md`, `learning-loop.md`, `tracing.md`, `evals.md`,
-`storage.md` and `security.md`. **None of them exist yet, and none should be created yet.**
+`storage.md` and `security.md`. Two exist: [`runtime.md`](runtime.md), written by M1-T6 for
+`EveAgentRuntime`, and [`workflow-runtime.md`](workflow-runtime.md), written by M4-T6 for the local
+workflow interpreter, its trace shape, its budgets, timeouts, retries, idempotency keys, tool
+grants and escalation policy ([ADR-0040](../decisions/0040-the-local-workflow-runtime-interprets-a-compiled-workflow-and-escalates-rather-than-fails.md)).
+**None of the rest exist yet, and none should be created yet.**
 
 M2-T5 deliberately did not create `docs/architecture/storage.md`: what the storage layer is and how
 it behaves is a *contract*, and it is written down in

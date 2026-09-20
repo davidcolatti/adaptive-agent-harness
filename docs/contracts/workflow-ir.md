@@ -11,6 +11,7 @@ related:
   - docs/contracts/execution-context.md
   - docs/contracts/trace-event.md
   - docs/decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md
+  - docs/decisions/0039-workflow-validation-is-a-graph-model-with-one-owner-per-node.md
   - docs/decisions/0015-workflow-ir-references-a-typed-versioned-capability-registry.md
   - docs/decisions/0029-canonical-json-and-sha-256-behavior-fingerprints.md
   - docs/decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md
@@ -442,3 +443,151 @@ The `FallbackReason` is chosen at runtime.
 | `CompiledWorkflow` | `packages/workflow/src/compiled.ts` |
 
 All of the first two are re-exported by name from `@internal/core`.
+
+## Validation and compilation (M4-T4, M4-T9)
+
+```ts
+compileWorkflow(definition: unknown, registry: CapabilityRegistry): CompiledWorkflow
+validateWorkflow(definition: WorkflowDefinition, registry: CapabilityRegistry): readonly ValidationIssue[]
+```
+
+Both live in `@internal/workflow` (`packages/workflow/src/compile.ts` and
+`src/validate/`). `compileWorkflow()` is the **only** way to obtain a
+`CompiledWorkflow`, and it runs M4-T9's six steps in order: parse the definition
+(`parseWorkflowDefinition()`, whose `ValidationError` propagates unchanged),
+validate the graph and the node rules, resolve every capability,
+canonicalize (`canonicalWorkflowIr()`), fingerprint (`workflowFingerprint()`).
+Canonical bytes and a digest are produced **only after everything passes**, so
+neither ever exists for a workflow that cannot run.
+
+`validateWorkflow()` is the middle two steps as a pure function. It **never
+throws for a validation problem**: the typed DSL (M4-T5) reports a mistake at the
+call site that made it, and the run inspector explains a workflow it cannot run,
+and neither should have to catch an exception to read a list. It takes a
+definition that has already been parsed; the shape rules above are
+`parseWorkflowDefinition()`'s and are not repeated.
+
+Every pass runs and every issue is collected. A workflow with five problems
+reports five, each a `ValidationIssue` whose `path` is rooted at the definition
+(`["nodes", "research", "next"]`), and `compileWorkflow()` throws one
+`ValidationError`, `compileWorkflow: workflow definition is invalid`, carrying
+all of them. Nodes are walked in sorted id order, so the list is a function of
+the workflow rather than of the order its literal was written in.
+
+### The graph model
+
+Two kinds of edge, and they mean different things:
+
+| Kind | Fields |
+| --- | --- |
+| successor edge | `next` (`code`, `call`, `jev`, `agent`, `artifact`, `chain`, `map`, `reduce`, `loop`); `cases[*]` and `default` (`branch`) |
+| containment | `chain.steps[*]`, `map.body`, `loop.body` |
+
+A **region** is the top-level graph (rooted at `entry`) or one container child
+slot plus everything its successor edges reach. **Every node has exactly one
+owner**: it is reached from `entry`, or it is the child of exactly one container
+— never both, and never two containers. That is what "duplicate IDs" means in an
+IR whose nodes are object keys, and it is what makes `{ kind: "item" }` scoping
+well defined: "inside a `map` body" is a property of the node, not of the path
+that reached it.
+
+### Every rule the validator enforces
+
+| Rule | Rejects | Issue path |
+| --- | --- | --- |
+| missing node | `entry`, a `next`, a `cases[*]`, a `default`, a `steps[*]`, a `map.body` or a `loop.body` that names no key in `nodes` | the field that names it |
+| one owner | the same node as two container children, or as both a container child and an edge target | the second claim's field |
+| container containment | a container child's subgraph continuing by `next` into a node it does not own; its terminals must be `next: null` or `escalate` | the offending `next` |
+| unreachable | a node no path of edges or containment reaches from `entry` | `["nodes", id]` |
+| cycles | **any** cycle over edges plus containment; repetition must be a `loop` or `map` node, never a back edge | the edge that closes it |
+| `item` scope | `{ kind: "item" }` on a node not inside a `map` body, transitively, including nested in an `object` binding's fields | the binding |
+| `node` binding | a `{ kind: "node"; node: X }` where `X` names no node, is the node itself, or does not **dominate** the reader | the binding's `node` |
+| grants: placement | `permissions` on any node type other than `agent` and `call` — a `code` node in particular does not inherit an agent's tools | `["nodes", id, "permissions"]` |
+| grants: coverage | a `call` node with no grant for the tool it calls; an `idempotent-write`/`non-idempotent-write` call without a `mode: "write"` grant (a `read-only` call is satisfied by either mode) | `["nodes", id, "permissions"]` |
+| grants: resolution | a `call` node grant naming an unregistered `tool` id. **An `agent` node's grants need not resolve** | `["nodes", id, "permissions", i, "toolId"]` |
+| protection | a `call` with `effect: "non-idempotent-write"` and no `protection` | `["nodes", id, "protection"]` |
+| escalation target | a `branch` with no `default` | `["nodes", id, "default"]` |
+| fallback exists | a workflow with no `escalate` node reachable from `entry` | `["nodes"]` |
+| schema: job input | a node whose `input` is `{ kind: "input" }` and whose `inputSchema` is not the workflow's | `["nodes", id, "inputSchema"]` |
+| schema: node input | a node whose `input` is `{ kind: "node"; node: X }` **with no `path`** and whose `inputSchema` is not `nodes[X].outputSchema` | `["nodes", id, "inputSchema"]` |
+| schema: workflow output | a top-level terminal node other than `escalate` whose `outputSchema` is not the workflow's | `["nodes", id, "outputSchema"]` |
+| schema: chain output | a `chain` whose `outputSchema` is not its last step's | `["nodes", id, "outputSchema"]` |
+| schema: branch pass-through | a `branch` whose `outputSchema` is not its own `inputSchema`; a branch routes rather than computes, and the runtime records its validated input as its output | `["nodes", id, "outputSchema"]` |
+| capability: schemas | a workflow or node `inputSchema`/`outputSchema` not registered as a `schema` at that exact version | the field |
+| capability: handlers | `code.handler`, `reduce.handler` not registered as a `handler` | `["nodes", id, "handler"]` |
+| capability: tool | `call.tool` not registered as a `tool` | `["nodes", id, "tool"]` |
+| capability: agent | `agent.agent` not registered as an `agent` | `["nodes", id, "agent"]` |
+| capability: policies | `branch.on.policy`, `loop.until.policy` not registered as a `policy` | the field |
+| capability: declared schemas | a node whose `inputSchema`/`outputSchema` contradicts the one its resolved `handler`/`tool`/`agent` declares in the manifest | the node's schema field |
+
+`map.maxItems`, `loop.maxIterations`, `retry.maxAttempts` and `timeoutMs`
+positivity are already `parseWorkflowDefinition()`'s and are not re-checked.
+
+### Why a `node` binding is checked by dominance
+
+`{ kind: "node"; node: X }` reads `X`'s output, and an output exists only if `X`
+has run. The validator requires `X` to **dominate** the reader: to run on every
+path from `entry` to it. The weaker "`X` is an ancestor along some path" would
+accept a binding that reads a sibling `branch` case's output — the mistake an
+author makes most often and the one a compiler proposal will make — and it would
+surface at run time as a `WorkflowError` rather than at compile time as an issue.
+
+Dominance is computed over a **flow graph**, not the edge graph, because
+containment carries execution and the containers differ:
+
+- a `chain` always runs every step in order, so it flows into its first step,
+  each step's region terminals flow into the next step, and the last step's
+  terminals flow into the chain's own `next`. Nothing flows from the chain
+  straight to its `next`, because nothing skips a chain's steps;
+- a `map` body may run zero times and a `loop`'s `until` may stop it, so both
+  flow into their body **and** straight on to their `next`. A node after a `map`
+  is therefore not told that a node inside the body ran, which is correct.
+
+### Why schema compatibility is reference equality
+
+A schema in this harness is an opaque Standard Schema validator
+([ADR-0027](../decisions/0027-standard-schema-is-the-harness-schema-contract.md)),
+and neither `@internal/core` nor `@internal/workflow` declares a schema library,
+so nothing here can compare two schemas structurally or decide that one is
+assignable to another. What it can decide exactly is whether two nodes name the
+**same schema capability at the same version**, which is the check that catches
+the mistake compilation actually makes: a node swapped for another that produces
+something different.
+
+The five pairings in the table above are all that is ref-checked. These are
+validated at **run time only**, by the runtime's per-node input and output
+validation, because no registered reference can be derived for them:
+
+- a binding narrowed by `path`, which reads part of a value;
+- a `literal` or an `object` binding, which builds a value structurally;
+- an `item` binding, since "the element type of that schema" is not derivable
+  from `id@version`;
+- a `map`'s output (an array of its body's outputs), a `reduce`'s (a handler's
+  result) and a `loop`'s (the result of repetition).
+
+### Capability resolution (M4-T9)
+
+Exact versions only. There is no "latest", no range and no fallback to another
+version: AD-015 requires a promoted workflow to pin exact capability versions,
+and a validator that resolved loosely would be the thing that unpinned them.
+
+When a resolved manifest entry declares an `inputSchema` or `outputSchema`, the
+node's MUST equal it. That is what makes resolution more than an existence check:
+a handler registered for one schema and a node declaring another both resolve,
+and the workflow is still wrong.
+
+**A `jev` node's `question` is not resolved.** A question is not one of the five
+capability kinds; M3 owns the question contract and the `DecisionEngine`, and
+validating that a named question exists is M3's boundary, applied when a workflow
+is registered (M5). The node carries `questionKind` precisely so that M4 can
+validate everything around the question without M3 being present.
+
+**An `agent` node's grants need not resolve.** A runtime's own framework tools —
+eve's `load_skill`, which `@internal/runtime-eve` exports as
+`LOAD_SKILL_TOOL_ID` and which real jobs already grant — are not domain
+capabilities and are registered nowhere, so requiring registration would make a
+legitimate agent unexpressible. A `call` node has no such excuse: it calls
+exactly one registered tool, by reference, and its grants are checked.
+
+All of it is recorded in
+[ADR-0039](../decisions/0039-workflow-validation-is-a-graph-model-with-one-owner-per-node.md).

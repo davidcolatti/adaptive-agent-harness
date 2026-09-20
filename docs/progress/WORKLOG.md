@@ -6267,7 +6267,7 @@ only by M2 and may start beside M4 at any point.
 
 **Status:** started
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `4c03e2e`
 
 ### Goal
 
@@ -6336,7 +6336,7 @@ ADR-0038, and the system-map and contracts-README updates.
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `4c03e2e`
 
 ### Goal
 
@@ -6549,3 +6549,943 @@ export PATH="$HOME/.n/bin:$PATH" && pnpm install --frozen-lockfile && pnpm check
 ```
 
 Then read `docs/contracts/workflow-ir.md` and ADR-0038.
+
+## 2026-09-20 11:50 — M4-T3, M4-T6, M4-T7, M4-T8 — Local deterministic workflow runtime, idempotency and tool grants
+
+**Status:** started
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Build the local deterministic interpreter for the workflow IR in
+`packages/workflow/src/runtime/**`, completing the *execution* half of M4-T3
+(the six executable node types plus the five control shapes), and with it
+M4-T6 (validate input, execute, validate output, trace, timeout, budget,
+follow edges, persist node result — no durability), M4-T7 (the per-execution
+idempotency key and protected non-idempotent writes) and M4-T8 (per-node tool
+grants, an `agent` node receiving only its own grants, a `code` node
+inheriting none).
+
+Out of scope, owned concurrently by other agents: `src/compile.ts` and
+`src/validate/**` (M4-T4/M4-T9, the `validator` agent), `src/dsl/**`
+(M4-T5, the `dsl` agent) and the hand-authored vendor workflow (M4-T10).
+
+### Implementation references
+
+- package/version: **no third-party framework is touched.** The runtime is a
+  local interpreter over `@internal/core` and Node built-ins only;
+  `@internal/workflow` declares no third-party dependency and gains none.
+  AD-011's framework checkpoint therefore has no framework to check.
+- installed docs read: n/a (no framework surface).
+- official docs/repos/examples read: n/a.
+- public types/exports inspected, all first-party:
+  `packages/core/src/workflow-ir.ts` (`WorkflowDefinition`, `FallbackContext`,
+  `FALLBACK_REASONS`), `workflow-nodes.ts` (the eleven node interfaces,
+  `Binding`, `RetryPolicy`, `NodeProtection`), `packages/workflow/src/compiled.ts`
+  (`CompiledWorkflow`), `packages/core/src/trace.ts` (`TraceRecorder`,
+  `TraceSpan`, `TraceEventInput.node`, the `node.*`/`tool.*`/`decision.*`/
+  `artifact.created`/`fallback.*` members of the closed taxonomy),
+  `context.ts` (`ExecutionContext`, `createExecutionContext`,
+  `CreateExecutionContextInput.recorder`, `Budget`, `ToolGrant`),
+  `agent-runtime.ts`, `harness.ts`, `errors.ts`, `schema.ts` (`validateWith`),
+  `capabilities.ts` (`CapabilityRegistry.resolve`), `job.ts`,
+  `packages/testing/src/*`, `packages/runtime-eve/src/eve-agent-runtime.ts`.
+- selected documented pattern: the interpreter consumes `CompiledWorkflow` and
+  nothing else, so every guarantee that type's doc comment lists is assumed
+  rather than re-checked; it records through the **run's existing**
+  `TraceRecorder` (`context.trace`) so a workflow run keeps one total order
+  (ADR-0031); and it is exposed to `createHarness()` through
+  `asAgentRuntime(workflow)`, the design option the M4 status file's "Before
+  starting" section names, so trace, storage and `pnpm harness run show` keep
+  working unchanged.
+- Node built-ins used: `AbortSignal.timeout` and `AbortSignal.any`, both
+  verified present in the installed `@types/node@24.13.6` under this project's
+  `lib: es2024` by compiling a probe file with
+  `pnpm --filter @internal/workflow typecheck` before writing any code.
+
+### Next exact step
+
+Implement `packages/workflow/src/runtime/**`, then ADR-0040,
+`docs/architecture/workflow-runtime.md`, the four M4 status-file rows, and the
+`completed` WORKLOG entry.
+
+## 2026-09-20 14:05 — M4-T4, M4-T9 — Workflow graph validation, node rules, and capability resolution
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent, M4 Phase 2)
+**Commit:** not committed
+
+### Goal
+
+Implement the validation half of M4-T4 (control-shape validation rules) and all of M4-T9 (IR
+canonicalization and capability resolution) as `compileWorkflow()` and `validateWorkflow()` in
+`@internal/workflow`, over the IR M4-T1/M4-T2 landed in `@internal/core`. A workflow with a
+missing capability, a missing node, an unreachable node, an undeclared cycle, a `branch` with no
+`default`, an `item` binding outside a `map` body, a node owned by two containers, a `code` node
+carrying tool grants or a `non-idempotent-write` `call` without protection MUST fail before any
+node executes.
+
+### Implementation references
+
+- package/version: none. No third-party framework is touched; this is harness-owned graph
+  analysis over `@internal/core` (workspace) only.
+- installed docs read: n/a (no framework-facing surface).
+- official docs/repos/examples read: n/a.
+- public types/exports inspected: `packages/core/src/workflow-ir.ts`
+  (`WorkflowDefinition`, `parseWorkflowDefinition`, `canonicalWorkflowIr`, `workflowFingerprint`),
+  `packages/core/src/workflow-nodes.ts` (all eleven node interfaces, `Binding`, `BranchSelector`,
+  `LoopCondition`, `NodeCapabilityRef`), `packages/core/src/capabilities.ts`
+  (`CapabilityRegistry.has/resolve/entries`, `CapabilityManifestEntry`, `formatCapabilityRef`),
+  `packages/core/src/errors.ts` (`ValidationError`, `ValidationIssue`),
+  `packages/core/src/context.ts` (`ToolGrant`, `ToolGrantMode`),
+  `packages/workflow/src/compiled.ts` (`CompiledWorkflow`).
+- selected documented pattern: the collect-every-issue-then-throw-once pass `parseJob()` and
+  `parseWorkflowDefinition()` already use, with `ValidationIssue.path` rooted at the definition.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (in progress)
+
+### Decisions / deviations
+
+- (in progress)
+
+### Known issues / blockers
+
+- Two other agents work in the same tree concurrently (`packages/workflow/src/runtime/**`,
+  `packages/workflow/src/dsl/**`), so a full `pnpm check` may fail on files this task does not own.
+
+### Next exact step
+
+Implement `packages/workflow/src/validate/**` and `compile.ts`, then the co-located tests.
+
+## 2026-09-20 14:20 — M4-T5 — Typed workflow DSL over the serializable IR
+
+**Status:** started
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Build the typed TypeScript authoring surface AD-007 and ADR-0007 require: a
+fluent builder in `@internal/workflow` that compiles to a `WorkflowDefinition`
+and nothing else, so that "the DSL compiles to IR" and "the IR, not builder
+object identity, is fingerprinted" (build plan M4-T5) are structural facts
+rather than conventions.
+
+Concretely:
+
+- `workflow({ id, version, domain, jobType, input, output, defaults })` returns
+  a fluent builder with a method per IR node type (`code`, `call`, `jev`,
+  `agent`, `artifact`, `escalate`, `chain`, `branch`, `map`, `reduce`, `loop`).
+- Sub-graphs (branch cases and default, `map` body, `loop` body, `chain` steps)
+  are authored with nested builder callbacks that terminate with `.end()`,
+  `.goto(nodeId)` or a terminal node, so the IR's one-owner-per-node rule holds
+  by construction.
+- Wiring and schemas default to the common case: a node's `input` defaults to
+  the preceding node's output, its `inputSchema` is derived from that binding,
+  and the last node of the top-level chain is terminal with the workflow's
+  output schema.
+- `build()` returns `parseWorkflowDefinition(ir)`, so the output is shape-valid
+  and deep-frozen; `toIr()` is the unparsed escape hatch.
+- The builder never resolves capabilities and never imports `compileWorkflow()`
+  — that is M4-T4/M4-T9's boundary, being written concurrently.
+
+### Implementation references
+
+- package/version: Node **24.21.0**, pnpm **12.4.2**, TypeScript 6.0.x
+  (ADR-0019), Vitest 5.0.1. **No new dependency**; `@internal/workflow` stays
+  dependency-free apart from `@internal/core`.
+- installed docs read: not applicable. No Vercel primitive (`eve`, AI SDK, AI
+  Gateway, Jev, Workflow, Sandbox) prescribes a workflow authoring DSL, so the
+  no-assumption stop condition's last branch applies: the abstraction is
+  harness-owned and recorded in ADR-0041.
+- official docs/repos/examples read: none required for the same reason.
+- public types/exports inspected: `packages/core/src/workflow-ir.ts`
+  (`WorkflowDefinition`, `parseWorkflowDefinition`, `workflowFingerprint`,
+  `canonicalWorkflowIr`), `packages/core/src/workflow-nodes.ts` (all eleven
+  node types, `Binding`, `RetryPolicy`, `NodeProtection`, `BranchSelector`,
+  `LoopCondition`), `packages/core/src/capabilities.ts`
+  (`CapabilityRef`, `formatCapabilityRef`, `parseCapabilityRefString`),
+  `packages/core/src/context.ts` (`Budget`, `ToolGrant`),
+  `packages/core/src/errors.ts` (`ValidationError`, `ValidationIssue`),
+  `packages/workflow/src/compiled.ts`, `packages/workflow/src/index.ts`.
+- selected documented pattern: harness-owned. The contract it must satisfy is
+  `docs/contracts/workflow-ir.md` in full.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- Two other agents own `packages/workflow/src/compile.ts` + `src/validate/**`
+  (M4-T4/M4-T9) and `packages/workflow/src/runtime/**` (M4-T6/T7/T8) in the
+  same tree concurrently. This task touches only `src/dsl/**` and its own
+  export block in `src/index.ts`.
+
+### Next exact step
+
+Implement `packages/workflow/src/dsl/`.
+
+## 2026-09-20 15:40 — M4-T4, M4-T9 — Workflow graph validation, node rules, and capability resolution
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, implementer subagent, M4 Phase 2)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above: the validation half of M4-T4 and all of M4-T9, as `compileWorkflow()`
+and `validateWorkflow()` in `@internal/workflow`.
+
+### Implementation references
+
+As the `started` entry above. No third-party framework is touched, so AD-011's research checkpoint
+applies only to the workspace types listed there.
+
+### Work completed
+
+- **`compileWorkflow(definition, registry): CompiledWorkflow`** runs M4-T9's six steps in order:
+  `parseWorkflowDefinition()` (whose `ValidationError` propagates unchanged), graph and node-rule
+  validation, capability resolution, `canonicalWorkflowIr()`, `workflowFingerprint()`. Steps 4 and
+  6 run only after everything passes, so canonical bytes and a digest never exist for a workflow
+  that cannot run. It is the only way to obtain a `CompiledWorkflow`, which is how "a workflow with
+  a missing capability MUST fail validation before any node executes" becomes a type-level fact.
+- **`validateWorkflow(definition, registry): readonly ValidationIssue[]`** is the middle two steps,
+  pure and never throwing for a validation problem, for the DSL (M4-T5) and the run inspector.
+- **A graph model** (`src/validate/graph.ts`): successor edges (`next`, `cases[*]`, `default`) and
+  containment (`chain.steps[*]`, `map.body`, `loop.body`) as different relations; **regions** and
+  the **one-owner rule**; reachability; any-cycle rejection; and a flow graph over which dominator
+  sets are computed for `{ kind: "node" }` bindings.
+- **Bindings** (`src/validate/bindings.ts`): `{ kind: "item" }` only inside a `map` body
+  transitively, including nested in an `object` binding's fields; a `{ kind: "node" }` binding must
+  name an existing node that is not itself and that **dominates** the reader.
+- **Node rules** (`src/validate/rules.ts`): grants only on `agent` and `call`; a `call` must grant
+  the tool it calls, with `mode: "write"` for a write effect; a `non-idempotent-write` must declare
+  `protection`; a `call` node's grants must name a registered `tool` id while an `agent` node's need
+  not; every `branch` must declare a `default`; the workflow must contain a reachable `escalate`.
+- **Schema compatibility** (`src/validate/schemas.ts`): reference equality on `id@version` for the
+  four checkable pairings; everything else documented as run-time only.
+- **Capability resolution** (`src/validate/capabilities.ts`): exact versions only, all five kinds,
+  plus the cross-check that a resolved manifest entry's declared `inputSchema`/`outputSchema` equals
+  the node's. `jev.question` is deliberately not resolved (ADR-0038).
+- 51 co-located unit tests, positive and negative for every rule, including one named "rejects an
+  intentional unbounded cycle" (a Milestone 4 acceptance criterion), same-IR and reordered-literal
+  fingerprint equality through `compileWorkflow()`, and a realistic vendor-triage-shaped workflow
+  compiled against a registry built the way `apps/example-agent` builds its own.
+- ADR-0039 written and indexed; a "Validation and compilation (M4-T4, M4-T9)" section appended to
+  `docs/contracts/workflow-ir.md` with every rule in one table.
+
+### Files changed
+
+- `packages/workflow/src/compile.ts` (new) — `compileWorkflow()`.
+- `packages/workflow/src/validate/graph.ts` (new) — regions, ownership, reachability, cycles,
+  the flow graph and dominators.
+- `packages/workflow/src/validate/bindings.ts` (new) — `item` scoping and `node` binding dominance.
+- `packages/workflow/src/validate/rules.ts` (new) — per-node rules, `branch` default, escalation.
+- `packages/workflow/src/validate/schemas.ts` (new) — reference-equality schema compatibility.
+- `packages/workflow/src/validate/capabilities.ts` (new) — capability resolution (M4-T9).
+- `packages/workflow/src/validate/index.ts` (new) — `validateWorkflow()` and the re-exports.
+- `packages/workflow/src/compile.test.ts` (new) — 51 unit tests.
+- `packages/workflow/src/index.ts` — added this task's export block; refreshed the stale
+  "still to come" comment.
+- `docs/decisions/0039-workflow-validation-is-a-graph-model-with-one-owner-per-node.md` (new).
+- `docs/decisions/README.md` — the 0039 index row.
+- `docs/contracts/workflow-ir.md` — appended the validation section; ADR-0039 in the front matter.
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md` — M4-T4 and M4-T9 only.
+- `docs/progress/WORKLOG.md` — this entry and the `started` one.
+
+### Verification
+
+- `pnpm vitest run --project unit packages/workflow packages/core` — PASS (596 tests, 17 files; 51
+  of them this task's).
+- `pnpm --filter @internal/workflow typecheck` — FAIL, on `src/runtime/workflow-runtime.ts(1133,55)`
+  only, a file this task does not own (the M4-T6/T7/T8 agent's, in progress). Every module this task
+  added typechecks; the same command reported zero errors before that file appeared.
+- `pnpm exec biome check packages/workflow/src/compile.ts packages/workflow/src/compile.test.ts
+  packages/workflow/src/validate packages/workflow/src/index.ts` — PASS (9 files, no fixes).
+- `pnpm check` — FAIL at its first stage, `format:check`, on `packages/workflow/src/dsl/builder.ts`
+  and `packages/workflow/src/runtime/workflow-runtime.ts`. Both belong to the two agents working
+  concurrently in this tree; neither was touched by this task. `pnpm lint` fails on the same two
+  files plus an `organizeImports` on the shared `src/index.ts`, whose export blocks are no longer in
+  sorted order now that a second block has been appended after this one. **`pnpm check` has not
+  passed for this task and must be re-run once the concurrent tasks land.**
+
+### Decisions / deviations
+
+- **Dominance, not "ancestor along some path", for `{ kind: "node" }` bindings.** The brief allowed
+  either. The weaker rule accepts a binding that reads a sibling `branch` case's output, which is
+  the mistake authors and compiler proposals actually make and which otherwise only appears at run
+  time as a `WorkflowError`. Cost: some workflows that would work in practice are rejected.
+  Recorded in ADR-0039's Negative consequences.
+- **The flow graph treats `chain` differently from `map`/`loop`.** A chain always runs every step,
+  so it flows into its first step and each step's terminals flow into the next and finally into the
+  chain's `next`; a `map` body may run zero times and a `loop`'s `until` may stop it, so both flow
+  into their body *and* straight on to their `next`. Without the distinction, a node after a chain
+  could not read what a step produced, and a node after a map could.
+- **Only `agent` and `call` nodes may carry tool grants**, which is stricter than M4-T8's literal
+  text (it names `code`). `permissions` is a field of every node, so something had to say where it
+  means anything, and permission nothing reads is the worst kind to have. The other agents' fixtures
+  must not put grants on `jev`, `artifact` or a control node.
+- **A `read-only` call is satisfied by a `read` **or** a `write` grant**; a write effect requires
+  `mode: "write"`. `ToolGrantMode` states that `read` never satisfies a write and says nothing about
+  the converse, and requiring a double grant would be noise.
+- **The vendor-triage test builds its own registry** rather than importing
+  `apps/example-agent`'s, as the brief suggested. A `packages/*` package may not depend on an
+  `apps/*` package (AGENTS.md's dependency rule, ADR-0025), and a devDependency would have been a
+  boundary violation. The test registers the same capability ids the example does, plus the four the
+  workflow additionally needs.
+- **`compileWorkflow()` parses three times** (itself, then inside `canonicalWorkflowIr()` and
+  `workflowFingerprint()`, both of which parse by design). Accepted rather than adding a second,
+  unchecked entry point to `@internal/core`.
+- **Issues are emitted in sorted node-id order**, so the list is a function of the workflow rather
+  than of its literal's key order — the same property ADR-0029 gives the canonical bytes.
+- `pnpm format` was run once at the repository root and reformatted seven files, including
+  in-progress files under `src/dsl/` and `src/runtime/` belonging to the other two agents. No
+  semantics changed; both files still fail `format:check` after their owners' later edits.
+
+### Known issues / blockers
+
+- `pnpm check` cannot pass until the M4-T5 and M4-T6/T7/T8 tasks land: `src/dsl/builder.ts` fails
+  format and lint, and `src/runtime/workflow-runtime.ts` fails format and typecheck.
+- `packages/workflow/src/index.ts` needs one `pnpm exec biome check --write` pass once every M4
+  Phase 2 export block is in place; the blocks are currently not in the order the assist wants.
+- `docs/context/current-state.md`, `docs/milestones/README.md` and `AGENTS.md` were deliberately not
+  touched; another agent owns them. AGENTS.md's ADR paragraph still says the next free number is
+  0038, and 0039 now exists.
+
+### Next exact step
+
+Once M4-T5 and M4-T6/T7/T8 land, run:
+
+```bash
+export PATH="$HOME/.n/bin:$PATH" && pnpm exec biome check --write packages/workflow/src/index.ts && pnpm check
+```
+
+Then M4-T10 can author the real vendor workflow against `compileWorkflow()`.
+
+## 2026-09-20 15:30 — M4-T5 — Typed workflow DSL over the serializable IR
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+As in the `started` entry above: the typed TypeScript authoring surface AD-007
+and ADR-0007 require, compiling to `WorkflowDefinition` and to nothing else, so
+that "the DSL compiles to IR" and "the IR, not builder object identity, is
+fingerprinted" (build plan M4-T5) are structural facts.
+
+### Implementation references
+
+Unchanged from the `started` entry. No third-party framework is involved: no
+Vercel primitive prescribes a workflow authoring DSL, so the no-assumption stop
+condition's last branch applies and the abstraction is harness-owned and
+recorded in ADR-0041. `@internal/workflow` still depends on `@internal/core`
+alone, and no dependency was added.
+
+### Work completed
+
+- **`packages/workflow/src/dsl/types.ts`** — the authoring surface: `RefInput`
+  (a capability reference as `"id@version"` or `{ id, version }`),
+  `TypedBinding<TIds>` (the IR's `Binding` with `node` references narrowed to
+  the ids declared so far), `WorkflowOptions`, `CommonNodeOptions` and the
+  eleven per-node option types, `SubGraph`/`SubGraphBuilder`/`SubGraphEnd`, and
+  the two exported default constants.
+- **`packages/workflow/src/dsl/builder.ts`** — `workflow()`, the fluent builder.
+  One method per IR node type. It applies defaults, wires edges, derives
+  schemas, and emits the definition.
+- **`packages/workflow/src/dsl/index.ts`** — the named re-export block.
+- Two co-located `unit` test files: `builder.test.ts` (44 tests) and
+  `vendor-triage.test.ts` (9), 53 in total.
+- **ADR-0041**, `docs/contracts/workflow-dsl.md`, the two README rows, and the
+  M4 status file's `### M4-T5` section.
+
+The design, in the five points that matter:
+
+1. **`build()` parses.** It returns `parseWorkflowDefinition(ir)`, so a value
+   that leaves the DSL is shape-valid and deep-frozen. `toIr()` returns the same
+   IR unparsed and unfrozen, for a test that wants to mutate a field and watch
+   the parse boundary reject it. It never resolves a capability and never
+   imports `compileWorkflow()`.
+2. **There is no `next` option.** Nodes added to the builder form one chain;
+   each node's `next` is the node added after it and the last is terminal.
+   `branch` and `escalate` carry no `next`, so they end the chain, and a node
+   added after one must state its own `input` because it has no unique
+   predecessor.
+3. **Sub-graphs are callbacks that must terminate.** A branch case, a branch
+   default, a `map` body, a `loop` body and a `chain`'s steps are each
+   `(b) => ...` returning `SubGraphEnd`, which only `.end()`, `.goto()`,
+   `.branch()` and `.escalate()` produce, so an unterminated sub-graph is a type
+   error. A `chain`'s steps are containment: each step is terminal on its own,
+   because a step reachable from a sibling's `next` *and* listed in `steps`
+   would have two owners (ADR-0039).
+4. **`.goto(nodeId)` sets an edge, never ownership.** Allowed only from a branch
+   case or default; forward targets are checked at `build()`. A case that adds
+   nothing and only `goto`s makes that node the case target directly.
+5. **Bindings and schemas are derived.** `input` defaults to the predecessor's
+   output (`{ kind: "input" }` first, `{ kind: "item" }` for a `map` body head,
+   the container for another sub-graph head); `inputSchema` follows from that
+   binding; `outputSchema` is derived only for a node that ends the main graph
+   and for `branch`/`escalate`, which pass their input through. That is exactly
+   ADR-0039's reference-equality schema rule, so the common case is compatible
+   by construction.
+
+### Files changed
+
+Code:
+- `packages/workflow/src/dsl/types.ts` (new)
+- `packages/workflow/src/dsl/builder.ts` (new)
+- `packages/workflow/src/dsl/index.ts` (new)
+- `packages/workflow/src/index.ts` (the DSL export block only)
+
+Tests:
+- `packages/workflow/src/dsl/builder.test.ts` (new)
+- `packages/workflow/src/dsl/vendor-triage.test.ts` (new)
+
+Docs:
+- `docs/decisions/0041-the-typed-dsl-is-a-wiring-front-end-that-parses-its-own-ir.md` (new)
+- `docs/decisions/README.md` (index row only)
+- `docs/contracts/workflow-dsl.md` (new)
+- `docs/contracts/README.md` (table row, plus the contract count and enumeration
+  the row makes stale)
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`
+  (`### M4-T5` only)
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `node --version` / `pnpm --version` — `v24.21.0` / `12.4.2` — PASS
+- `pnpm vitest run --project unit packages/workflow/src/dsl` — 53 passed, 2
+  files — PASS
+- `pnpm vitest run --project unit packages/workflow` — 203 passed, 8 files
+  (the DSL beside the validator's and the runtime's suites) — PASS
+- `pnpm --filter @internal/workflow typecheck` — PASS
+- `pnpm format:check` — 194 files, clean — PASS
+- `pnpm typecheck` — PASS (10/10 tasks)
+- `pnpm test` — `Test Files 60 passed | 2 skipped (62)`, `Tests 1138 passed | 43
+  skipped (1195)` — PASS. The 43 skipped are the unchanged Supabase legs of the
+  storage and inspector contract suites.
+- `pnpm build` — PASS (10/10 tasks)
+- `pnpm lint` — PASS. `biome check --formatter-enabled=false
+  packages/workflow/src/dsl packages/workflow/src/index.ts` — clean, no
+  diagnostics — PASS. (An earlier run failed on three
+  `assist/source/organizeImports` errors in `packages/workflow/src/runtime/**`,
+  which M4-T6/T7/T8 owns and was editing concurrently; that agent fixed them.)
+- `pnpm check` — **PASS**, all six stages, with the three concurrent M4 Phase 2
+  tasks' work in the tree: `format:check` clean over 194 files; `lint` clean;
+  `typecheck` 10/10 tasks; `Test Files 60 passed | 2 skipped (62)`,
+  `Tests 1138 passed | 43 skipped (1195)`; `build` 10/10 tasks;
+  `check:handoff — OK`.
+
+### Decisions / deviations
+
+All recorded in ADR-0041; listed here because they depart from the task
+direction or from the build plan's sketch.
+
+- **The per-node schema options are `inputSchema` and `outputSchema`, not
+  `output`.** The task's sketch wrote `output:` on a `jev` node, which would sit
+  beside `input:` meaning a *binding* rather than a schema. Matching the IR's own
+  field names removes the ambiguity. `workflow()` itself still takes `input` and
+  `output`, as the build plan writes them, because at workflow level there is no
+  binding to confuse them with.
+- **No `next` option on any node method.** The direction did not ask for one, but
+  it is worth stating as a deliberate limit: a graph the fluent wiring cannot
+  express has to be written as an IR literal. The shapes it cannot express are
+  the ones with two owners.
+- **Branch cases are treated as edges, not containment**, so a node inside a
+  branch case whose `next` is `null` ends the *workflow* and takes the
+  workflow's output schema. This follows the graph model agreed with the
+  validator ("Edges are `next`, `branch.cases[*]`, `branch.default`"). It is the
+  reason the vendor-triage example needs no `outputSchema` on `finalize` or
+  `decide`.
+- **`.goto()` from an empty branch case is allowed and means "this case goes
+  straight to that node".** Discovered while testing: the alternative was to
+  force a pass-through node nobody asked for. The case target becomes the named
+  node directly.
+- **`escalate` and `branch` take their input schema as their output schema.**
+  Neither transforms its input, and the validator constrains only the terminal
+  *non-escalate* node's output schema, so nothing depends on the choice; it keeps
+  `.escalate("full-agent", { reason })` a one-liner.
+- **The five node defaults are `timeoutMs: 60_000`, `retry: { maxAttempts: 1 }`,
+  `budget: {}`, `permissions: []`, `version: "1.0.0"`**, exported as
+  `DSL_NODE_DEFAULTS`, plus `DSL_WORKFLOW_VERSION_DEFAULT` for the workflow's own
+  version. The build plan leaves all of them open, so AD-016 requires the choice
+  to be recorded; ADR-0041 gives the reasoning per field.
+- **Type-level help stops at node ids.** Backward `{ kind: "node", node: ... }`
+  references are typo-checked through a string-literal union; forward `goto`
+  targets and every `Binding` value are checked at run time. No type-level schema
+  inference was built, per the direction and because the IR stores schema
+  *references* resolved against a registry, which a type-level model could not
+  keep honest.
+- **The builder mutates shared state and returns `this`.** The fluent type reads
+  as if each call produced a new builder; it does not, so a builder value must be
+  used linearly. Noted in ADR-0041's negative consequences.
+- **`docs/contracts/README.md` got two edits beyond the table row**: the contract
+  count (thirteen to fourteen) and its enumeration. Leaving them would have made
+  the paragraph disagree with the table directly above it.
+- **The M4 status file's acceptance-criteria list was not touched.** Two of its
+  eight lines are this task's ("DSL output can be serialized to canonical IR",
+  "Same IR produces same workflow fingerprint") and both are now covered by
+  tests, but the task direction says to edit `### M4-T5` only, and the list is
+  shared with the two agents working beside this one.
+
+### Known issues / blockers
+
+- **None for this task.** An intermediate `pnpm lint` failure came from
+  `packages/workflow/src/runtime/**`, which M4-T6/T7/T8 owns and has since
+  fixed; the final `pnpm check` is green.
+- Nothing in this task touched `packages/core`, `src/compile.ts`,
+  `src/validate/**`, `src/runtime/**`, `AGENTS.md`,
+  `docs/context/current-state.md` or `docs/milestones/README.md`. No IR bug was
+  found: the DSL emits every one of the eleven node types and both selector
+  forms through `parseWorkflowDefinition()` unchanged.
+- `AGENTS.md` is owned by another agent and was not touched here. Its ADR
+  paragraph needs to end at "the next free number is 0042" once ADR-0039,
+  ADR-0040 and ADR-0041 are all reflected, and its repository-layout block still
+  lists `packages/workflow/` as planned.
+
+### Next exact step
+
+**M4-T10** can author the real vendor workflow with this DSL. It needs three
+things from here, and nothing else:
+
+1. `import { workflow } from "@internal/workflow";` then
+   `workflow({ id, version, domain, jobType, input, output }).jev(...)...build()`.
+   The full authoring surface is `docs/contracts/workflow-dsl.md`, and
+   `packages/workflow/src/dsl/vendor-triage.test.ts` is the exact M4-T10 graph
+   already written against it.
+2. Write down only what a node genuinely introduces: an `outputSchema` where the
+   node produces a new shape, and `permissions` on the `agent` node. Everything
+   else — every edge, every `input` binding, every derived `inputSchema` — is the
+   builder's job. State `input` explicitly only for a node added to the top level
+   *after* a `branch`, which is the one position with no unique predecessor.
+3. `build()` gives a parsed, frozen `WorkflowDefinition`; hand it to
+   `compileWorkflow(definition, registry)` to resolve capabilities. Register the
+   schemas *before* the handlers, agents and tools that reference them, and do
+   not try to register a Jev question — a question is not a capability kind.
+
+First command:
+
+```bash
+export PATH="$HOME/.n/bin:$PATH" && pnpm vitest run --project unit packages/workflow/src/dsl
+```
+
+## 2026-09-20 12:10 — M4-T3, M4-T6, M4-T7, M4-T8 — Local deterministic workflow runtime, idempotency and tool grants
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Unchanged from the `started` entry above: the local deterministic interpreter
+for the workflow IR in `packages/workflow/src/runtime/**`, completing the
+*execution* half of M4-T3 (six node types) and M4-T4 (five control shapes), and
+with it M4-T6 (validate, execute, validate, trace, timeout, budget, edges,
+result — no durability), M4-T7 (the idempotency key and protected
+non-idempotent writes) and M4-T8 (per-node tool grants).
+
+### Implementation references
+
+As recorded in the `started` entry, and unchanged by the work: **no third-party
+framework is touched and no dependency was added.** `@internal/workflow` still
+declares only `@internal/core`, plus `@internal/config`, `@internal/testing` and
+`vitest` as dev dependencies. AD-011's framework checkpoint therefore has no
+framework to check.
+
+Node built-ins used and verified before writing any code:
+`AbortSignal.timeout(ms)` and `AbortSignal.any(signals)`, both present in the
+installed `@types/node@24.13.6` under this project's `lib: ["es2024", ...]`,
+confirmed by compiling a two-line probe file with
+`pnpm --filter @internal/workflow typecheck` and deleting it.
+
+### Work completed
+
+- **`packages/workflow/src/runtime/ports.ts`** — the three ports the runtime
+  needs and does not own, each with an in-memory default:
+  `WorkflowDecisionPort` (M3's engine seen from M4, one verb),
+  `ArtifactStorePort` (M5's store) and `ProtectedEffectStore` (M4-T7).
+- **`packages/workflow/src/runtime/bindings.ts`** — the five-case binding
+  evaluator over the contract's run-state model, `readPath()`, `asJsonValue()`
+  (a check, not a cast, at every JSON port boundary) and `traceValue()`.
+- **`packages/workflow/src/runtime/budget.ts`** — `createBudgetLedger()`, a
+  **stack** of budget scopes so the run's budget and every enclosing node's are
+  in play at once, and `narrowBudget()` for an `agent` node's derived context.
+- **`packages/workflow/src/runtime/grants.ts`** — `requiredMode()`,
+  `assertGrantsWithinJob()` and `assertToolGranted()` (M4-T8).
+- **`packages/workflow/src/runtime/idempotency.ts`** — `attemptIdempotencyKey()`
+  and `protectionIdempotencyKey()`, the two keys and why there are two.
+- **`packages/workflow/src/runtime/workflow-runtime.ts`** (~1,290 lines) —
+  `createWorkflowRuntime()`, `WorkflowRuntime`, `WorkflowRunResult` (four cases),
+  `NodeExecutionRecord`, `fallbackContextPayload()`, and `asAgentRuntime()`.
+- **`packages/workflow/src/runtime/index.ts`** — the runtime barrel, re-exported
+  by name from `packages/workflow/src/index.ts` (own block only; the file was
+  re-read immediately before editing, and the DSL and validator blocks were left
+  untouched).
+- **`packages/workflow/tsconfig.build.json`** — one line: `test-fixtures.ts` is
+  excluded from the build so test-only code and its `@internal/testing`
+  devDependency never reach `dist/`. `tsconfig.json` still typechecks it.
+- **Tests, 101 across five files**, all in the `unit` project, every schema a
+  hand-written Standard Schema (no `zod` in this package):
+  `workflow-runtime.test.ts` (44), `grants.test.ts` (14),
+  `idempotency.test.ts` (11), `bindings.test.ts` (19), `budget.test.ts` (13),
+  plus `test-fixtures.ts`. Five build-plan acceptance criteria appear **verbatim
+  as test titles**: "A human-authored workflow runs locally", "Every node
+  validates inputs and outputs", "An agent node cannot call an ungranted tool",
+  "A failed node is visible in the trace", "A retry does not duplicate a
+  protected side effect". Four of the 44 leave the hand-built fixtures behind:
+  two compile a definition with the concurrently-landed `compileWorkflow()`, and
+  two more author it with the typed DSL first, so the full M4-T5 -> M4-T9 ->
+  M4-T6 path — `workflow().build()`, `compileWorkflow()`, `runtime.run()` — is
+  exercised end to end and the three halves cannot drift apart silently.
+- **`docs/decisions/0040-*.md`** (accepted, 2026-09-20, related 0028/0031/0035/
+  0038/0039) and **`docs/architecture/workflow-runtime.md`**, including the
+  worked trace event list a six-node run produces, taken from a real run rather
+  than written by hand.
+
+### Files changed
+
+Source:
+- `packages/workflow/src/runtime/ports.ts` (new)
+- `packages/workflow/src/runtime/bindings.ts` (new)
+- `packages/workflow/src/runtime/budget.ts` (new)
+- `packages/workflow/src/runtime/grants.ts` (new)
+- `packages/workflow/src/runtime/idempotency.ts` (new)
+- `packages/workflow/src/runtime/workflow-runtime.ts` (new)
+- `packages/workflow/src/runtime/index.ts` (new)
+- `packages/workflow/src/index.ts` (runtime export block appended)
+
+Tests:
+- `packages/workflow/src/runtime/test-fixtures.ts` (new, test-only module)
+- `packages/workflow/src/runtime/workflow-runtime.test.ts` (new)
+- `packages/workflow/src/runtime/grants.test.ts` (new)
+- `packages/workflow/src/runtime/idempotency.test.ts` (new)
+- `packages/workflow/src/runtime/bindings.test.ts` (new)
+- `packages/workflow/src/runtime/budget.test.ts` (new)
+
+Config:
+- `packages/workflow/tsconfig.build.json` (one `exclude` entry)
+
+Docs:
+- `docs/decisions/0040-the-local-workflow-runtime-interprets-a-compiled-workflow-and-escalates-rather-than-fails.md` (new)
+- `docs/decisions/README.md` (index row 0040 only)
+- `docs/architecture/workflow-runtime.md` (new)
+- `docs/architecture/system-map.md` (frontmatter pointer plus the stale
+  "none of them exist yet" sentence in "Per-topic architecture documents")
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`
+  (`### M4-T3`, `### M4-T6`, `### M4-T7`, `### M4-T8` only)
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `node --version` / `pnpm --version` — `v24.21.0` / `12.4.2` — PASS
+- `AbortSignal.timeout` / `AbortSignal.any` probe compiled against the installed
+  `@types/node@24.13.6` — PASS
+- `pnpm vitest run --project unit packages/workflow/src/runtime` — 101 passed,
+  5 files — PASS
+- `pnpm vitest run --project unit packages/workflow` — 211 passed, 8 files
+  (the runtime's 101 plus the concurrently-landed validator and DSL suites) —
+  PASS
+- `pnpm --filter @internal/workflow typecheck` — PASS
+- `pnpm format:check` — PASS (194 files)
+- `pnpm lint` — PASS (195 files, 0 errors)
+- `pnpm check` — **PASS**, exit 0, all six stages. `format:check` clean over 194
+  files; `lint` clean over 195; `typecheck` 10/10 tasks; `Test Files 60 passed |
+  2 skipped (62)`, `Tests 1146 passed | 43 skipped (1203)`; `build` 10/10 tasks;
+  `check:handoff — OK`. The 43 skipped are the unchanged Supabase legs of the
+  storage and inspector contract suites, which skip without
+  `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`.
+- An earlier `pnpm check` failed its `build` stage on another agent's in-flight
+  file (`packages/workflow/src/dsl/builder.ts`, four TS2339/TS2353 errors about a
+  `permissions` property its own `types.ts` did not declare). It cleared on its
+  own when that agent finished; no file this task owns was involved.
+
+### Decisions / deviations
+
+All recorded in ADR-0040; listed here because each departs from the task text or
+resolves something it left open.
+
+- **A `branch` is pass-through**, outputting the value it routed rather than
+  `{ label }`, with the label it chose and the node it chose recorded as `label`
+  and `target` in its `node.completed` payload. This
+  reverses the direction this task started from, after the concurrently-written
+  validator landed the matching rule ("a `branch`'s `outputSchema` must be its
+  own `inputSchema`, because a branch routes rather than computes") in
+  `docs/contracts/workflow-ir.md` and ADR-0039. The two halves have to agree or a
+  compiled workflow could not run, and pass-through is the better semantics
+  anyway: the node after a branch binds the branch's output and receives the
+  thing being decided about rather than a wrapper it has to reach around. Caught
+  by the integration test that goes through `compileWorkflow()`, which is exactly
+  what that test is for, and now locked in by two further tests that author the
+  workflow with the DSL, whose builder wires each case's first node to
+  `{ kind: "node", node: "<branch>" }` at the branch's own input schema.
+- **The package's public surface is the runtime's contract, not its parts.**
+  `index.ts` exports `createWorkflowRuntime`, its option and result types, the
+  three ports with their request/record types, the two in-memory port factories,
+  `NodeExecutionRecord`, and the two idempotency-key functions. The binding
+  evaluator, the budget ledger and the grant assertions stay module-private: they
+  are how the interpreter is built rather than what a caller needs, and the
+  repository's rule is that a symbol becomes public deliberately. The two key
+  functions are the exception because the contract doc states their formula, so
+  something outside the package will eventually derive the same key. Tests import
+  the rest by module path.
+- **Two idempotency keys, not one.** The build plan's formula contains the
+  attempt; a retry is by definition a different attempt, so a protection key
+  built from it would differ on every retry and never match, and M4-T7's own
+  acceptance criterion would be unsatisfiable. The per-attempt key is the plan's
+  formula verbatim and identifies an execution; the protection key is the same
+  string without the attempt, so one is literally the other's prefix.
+- **`node.*` trace payloads carry input and output, amending ADR-0031's
+  identity-only rule** for those three event types only. M4-T6 says "persist
+  node result" and forbids durability in the same breath, so the trace is the
+  only place a result can go; M6's replay needs the values; redaction is a
+  writer decorator above the buffer (ADR-0035), so secrets are still stripped.
+- **A node that exhausts its retries escalates; `failed` is for defects.**
+  North-star invariant 1. `failed` covers a binding that reads a node which has
+  not run, an `item` binding outside a `map`, a `branch` label with neither case
+  nor default, and a node id no node answers to — all graphs the validator is
+  expected to have rejected.
+- **An escalation raised inside a container node passes through unchanged.**
+  Found by a failing test: re-wrapping turned a child's `budget-exceeded` into
+  the container's `node-failed`. The reason the node that actually gave up chose
+  is the one that reaches the envelope, and a sub-graph that exhausted its own
+  attempts is not re-run.
+- **`trusted` is decided by who produced the value**, not by whether it
+  validated (everything in `completedNodes` validated). Trusted: `code`,
+  `artifact`, every control shape, and a `read-only` `call`. Untrusted: `agent`,
+  `jev`, and any write `call` — for a write, a retry, a partial write or a
+  protected replay all mean the world and the recorded value may disagree.
+- **A budget scope is opened per attempt, and a node budget covers nested work.**
+  A charge hits every open scope, so a `map` with `maxToolCalls: 10` bounds the
+  whole fan-out. The consequence is that a node with `maxToolCalls: 1` and
+  `maxAttempts: 3` may make three calls across three attempts, which is the
+  right reading of a limit on one execution.
+- **`maxDurationMs` is checked at node boundaries, not enforced mid-node.** The
+  interrupting deadline is `timeoutMs`, and the runtime *races* rather than
+  cancels, because a handler or tool is a plain function under no obligation to
+  watch a signal.
+- **Binding narrowing yields `undefined` rather than throwing**, and the node's
+  `inputSchema` decides. One rule for an absent key and for reading through a
+  non-object, and schemas stay the single arbiter of a node's input. An `object`
+  binding omits a field that resolved to nothing, so the in-memory value and its
+  serialized form agree.
+- **A protected replay records a `tool.started`/`tool.completed` pair marked
+  `replayed` and charges zero tool calls.** Emitting nothing would hide that
+  protection fired; emitting a bare `tool.completed` would break ADR-0031's
+  "a terminal event points at its own `*.started`".
+- **The runtime emits no `agent.*` of its own** around an `agent` node, because
+  every adapter already emits its pair (verified against
+  `createFakeAgentRuntime` and `EveAgentRuntime`). The cost is that the
+  adapter's span is parented on `recorder.rootId` rather than the node span.
+- **`escalated` maps to a `FailedAgentExecution`** through `asAgentRuntime()`,
+  carrying the envelope in a `WorkflowError`'s `details.fallback`. Marked in code
+  and in ADR-0040 as the mapping M5's router replaces.
+- **An artifact id is a plain string**, minted as a sortable UUIDv7 whose brand
+  is discarded: ADR-0030 defines twelve entity brands and an artifact is not one,
+  and minting a thirteenth would be M5's decision made by M4.
+- **A missing decision engine or agent runtime is a node failure, not a
+  construction error**, so a workflow with no `jev` node need not be handed a
+  stub it never calls.
+- **A defensive ceiling of 100,000 visited nodes** exists in the traversal. It is
+  unreachable for a validated graph; it is there so a broken guarantee stops with
+  a named error rather than spinning.
+- **`packages/workflow/tsconfig.build.json` gained one `exclude` entry.** Shared
+  test fixtures live in an ordinary module rather than a `*.test.ts` one, so
+  importing them does not re-run another file's suite; excluding it keeps
+  test-only code and `@internal/testing` out of `dist/`.
+
+### Known issues / blockers
+
+- **None for this task.** `pnpm check` passes.
+- **A `jev` node cannot execute against a real engine until M3.** M4's tests use
+  a fake `WorkflowDecisionPort`, exactly as the milestone's "Before starting"
+  section anticipates.
+- **No durability**, by instruction (M4-T6). A node result lives in run state, in
+  the returned result and in the trace, and a crashed process loses it. M5 and M6
+  are what change that.
+- `AGENTS.md`, `docs/context/current-state.md` and `docs/milestones/README.md`
+  were deliberately **not** touched: other agents own them concurrently.
+  AGENTS.md's ADR paragraph still says "The next free number is 0038" and its
+  repository-layout block still lists `packages/workflow/` as planned.
+
+### Next exact step
+
+M4-T10, the hand-authored vendor workflow, is now unblocked: the IR, the
+validator, the DSL and the runtime all exist. What its author needs to know
+about this runtime:
+
+1. A `jev` node's fake port returns a bare `JsonValue`, which the node's
+   `outputSchema` then validates. For the vendor workflow's classify step,
+   return something a `branch` can read a string label out of, e.g.
+   `{ "label": "clear" }`.
+2. A `branch` label is a string read from a field path over the branch node's
+   **validated input**, or the return value of a registered `policy` capability
+   called with that input. A `branch` is **pass-through**: its output is the
+   value it routed, so its `outputSchema` must be its own `inputSchema` (the
+   validator enforces this), and the label appears only in its `node.completed`
+   trace payload. The validator also requires a `default`.
+3. `runtime.asAgentRuntime(compiled)` is what `createHarness({ agentRuntime })`
+   takes. The workflow's `inputSchema`/`outputSchema` capabilities must be
+   registered in the same registry the runtime was constructed with, and the
+   domain's own schemas still validate the job on both sides.
+4. The validator requires a reachable `escalate` node, so the vendor workflow's
+   "uncertain" branch is not optional — it is what makes the graph compile.
+
+First command:
+
+```bash
+export PATH="$HOME/.n/bin:$PATH" && pnpm check
+```
+
+## 2026-09-20 16:10 — M4-T5 — DSL amendment: grants are offered only where the IR allows them
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Close a real gap the M4-T4/M4-T9 agent found when it published the validator's
+node rules: the DSL as first written let a workflow-level
+`defaults: { permissions: [...] }` put a non-empty `permissions` on **every**
+node, including `code`, `jev`, `artifact` and the five control shapes. The
+validator rejects that — "a `code` node runs a registered handler and uses no
+tools, so its `permissions` must be empty; it does not inherit an agent's tools"
+(M4-T8) — so the DSL could build a definition that could never compile, which is
+the one thing a typed authoring layer exists to prevent.
+
+The same review also fixed a second, smaller gap: a `call` node must declare a
+grant for the tool it calls, at `read` for `read-only` and `write` for either
+write effect, and the DSL made the author restate an id it already had.
+
+### Implementation references
+
+Unchanged: no framework is involved. The rules implemented against are
+`packages/workflow/src/validate/rules.ts` (`collectNodeRuleIssues`), read at the
+version in the tree, and ADR-0039.
+
+### Work completed
+
+- **`permissions` left `NodeDefaults` and `CommonNodeOptions`.** A new
+  `GrantingNodeOptions` carries it, and only `AgentNodeOptions` and
+  `CallNodeOptions` extend it. It is therefore absent from the workflow-level
+  `defaults` block and from every other node method's options, so M4-T8 is
+  **unwritable** rather than merely rejected. `resolveCommon()` now takes the
+  resolved grants as a parameter and defaults them to `[]`.
+- **A `call` node with no stated `permissions` is granted its own tool**, at
+  `read` for a `read-only` effect and `write` for `idempotent-write` and
+  `non-idempotent-write` — exactly the grant `collectNodeRuleIssues` requires. An
+  explicit `permissions` is used as written, which is how a scope or a second
+  grant is added.
+- `GrantingNodeOptions` is exported from `@internal/workflow`.
+- Four new tests, and one existing test moved from `.code()` to `.agent()`
+  because it can no longer be written against a `code` node. The new ones cover
+  the derived `call` grant for both effect classes, an explicit `call` grant
+  winning over the derived one, `permissions: []` on nodes that cannot carry
+  grants, and two `@ts-expect-error` assertions proving the option is absent from
+  `.code()` and from the workflow `defaults` block.
+
+The validator's other two rules needed no code change and are now documented
+rather than enforced, because neither is a property of a single builder call:
+
+- **Binding dominance.** The DSL's own defaults never bind past a container: a
+  node after a `map` or a `loop` binds to the `map`/`loop` node itself, not into
+  its body, and a node inside a body binds to its predecessor in the same body.
+  An explicitly stated binding can still violate the rule, and the validator
+  catches it.
+- **`.goto()` out of a container body** was already rejected at definition time
+  and already had a test.
+- **A workflow needs a reachable `escalate` node.** That is a property of a whole
+  graph, so it stays the validator's; `docs/contracts/workflow-dsl.md` now warns
+  that most of its own small examples would not compile for exactly this reason.
+
+The test that the vendor-triage build passes `compileWorkflow()` against a
+registry the test constructs already existed, in
+`packages/workflow/src/dsl/vendor-triage.test.ts`. It builds its own
+`createCapabilityRegistry()` with five hand-written Standard Schema objects, two
+handlers, one agent and one tool; it imports nothing from `apps/*` and adds no
+dependency.
+
+### Files changed
+
+- `packages/workflow/src/dsl/types.ts` (`NodeDefaults`, new `GrantingNodeOptions`,
+  `CodeNodeOptions`, `CallNodeOptions`, `AgentNodeOptions`, `DSL_NODE_DEFAULTS`)
+- `packages/workflow/src/dsl/builder.ts` (`resolveCommon`, `callDraft`,
+  `agentDraft`, `workflow()`)
+- `packages/workflow/src/dsl/index.ts`, `packages/workflow/src/index.ts`
+  (one export name)
+- `packages/workflow/src/dsl/builder.test.ts`
+- `docs/decisions/0041-the-typed-dsl-is-a-wiring-front-end-that-parses-its-own-ir.md`
+- `docs/contracts/workflow-dsl.md`
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md` (`### M4-T5`)
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `pnpm vitest run --project unit packages/workflow/src/dsl` — 57 passed, 2
+  files — PASS
+- `pnpm --filter @internal/workflow typecheck` — PASS. Before the test was
+  updated it failed on `builder.test.ts:259` with "'permissions' does not exist
+  in type 'CodeNodeOptions<never>'", which is the gap closing: the compiler now
+  rejects what the validator used to have to.
+- `biome check --formatter-enabled=false packages/workflow/src/dsl
+  packages/workflow/src/index.ts` — clean — PASS
+- `pnpm format:check` — PASS
+- `pnpm vitest run --project unit packages/workflow` — **3 failed, 206 passed**,
+  all three in `packages/workflow/src/runtime/workflow-runtime.test.ts`
+  ("derives a `branch` label from a registered policy", "runs a workflow produced
+  by the validator, not hand-built", "escalates through the compiled workflow's
+  own escalate branch"), which M4-T6/T7/T8 owns and was editing while this ran.
+  All three are `compileWorkflow: workflow definition is invalid`, a disagreement
+  between that task's hand-built fixtures and the validator's rules. No DSL file
+  is involved. Reported to the orchestrator rather than fixed, per the file
+  ownership split.
+
+### Decisions / deviations
+
+- **`permissions` is the one setting the workflow-level `defaults` block does not
+  offer.** It was the simplest way to make a class of invalid workflow
+  unwritable, and it is why `DSL_NODE_DEFAULTS` no longer
+  `satisfies Required<NodeDefaults>` on its own.
+- **A `call` node's grant is derived, not required.** The alternative — making
+  `permissions` mandatory on `.call()` — would have been safe too, but it makes
+  every call site restate an id the node already carries, and the derived value
+  is the only one the validator accepts anyway.
+
+### Known issues / blockers
+
+- The three failing tests above belong to M4-T6/T7/T8 and were failing before
+  this change. `pnpm check` cannot be green until that task's fixtures and the
+  validator agree.
+
+### Next exact step
+
+Unchanged from the previous entry: **M4-T10** authors the real vendor workflow
+with this DSL. One addition to what it needs to know: do **not** write
+`permissions` on a `call` node unless a scope is needed — the DSL derives the
+grant the validator wants — and remember that a compiled workflow needs a
+reachable `escalate` node.

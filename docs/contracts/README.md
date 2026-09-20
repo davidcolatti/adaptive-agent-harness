@@ -41,15 +41,17 @@ layout still plans, with their target milestone and a one-line summary.
 | `behavior-fingerprint.md` | active (M2-T8) | The component-wise `sha256:` fingerprint over the behavior-affecting inputs — instructions, SOP, skills, tool definitions, model configuration, schemas, workflow IR and policy thresholds — supplied by the domain and stamped on every event of a run. |
 | `storage.md` | active (M2-T5, M2-T6, M2-T7) | The `Storage` port the harness persists through, the outcome ledger row it writes, the thirteen-table Supabase schema behind it, and the sink that drains a run's trace into it. |
 | `workflow-ir.md` | active (M4-T1, M4-T2) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics: the definition, the eleven node types and five control shapes, the `Binding` data-flow model, `parseWorkflowDefinition()` and the workflow fingerprint. |
+| `workflow-dsl.md` | active (M4-T5) | The typed TypeScript builder that authors a workflow: `workflow()`, a method per node type, nested sub-graph callbacks, `.goto()` for rejoining, the defaults it applies and the edges and schemas it derives. It compiles to the IR and parses its own output. |
 | `decision-engine.md` | planned (M3) | The `DecisionEngine` interface for bounded probabilistic judgments, implemented first by Jev. |
 | `promotion-policy.md` | planned (M6) | The quality/regression/false-auto/fallback thresholds a candidate workflow must clear before promotion. |
 
-Thirteen contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
+Fourteen contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
 and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime` with `AgentExecution`
 (M1-T5), `createHarness()` (M1-T4), the capability registry with its serializable manifest
 (M1-T9), the entity identifier scheme (M2-T1), the trace event with its recorder and writer
 (M2-T3, M2-T4), the behavior fingerprint (M2-T8), trace redaction (M2-T9), and the `Storage` port with its outcome ledger
-(M2-T5, M2-T6, M2-T7), and the workflow IR with its node contracts (M4-T1, M4-T2). All live in
+(M2-T5, M2-T6, M2-T7), the workflow IR with its node contracts (M4-T1, M4-T2), and the typed
+workflow DSL over it (M4-T5). All live in
 `packages/core` except two behavior halves. The trace's is `packages/trace`: the buffered writer, the JSONL sinks and the
 redaction pass above them, kept out of core so that core owns no storage decision and touches no
 `node:fs`. The workflow's is `packages/workflow`: graph validation, the typed DSL and the local

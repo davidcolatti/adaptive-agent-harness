@@ -12,7 +12,7 @@ both are blocked only by M2, which is now done.
 milestone starts (M4 recommended first, since it is the critical path and M3
 can run beside it), from `docs/milestones/build-plan.md`, in the M2 status
 file's shape.
-**Last commit SHA:** `5eaba18` (M2-T10: local run inspector and the first
+**Last commit SHA:** `8361a42` (M2 close-out docs); M2-T10 code: `5eaba18` (M2-T10: local run inspector and the first
 harness CLI command). This handoff's own docs commit follows it. Earlier M2
 commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
 `02b1261`. Run `git log --oneline`.

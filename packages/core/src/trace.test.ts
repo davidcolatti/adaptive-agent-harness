@@ -1,8 +1,9 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import { newRunId } from "./ids.js";
 import { createNoopTraceWriter, type TraceEvent, type TraceWriter } from "./trace.js";
 
 const EVENT: TraceEvent = {
-  runId: "run_1",
+  runId: newRunId(),
   sequence: 0,
   timestamp: "2026-01-02T03:04:05.000Z",
   type: "run.started",

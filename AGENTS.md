@@ -544,8 +544,12 @@ and budget itself, and reads terminal state from turn boundary events. It **amen
 `docs/architecture/runtime.md`.
 ADR-0029 records the M1-T9 fingerprint scheme: RFC 8785-style canonical JSON and
 `sha256:`-prefixed digests, with `node:crypto` permitted in `@internal/core`
-because a Node built-in is not a third-party dependency.
-The next free number is 0030.
+because a Node built-in is not a third-party dependency. ADR-0030 records the
+M2-T1 identifier scheme: harness-owned RFC 9562 UUIDv7 with a monotonic counter,
+branded into twelve per-entity types. Node 24's own `crypto.randomUUIDv7()` is
+**not** used, because its documentation and its measured behaviour agree that it
+is not strictly increasing within a millisecond.
+The next free number is 0031.
 
 ## Scope discipline
 

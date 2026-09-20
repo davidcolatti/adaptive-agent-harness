@@ -3681,3 +3681,369 @@ leaves both the record and the bound port.
 
 Unchanged from the main M1-T6 entry: rewrite `docs/context/current-state.md` for
 the Milestone 1 handoff, commit, and record the SHA.
+
+## 2026-09-19 21:35 — M2 — Create the Milestone 2 status file
+
+**Status:** completed
+**Actor/session:** coding agent (documentation subagent)
+**Commit:** not committed
+
+### Goal
+
+Create `docs/milestones/m2-job-trace-supabase-and-run-ledger.md`, the M2 status file, in the same
+shape as the M1 status file, and register it in `docs/milestones/README.md`, per
+`../context/current-state.md`'s "Exact next task". This is a documentation-only task; M2-T1
+(stable identifiers) is being implemented concurrently by another agent and is not described here
+beyond noting it is `in_progress`.
+
+### Implementation references
+
+Not applicable. This task touches no framework-facing code; it transcribes the Milestone 2 section
+of `docs/milestones/build-plan.md` (lines 1464-1730) into the per-milestone status-file shape
+established by `docs/milestones/m1-local-agent-and-public-harness-boundary.md`.
+
+### Work completed
+
+- Read `AGENTS.md`, `docs/context/current-state.md`, `docs/milestones/README.md`,
+  `docs/milestones/m1-local-agent-and-public-harness-boundary.md` in full, and
+  `docs/milestones/build-plan.md` lines 1464-1730 (the Milestone 2 section).
+- Wrote `docs/milestones/m2-job-trace-supabase-and-run-ledger.md`: title, status line naming
+  M2-T1 `in_progress` and M2-T2 through M2-T11 `not started`; Goal/Blocked by/Parallel
+  work/Deliverable quoted from the plan, including "This is the most important foundation in the
+  project"; a "Before starting" section with eight prerequisites drawn from
+  `current-state.md`'s "Findings the next agent needs" and the repository's own boundary rules
+  (sequence numbering across `run.*`/`eve.*` events, identity-only adapter trace payloads today,
+  the unregistered `procurement-sop` capability, M2-T11 gating M2-T5 through M2-T10, the
+  `@internal/storage-supabase` reservation in `tests/architecture/boundaries.ts`, the generated
+  `database.types.ts` rule, the WORKLOG "Implementation references" checkpoint requirement for
+  framework-facing tasks, and the new `packages/trace` needing a `BOUNDARY_RULES` entry); eleven
+  `### M2-Tn` task subsections reproducing the plan's task text and code blocks verbatim, each with
+  its own status line; and an acceptance-criteria section with the plan's ten bullets, each marked
+  "not yet verified".
+- Added an M2 row to the table in `docs/milestones/README.md` (`in progress (M2-T1)`, linking the
+  new file) and changed "Later milestones (M2 onward)" to "Later milestones (M3 onward)" in the
+  sentence below the table, since M2 now has its own status file.
+
+### Files changed
+
+- `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` — new file, the M2 status file.
+- `docs/milestones/README.md` — added the M2 row and updated the now-stale "M2 onward" sentence to
+  "M3 onward".
+
+### Verification
+
+- `pnpm format:check` — PASS (`Checked 102 files in 28ms. No fixes applied.`)
+- `pnpm lint` — PASS (`Checked 102 files in 44ms. No fixes applied.`)
+- `pnpm check:handoff` — PASS (see below)
+
+### Decisions / deviations
+
+- None. Followed the M1 status file's shape exactly, including reproducing the plan's code blocks
+  as fenced code blocks rather than prose.
+
+### Known issues / blockers
+
+- None for this task. M2-T1 through M2-T11 remain to be implemented; see
+  `docs/context/current-state.md`.
+
+### Next exact step
+
+M2-T1 (stable identifiers), already `in_progress` with another agent. Once it lands, M2-T2, M2-T3,
+and M2-T4 can proceed in parallel; M2-T5 through M2-T10 wait on M2-T11 (local Supabase).
+
+---
+
+## 2026-09-19 21:35 — M2-T1 — Stable identifiers
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, M2-T1 implementer)
+**Commit:** not committed
+
+### Goal
+
+Replace the two `globalThis.crypto.randomUUID()` (v4, unsortable) call sites with a **sortable**
+entity-ID scheme, and give the harness the twelve branded ID types the build plan's M2-T1 lists
+(`job_id`, `run_id`, `attempt_id`, `trace_event_id`, `workflow_id`, `workflow_version_id`,
+`node_execution_id`, `decision_id`, `eval_run_id`, `learning_run_id`, `compiler_run_id`,
+`promotion_id`). AD-016 names "UUID implementation" as an unprescribed internal choice that must be
+recorded, so the choice gets ADR-0030.
+
+Wiring is deliberately narrow: `defineDomain()` (job id) and `createHarness()` (run id) only, plus
+the brand ripple through `ExecutionContext` and `TraceEvent.runId`. No new fields (`attemptId`,
+`traceEventId`) are added to any type — where those surface is M2-T2's and M2-T3's decision.
+
+### Implementation references
+
+- **package/version:** Node.js **24.21.0** (pinned by `.node-version`/`.nvmrc`, confirmed with
+  `node --version`); `@types/node` **24.13.6** (resolved at
+  `node_modules/.pnpm/@types+node@24.13.6/node_modules/@types/node`); pnpm 12.4.2.
+- **installed docs read:** `@types/node@24.13.6` `crypto.d.ts`. It declares
+  `function randomUUID(options?: RandomUUIDOptions): UUID;` at line 4136 and the
+  `type UUID = ...` alias at line 4130. It declares **no `randomUUIDv7`** — grep for the name in
+  that file returns nothing. So the installed types do not expose the Node 24 built-in at all.
+- **official docs/repos/examples read:** the official Node.js v24 API documentation for
+  `node:crypto`, read as its machine-readable form
+  <https://nodejs.org/docs/latest-v24.x/api/crypto.json> (the HTML page at
+  <https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptorandomuuidv7options> is the same
+  content). Verbatim facts taken from it:
+  - `crypto.randomUUIDv7([options])` — `"added": ["v24.16.0"]`, no `changes`, and **no stability
+    marker** (the `stability` field is `undefined`, exactly as it is for the long-stable
+    `crypto.randomUUID`), so it inherits the `crypto` module's stability.
+  - Its description: *"Generates a random RFC 9562 version 7 UUID. The UUID contains a millisecond
+    precision Unix timestamp in the most significant 48 bits, followed by cryptographically secure
+    random bits for the remaining fields, making it suitable for use as a database key with
+    time-based sorting. **The embedded timestamp relies on a non-monotonic clock and is not
+    guaranteed to be strictly increasing.**"*
+  - Its only option is `disableEntropyCache` (boolean, default `false`), identical to
+    `randomUUID`'s. There is no monotonic-counter option and no timestamp argument.
+  - RFC 9562 §4.4 (UUIDv7 bit layout) and §6.2 ("Monotonicity and Counters", Method 1, "Fixed
+    Bit-Length Dedicated Counter") are the normative source for the owned implementation.
+- **public types/exports inspected:** `packages/core/src/identifiers.ts` (the existing
+  `*_PATTERN` / `*_MESSAGE` / `is*` / `collectRefIssues` / `throwIfIssues` style this module
+  mirrors), `packages/core/src/fingerprint.ts` (the `FINGERPRINT_ALGORITHM_PREFIX` precedent for a
+  scheme-naming constant, and the ADR-0029 precedent for `node:crypto` in a zero-dependency core),
+  `packages/core/src/job.ts` (the `declare const ... : unique symbol` phantom-brand idiom),
+  `packages/core/src/index.ts` (the "listed by name" re-export convention).
+- **Runtime verification performed (not taken on faith):** on the pinned Node 24.21.0,
+  `require("node:crypto").randomUUIDv7` is a `function` of arity 1 and returns well-formed v7 UUIDs
+  (e.g. `01a0bc70-c781-7e42-901d-04ec7e8d85ee`). Generating 20 000 ids in a tight loop produced
+  **9 939 non-increasing consecutive pairs out of 19 999** — i.e. the built-in provides no ordering
+  at all within a millisecond, exactly as its documentation warns. Passing a number throws
+  (`The "options" argument must be of type object`); the single parameter is `options`, not a
+  timestamp.
+- **selected documented pattern:** **option (b), a harness-owned RFC 9562 UUIDv7** in
+  `packages/core/src/ids.ts` over `node:crypto` `randomBytes`, with the RFC 9562 §6.2 Method 1
+  fixed-bit-length dedicated counter in `rand_a` so ids minted inside one millisecond still sort in
+  creation order. The built-in is rejected **on its own documented behaviour**, not on its missing
+  type declaration: sortability is the entire property M2-T1 exists to buy, and a generator that is
+  "not guaranteed to be strictly increasing" (and measurably is not, half the time) does not buy
+  it. A TypeScript module augmentation would have fixed the typing gap but not the semantic one.
+  Recorded in **ADR-0030**.
+- **harness-owned, because nothing public provides it:** the monotonic counter, the
+  clock-regression guard (a backwards system clock must never emit a smaller id), the
+  counter-rollover rule, the twelve brands, and `ENTITY_ID_SCHEME`.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (in progress)
+
+### Decisions / deviations
+
+- (in progress)
+
+### Known issues / blockers
+
+- None so far.
+
+### Next exact step
+
+Implement `packages/core/src/ids.ts` + `ids.test.ts`, wire the two call sites, fix the brand
+ripple, write ADR-0030 and the contract docs, then run the verification chain.
+
+---
+
+## 2026-09-19 21:45 — M2-T1 — Stable identifiers
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, M2-T1 implementer)
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. A sortable, branded identifier scheme for the twelve entities M2-T1
+names, wired at the two existing `crypto.randomUUID()` call sites and nowhere else.
+
+### Implementation references
+
+See the `started` entry at 21:35 for the full checkpoint. The one-line summary: Node 24.21.0 ships
+`crypto.randomUUIDv7()` (added v24.16.0), its official documentation says the embedded timestamp
+"is not guaranteed to be strictly increasing", and measurement on the pinned runtime confirmed it
+(9 939 non-increasing pairs out of 19 999). **Option (b) was selected**: a harness-owned RFC 9562
+UUIDv7 over `node:crypto` `randomBytes`, with the §6.2 Method 1 monotonic counter the built-in
+lacks. The missing `@types/node@24.13.6` declaration was *not* the deciding factor; a module
+augmentation would have fixed the typing and left the semantics unchanged.
+
+### Work completed
+
+- **`packages/core/src/ids.ts`** (new, the whole scheme):
+  - `ENTITY_ID_SCHEME = "uuidv7"`, the constant a persisted record cites, mirroring
+    `FINGERPRINT_ALGORITHM_PREFIX`; `ENTITY_KINDS`, the twelve kinds as a `const` tuple,
+    mirroring `CAPABILITY_KINDS`.
+  - One brand mechanism: `EntityId<TKind>` is `string` intersected with a phantom property under a
+    `declare const ENTITY_ID_BRAND: unique symbol` key, the same idiom `job.ts` already uses for
+    `JOB_OUTPUT_TYPE`. Twelve aliases: `JobId`, `RunId`, `AttemptId`, `TraceEventId`, `WorkflowId`,
+    `WorkflowVersionId`, `NodeExecutionId`, `DecisionId`, `EvalRunId`, `LearningRunId`,
+    `CompilerRunId`, `PromotionId`. Runtime representation is a plain lowercase UUID string.
+  - Twelve zero-argument generators (`newJobId()`, `newRunId()`, ...). **Chosen over a generic
+    `newEntityId(kind)`** because the kind has no runtime meaning at generation time: every id is
+    the same string whatever it names, so a generic generator would take an argument purely to pick
+    a return type, and `newRunId()` reads better at a call site.
+  - **One generic parser**, `parseEntityId(kind, value, path?)`, throwing `ValidationError` with the
+    issue at the caller's path, matching `collectRefIssues` in `identifiers.ts`. Generic *here*
+    because `kind` genuinely does something: it names the entity in the failure message. Plus
+    `isEntityId(value)`, a kind-agnostic type guard (the scheme encodes a timestamp, a counter and
+    entropy, and nothing about which entity an id names, so no guard can recover a kind).
+  - `ENTITY_ID_PATTERN` / `ENTITY_ID_MESSAGE` in the style `identifiers.ts` set. Lowercase
+    `8-4-4-4-12` hex, version nibble `7`, variant nibble in `[89ab]`. Uppercase is **rejected, not
+    normalized**.
+  - The generator: 48-bit millisecond timestamp, version `7`, a 12-bit counter in `rand_a`,
+    variant `10`, 62 random bits of `rand_b` from `node:crypto` `randomBytes(8)`. A new millisecond
+    resets the counter; the same millisecond increments it; a **backwards clock** is treated as the
+    same millisecond so an id never goes down when `Date.now()` does; **counter rollover** past
+    4096/ms borrows the timestamp forward 1 ms.
+- **`packages/core/src/ids.test.ts`** (new, 20 tests): format/version/variant for all twelve
+  generators, the embedded timestamp, distinctness across 6 000 ids, `rand_b` entropy, rejection of
+  v4 (both a literal and a live `crypto.randomUUID()`), rejection of uppercase, rejection of a
+  wrong variant nibble and of nine malformed/non-string values, the `ValidationError` message and
+  issue path, and three **sortability** tests: 5 000 ids strictly increasing with
+  `[...ids].reverse().sort()` reproducing creation order, 10 000 ids strictly increasing inside a
+  single frozen millisecond (exercising counter rollover), and 200 ids strictly increasing across a
+  clock mocked to step *backwards* 1 s per call.
+- **Wired the two call sites, and only those.** `defineDomain()`'s `createJob` uses `newJobId()`;
+  `createHarness()` uses `newRunId()`. `Job.id` is `JobId`; `ExecutionContext.runId`/`jobId` and
+  `CreateExecutionContextInput.runId`/`jobId` are `RunId`/`JobId`; `TraceEvent.runId` is `RunId`;
+  `HarnessRunResultBase.runId`/`jobId` are branded. **No new field was added to any type.**
+  `ExecutionContext.attempt` stays a `number`, and its doc comment now says explicitly that
+  `AttemptId` exists but that where an attempt id surfaces is M2-T2's/M2-T3's decision.
+- **Fixed the brand ripple in seven test files** using the generators, never a cast: two in
+  `packages/testing`, two in `packages/runtime-eve`, three in `packages/core`. Where a test asserted
+  on a literal id (`clientContext.jobId`, `event.runId === "run_1"`) a module-level `const JOB_ID =
+  newJobId()` keeps the job and its context agreeing the way they do in a real run.
+  `context.test.ts`'s type assertions now pin `RunId`/`JobId` rather than `string`, which is the
+  brand documenting itself.
+- **Exported** the fourteen types and eighteen values from `packages/core/src/index.ts` in the
+  file's "listed by name" convention, under a comment naming M2-T1 and ADR-0030.
+- **ADR-0030** written, covering the UUIDv7 choice, built-in-vs-owned with the measurement, the
+  branding approach, an explicit "What this does NOT decide" section (attempt/trace-event id
+  placement, storage column type, cross-process ordering), and seven rejected alternatives (the
+  Node built-in with a module augmentation, v4 plus a sequence column, ULID, KSUID, a UUID library,
+  plain strings, a single un-kinded brand, normalizing uppercase). Added to
+  `docs/decisions/README.md` (table row + prose entry).
+- **Docs alongside code:** new `docs/contracts/identifiers.md` with the standard frontmatter;
+  `job.md`, `execution-context.md` and `harness.md` updated wherever they said ids were
+  opaque/v4/"M2-T1 will replace this"; `docs/contracts/README.md` gained the `identifiers.md` row
+  and a paragraph; `docs/architecture/system-map.md`'s `packages/core` file listing gained
+  `ids.ts`/`ids.test.ts` with a note distinguishing it from `identifiers.ts`. The three
+  "M2-T1 replaces this" source comments in `job.ts`, `domain.ts` and `harness.ts` were replaced
+  with the truth.
+- **`AGENTS.md`**: the ADR paragraph now names ADR-0030 and "the next free number" is **0031**.
+
+### Files changed
+
+New:
+
+- `packages/core/src/ids.ts` — the scheme: twelve brands, twelve generators, the parser/guard, the
+  monotonic UUIDv7 generator.
+- `packages/core/src/ids.test.ts` — 20 tests, including the three sortability properties.
+- `docs/decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md` — ADR-0030.
+- `docs/contracts/identifiers.md` — the entity-identifier contract.
+
+Modified:
+
+- `packages/core/src/domain.ts` — `createJob` mints `newJobId()`.
+- `packages/core/src/harness.ts` — `createHarness` mints `newRunId()`; result base ids branded.
+- `packages/core/src/job.ts` — `Job.id` is `JobId`.
+- `packages/core/src/context.ts` — `runId`/`jobId` branded on both the context and its input;
+  `attempt` doc comment states it stays a number.
+- `packages/core/src/trace.ts` — `TraceEvent.runId` is `RunId`.
+- `packages/core/src/index.ts` — exports the new surface.
+- `packages/core/src/{context,agent-runtime,harness,trace}.test.ts` — brand ripple; `harness.test.ts`
+  additionally asserts `isEntityId()` on both ids the real path produces.
+- `packages/runtime-eve/src/eve-agent-runtime.{test,contract.test}.ts` — brand ripple.
+- `packages/testing/src/{fake-agent-runtime,recording-trace-writer}.test.ts` — brand ripple.
+- `docs/contracts/{README,job,execution-context,harness}.md`, `docs/architecture/system-map.md`,
+  `docs/decisions/README.md`, `AGENTS.md` — documentation alongside the code.
+
+### Verification
+
+- `pnpm vitest run --project unit packages/core/src/ids.test.ts` — **PASS** (`Test Files 1 passed
+  (1)`, `Tests 20 passed (20)`).
+- `pnpm vitest run --project unit packages/core` — **PASS** (`Test Files 11 passed (11)`,
+  `Tests 215 passed (215)`).
+- `pnpm typecheck` — **PASS** (`Tasks: 6 successful, 6 total`, plus the root
+  `tsc --noEmit -p tsconfig.json` over `scripts/`, `tests/` and `vitest.config.ts`).
+- `pnpm format:check` — **PASS** (`Checked 104 files in 23ms. No fixes applied.`)
+- `pnpm lint` — **PASS** (`Checked 104 files in 33ms. No fixes applied.`)
+- `pnpm check` — **PASS**, exit 0. Tail:
+
+  ```text
+  Checked 104 files in 23ms. No fixes applied.     (format:check)
+  Checked 104 files in 33ms. No fixes applied.     (lint)
+   Tasks:    6 successful, 6 total                 (typecheck)
+   Test Files  31 passed (31)
+        Tests  391 passed (391)
+   Tasks:    6 successful, 6 total                 (build)
+  check:handoff — OK
+  ```
+
+  **Test count: 371 across 30 files before, 391 across 31 files after** (+20 in the one new file).
+  The `contract` project booted real `eve dev` servers as usual.
+- `pnpm example:run:mock` — **PASS**, exit 0, `"status": "completed"`. The ids in the emitted
+  result prove the scheme reaches the real path, and that the run id sorts after the job id
+  because it was minted after it:
+
+  ```json
+  "runId": "01a0bc7b-f16e-7000-9736-c959ea313c8c",
+  "jobId": "01a0bc7b-f16d-7000-b830-615493d54fcc"
+  ```
+
+### Decisions / deviations
+
+- **Option (b), owned implementation, not (a), the Node built-in.** The `started` entry has the
+  evidence. Worth restating because it inverts the task's stated preference: (a) was preferred *if*
+  the docs established stability and monotonicity. `randomUUIDv7` carries no experimental marker,
+  so the stability half held, but the documentation explicitly disclaims strict increase and
+  measurement confirmed it fails about half the time within a millisecond. Sortability is the whole
+  point of M2-T1, so the built-in was rejected on semantics. ADR-0030 records this.
+- **No module augmentation of `node:crypto` was written**, since the built-in is not used. If a
+  future Node documents a monotonic `randomUUIDv7`, the swap is one internal function behind twelve
+  stable exports and would not reach a call site.
+- **`ENTITY_KINDS` strings are kebab-case** (`trace-event`, `workflow-version`), not the plan's
+  `snake_case` column names, matching `IDENTIFIER_PATTERN`'s existing style. They are a type-level
+  tag and a validation-message noun, never a wire format, so M2-T5 is free to name its columns
+  `trace_event_id`.
+- **Generators are per-entity, parser is generic.** Stated in Work completed with the reasoning:
+  the kind is meaningless at generation time and meaningful at parse time.
+- **Module-level mutable state** (last timestamp, counter) is deliberate and is the mechanism.
+  Ordering within a millisecond is only definable relative to what was already issued. It is
+  per-process; cross-process ordering is the timestamp's, to millisecond resolution.
+- **A backwards clock increments the counter rather than emitting a smaller id.** The cost is ids
+  that read slightly old until the clock catches up; the alternative silently corrupts every
+  ordering built on them. Tested.
+- **Nine of the twelve brands have no field on any contract.** Deliberate, per the task and per
+  AGENTS.md's scope discipline: the type exists so a later milestone does not invent a thirteenth
+  scheme, but a field now would publish a guess as a contract.
+- **`AGENTS.md` was edited** (the ADR paragraph and "next free number 0030" → `0031`). It was not
+  on the do-not-touch list, and leaving the number stale would hand the next agent a colliding ADR
+  number.
+- Deliberately untouched: `docs/context/current-state.md`, `docs/milestones/*` (both were being
+  written concurrently by other agents), `docs/milestones/build-plan.md`,
+  `tests/architecture/boundaries.ts` (no new package), git staging.
+
+### Known issues / blockers
+
+- None. One note for M2-T5: if an id is stored in a Postgres `uuid` column rather than `text`, that
+  column's sort order must be verified to match the textual lexicographic order this scheme
+  guarantees, since `uuid` compares as bytes rather than as the printed string. Recorded in
+  ADR-0030 and in `docs/contracts/identifiers.md`.
+- An entity id is **not** a capability token. The timestamp and counter are not secret and the
+  first id of a millisecond has `rand_a` of `000`; unguessability is the 62 bits of `rand_b`.
+  Recorded in both documents so M2-T9 and M5 do not mistake an id for authorization.
+
+### Next exact step
+
+**M2-T2 (finalize the `Job` contract), M2-T3 (trace event schema) and M2-T4 (buffered trace writer,
+`packages/trace`) can now all start, in parallel.** They each need to decide whether their new
+fields carry a brand from `packages/core/src/ids.ts`: M2-T2 owns whether an attempt surfaces as an
+`AttemptId` beside the numeric `ExecutionContext.attempt`, and M2-T3 owns where `TraceEventId`
+lands and whether the harness's `sequence` survives alongside a sortable event id. Neither is
+decided by M2-T1; ADR-0030's "What this does NOT decide" section says so explicitly.
+M2-T5 onward still need a local Supabase (M2-T11 first).

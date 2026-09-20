@@ -6,19 +6,25 @@ import {
   type ToolGrant,
 } from "./context.js";
 import { ValidationError } from "./errors.js";
+import { type JobId, newJobId, newRunId, type RunId } from "./ids.js";
 import type { JsonObject } from "./json.js";
 
+const RUN_ID = newRunId();
+const JOB_ID = newJobId();
+
 const REQUIRED = {
-  runId: "run_1",
-  jobId: "job_1",
+  runId: RUN_ID,
+  jobId: JOB_ID,
   domain: { id: "vendor-triage", version: "1.0.0" },
   runtime: { name: "eve", version: "0.63.0" },
 } as const;
 
 describe("ExecutionContext", () => {
   it("carries every field M1-T7 requires", () => {
-    expectTypeOf<ExecutionContext["runId"]>().toEqualTypeOf<string>();
-    expectTypeOf<ExecutionContext["jobId"]>().toEqualTypeOf<string>();
+    // Branded since M2-T1 (ADR-0030): a bare `string`, or the other kind of
+    // id, is a compile error here rather than a silent mix-up.
+    expectTypeOf<ExecutionContext["runId"]>().toEqualTypeOf<RunId>();
+    expectTypeOf<ExecutionContext["jobId"]>().toEqualTypeOf<JobId>();
     expectTypeOf<ExecutionContext["attempt"]>().toEqualTypeOf<number>();
     expectTypeOf<ExecutionContext["signal"]>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<ExecutionContext["permissions"]>().toEqualTypeOf<readonly ToolGrant[]>();
@@ -46,8 +52,8 @@ describe("createExecutionContext", () => {
       runtime: { name: "eve", version: "0.63.0", metadata: { sessionKind: "local" } },
     });
 
-    expect(context.runId).toBe("run_1");
-    expect(context.jobId).toBe("job_1");
+    expect(context.runId).toBe(RUN_ID);
+    expect(context.jobId).toBe(JOB_ID);
     expect(context.domain).toEqual({ id: "vendor-triage", version: "1.0.0" });
     expect(context.attempt).toBe(3);
     expect(context.budget).toEqual({ maxModelCalls: 4 });

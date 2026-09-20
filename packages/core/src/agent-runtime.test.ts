@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import type { AgentExecution, AgentExecutionUsage, AgentRuntime } from "./agent-runtime.js";
 import { createExecutionContext } from "./context.js";
 import { AgentExecutionError, serializeError } from "./errors.js";
+import { newJobId, newRunId } from "./ids.js";
 import type { Job } from "./job.js";
 
 interface TriageOutput {
@@ -12,7 +13,7 @@ const USAGE: AgentExecutionUsage = { modelCalls: 1, toolCalls: 2, durationMs: 5 
 const RUNTIME = { name: "test", version: "0.0.0", metadata: {} };
 
 const JOB: Job<{ vendorName: string }, TriageOutput> = {
-  id: "job_1",
+  id: newJobId(),
   domain: { id: "triage", version: "1.0.0" },
   jobType: "triage",
   objective: "Triage Acme.",
@@ -82,7 +83,7 @@ describe("AgentRuntime", () => {
     };
 
     const context = createExecutionContext({
-      runId: "run_1",
+      runId: newRunId(),
       jobId: JOB.id,
       domain: JOB.domain,
       runtime: { name: "test", version: "0.0.0" },

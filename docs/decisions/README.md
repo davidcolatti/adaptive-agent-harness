@@ -80,6 +80,7 @@ and related ADRs that motivated it.
 | [0027](0027-standard-schema-is-the-harness-schema-contract.md) | Standard Schema is the harness schema contract, declared structurally in core | accepted |
 | [0028](0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md) | `EveAgentRuntime` is a URL-only client that observes the eve event stream | accepted |
 | [0029](0029-canonical-json-and-sha-256-behavior-fingerprints.md) | Canonical JSON (RFC 8785-style) and `sha256:`-prefixed behavior fingerprints | accepted |
+| [0030](0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md) | Sortable UUIDv7 entity identifiers, owned rather than delegated to Node | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -122,3 +123,15 @@ permitted inside `@internal/core`, because a built-in adds nothing to `package.j
 lockfile, or what `tests/architecture/boundaries.ts` can see, so the zero-dependency rule is
 unchanged. It is implemented in `packages/core/src/fingerprint.ts` and consumed by
 `packages/core/src/capabilities.ts`.
+
+Entry 0030 answers what a stable identifier is, which M2-T1 was the first task to need: the harness
+mints RFC 9562 UUIDv7 ids in `packages/core/src/ids.ts`, branded into twelve mutually incompatible
+types, one per entity the build plan names. AD-016 names "UUID implementation" as one of its
+examples of a choice that must be recorded rather than implied. It also records why the Node 24
+built-in `crypto.randomUUIDv7()` is **not** used: its own documentation says the embedded timestamp
+"is not guaranteed to be strictly increasing", and on the pinned Node 24.21.0 about half of 20 000
+consecutive ids were not, because ids minted inside one millisecond are ordered only by their
+random bits. Sortability is the property M2-T1 exists to buy, so the harness owns the generator and
+adds the RFC 9562 §6.2 monotonic counter the built-in lacks. It is implemented in
+`packages/core/src/ids.ts` and wired at the two call sites in `packages/core/src/domain.ts` and
+`packages/core/src/harness.ts`.

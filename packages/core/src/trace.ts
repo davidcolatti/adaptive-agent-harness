@@ -1,3 +1,4 @@
+import type { RunId } from "./ids.js";
 import type { JsonObject } from "./json.js";
 
 /**
@@ -19,7 +20,7 @@ import type { JsonObject } from "./json.js";
  */
 export interface TraceEvent {
   /** The run this event belongs to. */
-  readonly runId: string;
+  readonly runId: RunId;
   /**
    * The event's position in the run's append order, starting at 0. Ordering is
    * carried by this field rather than by the timestamp, because a buffered

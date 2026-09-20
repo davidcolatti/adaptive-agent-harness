@@ -14,6 +14,7 @@ import {
   serializeError,
   ValidationError,
 } from "./errors.js";
+import { type JobId, newRunId, type RunId } from "./ids.js";
 import type { Job } from "./job.js";
 import type { JsonObject } from "./json.js";
 import { validateWith } from "./schema.js";
@@ -104,10 +105,10 @@ export interface HarnessRunInput<TInput, TOutput> {
 
 /** What every {@link HarnessRunResult} carries, whatever its outcome. */
 interface HarnessRunResultBase {
-  /** This run's identifier. Opaque; **M2-T1** replaces the scheme. */
-  readonly runId: string;
+  /** This run's identifier: a sortable UUIDv7 (M2-T1, ADR-0030). */
+  readonly runId: RunId;
   /** The job that was run. */
-  readonly jobId: string;
+  readonly jobId: JobId;
   /** The domain the job belongs to. */
   readonly domain: DomainRef;
   /** Which attempt produced this result, counting from 1. */
@@ -249,9 +250,9 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       metadata: mergeMetadata(job.metadata, input.metadata),
     });
 
-    // 3. Identify the run. Opaque in M1; **M2-T1** replaces the scheme with a
-    //    sortable one, and nothing may parse this format meanwhile.
-    const runId = globalThis.crypto.randomUUID();
+    // 3. Identify the run. A sortable UUIDv7 (M2-T1, ADR-0030), so runs sort
+    //    in start order and a run id can be a cursor over the run ledger.
+    const runId = newRunId();
     // M1 has no retries, so every run is its first and only attempt. Retry
     // policy is not this milestone's, and a counter that never moves is
     // honest about that.

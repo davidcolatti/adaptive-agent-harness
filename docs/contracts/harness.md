@@ -101,10 +101,11 @@ metadata a runtime reads.
    The runtime is never reached.
 2. **Build the job** with `domain.createJob(validInput)` and apply the
    overrides.
-3. **Identify the run.** `runId` is `crypto.randomUUID()` and `attempt` is `1`.
-   Both are opaque: **M2-T1** replaces the ID scheme, and nothing may parse the
-   current format. M1 has no retries, so a counter that never moves is honest
-   about that.
+3. **Identify the run.** `runId` is `newRunId()`, a sortable RFC 9562 UUIDv7
+   (M2-T1, [ADR-0030](../decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md)),
+   so runs sort in start order and a run id works as a ledger cursor. `attempt`
+   is `1`: there are no retries yet, and a counter that never moves is honest
+   about that. See [identifiers.md](identifiers.md).
 4. **Build the [`ExecutionContext`](execution-context.md)** from the job, the
    trace writer and the signal. It deliberately does not name a runtime; see
    "Which runtime the context reports" below.
@@ -160,8 +161,8 @@ type HarnessRunResult<TOutput = unknown> =
 Every variant carries the same base:
 
 ```ts
-readonly runId: string;
-readonly jobId: string;
+readonly runId: RunId;
+readonly jobId: JobId;
 readonly domain: DomainRef;
 readonly attempt: number;
 readonly usage: AgentExecutionUsage;

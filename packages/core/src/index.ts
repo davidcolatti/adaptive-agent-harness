@@ -5,7 +5,8 @@
 // context (M1-T7), the error taxonomy (M1-T8), the schema boundary, `Job`,
 // `DomainDefinition` and `defineDomain()` (M1-T3), `AgentRuntime` with
 // `AgentExecution` (M1-T5), `createHarness()` (M1-T4), and the capability
-// registry with its canonical-JSON fingerprint scheme (M1-T9).
+// registry with its canonical-JSON fingerprint scheme (M1-T9). Milestone 2 adds
+// the sortable entity-ID scheme and its twelve brands (M2-T1).
 //
 // Re-exports are listed by name rather than starred, so this file states the
 // package's public surface and a symbol becomes public deliberately. Their
@@ -114,6 +115,45 @@ export { createHarness } from "./harness.js";
 // The identifier and version rules shared by `defineDomain()` and the
 // capability registry.
 export { isCapabilityIdentifier, isExactVersion } from "./identifiers.js";
+
+// Entity identifiers: the sortable UUIDv7 scheme and its twelve brands
+// (M2-T1; ADR-0030).
+export type {
+  AttemptId,
+  CompilerRunId,
+  DecisionId,
+  EntityId,
+  EntityKind,
+  EvalRunId,
+  JobId,
+  LearningRunId,
+  NodeExecutionId,
+  PromotionId,
+  RunId,
+  TraceEventId,
+  WorkflowId,
+  WorkflowVersionId,
+} from "./ids.js";
+export {
+  ENTITY_ID_MESSAGE,
+  ENTITY_ID_PATTERN,
+  ENTITY_ID_SCHEME,
+  ENTITY_KINDS,
+  isEntityId,
+  newAttemptId,
+  newCompilerRunId,
+  newDecisionId,
+  newEvalRunId,
+  newJobId,
+  newLearningRunId,
+  newNodeExecutionId,
+  newPromotionId,
+  newRunId,
+  newTraceEventId,
+  newWorkflowId,
+  newWorkflowVersionId,
+  parseEntityId,
+} from "./ids.js";
 
 // The immutable unit of work (M1-T3; M2-T2 finalizes the schema).
 export type { Job, JobContracts } from "./job.js";

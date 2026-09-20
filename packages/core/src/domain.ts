@@ -7,6 +7,7 @@ import {
   isExactVersion,
   throwIfIssues,
 } from "./identifiers.js";
+import { newJobId } from "./ids.js";
 import type { Job, JobContracts } from "./job.js";
 import type { JsonObject } from "./json.js";
 import { assertIsSchema, type Schema } from "./schema.js";
@@ -203,9 +204,9 @@ export function defineDomain<TInput, TOutput>(
     throwIfIssues(`${config.id}: createJob returned an incomplete job`, bodyIssues);
 
     return Object.freeze({
-      // Opaque in M1. **M2-T1** replaces this with the sortable scheme it picks
-      // for every entity ID; nothing may depend on the format meanwhile.
-      id: globalThis.crypto.randomUUID(),
+      // A sortable UUIDv7 (M2-T1, ADR-0030): jobs created in order sort in
+      // order, and the type is branded so it cannot be confused with a run id.
+      id: newJobId(),
       domain,
       jobType: body.jobType,
       objective: body.objective,

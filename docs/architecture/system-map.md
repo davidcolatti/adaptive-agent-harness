@@ -333,6 +333,10 @@ still calls nothing. The source files in the workspace packages are:
 - `packages/core/src/harness.ts` (M1-T4), `capabilities.ts`, `fingerprint.ts` and
   `identifiers.ts` (M1-T9), with a co-located test for each except `identifiers.ts`, whose two
   rules are exercised through `domain.test.ts` and `capabilities.test.ts`
+- `packages/core/src/ids.ts` and `ids.test.ts` (M2-T1): the sortable RFC 9562 UUIDv7 scheme and
+  the twelve branded entity-id types, minted at the two call sites in `domain.ts` and
+  `harness.ts`. Distinct from `identifiers.ts`, which rules on the `{ id, version }` names a
+  human writes rather than the ids a machine mints.
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`

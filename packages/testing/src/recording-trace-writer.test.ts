@@ -1,10 +1,12 @@
-import type { TraceEvent } from "@internal/core";
+import { newRunId, type TraceEvent } from "@internal/core";
 import { describe, expect, it } from "vitest";
 import { createRecordingTraceWriter } from "./recording-trace-writer.js";
 
+const RUN_ID = newRunId();
+
 function event(sequence: number, type: string): TraceEvent {
   return {
-    runId: "run_1",
+    runId: RUN_ID,
     sequence,
     timestamp: "2026-09-19T12:00:00.000Z",
     type,

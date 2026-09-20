@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createExecutionContext, type Job } from "@internal/core";
+import { createExecutionContext, type Job, newJobId, newRunId } from "@internal/core";
 import { createRecordingTraceWriter } from "@internal/testing";
 import { Client } from "eve/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -52,7 +52,7 @@ let server: EveDevServer | undefined;
 
 function createJob(objective: string): Job<{ marker: string }, FixtureOutput> {
   return {
-    id: `job_${objective.slice(0, 12)}`,
+    id: newJobId(),
     domain: DOMAIN,
     jobType: "fixture-contract",
     objective,
@@ -110,8 +110,8 @@ describe("EveAgentRuntime against a real eve server", () => {
     async () => {
       const trace = createRecordingTraceWriter();
       const context = createExecutionContext({
-        runId: "run_structured",
-        jobId: "job_structured",
+        runId: newRunId(),
+        jobId: newJobId(),
         domain: DOMAIN,
         permissions: [{ toolId: "echo_fixture", mode: "read" }],
         trace,
@@ -154,8 +154,8 @@ describe("EveAgentRuntime against a real eve server", () => {
     "counts a real tool-call round trip and still produces structured output",
     async () => {
       const context = createExecutionContext({
-        runId: "run_tool",
-        jobId: "job_tool",
+        runId: newRunId(),
+        jobId: newJobId(),
         domain: DOMAIN,
         permissions: [{ toolId: "echo_fixture", mode: "read" }],
       });
@@ -180,8 +180,8 @@ describe("EveAgentRuntime against a real eve server", () => {
     "denies a tool the job does not grant, and stops the run",
     async () => {
       const context = createExecutionContext({
-        runId: "run_denied",
-        jobId: "job_denied",
+        runId: newRunId(),
+        jobId: newJobId(),
         domain: DOMAIN,
         // `forbidden_tool` is deliberately absent.
         permissions: [{ toolId: "echo_fixture", mode: "read" }],
@@ -213,8 +213,8 @@ describe("EveAgentRuntime against a real eve server", () => {
       const controller = new AbortController();
       const trace = createRecordingTraceWriter();
       const context = createExecutionContext({
-        runId: "run_cancelled",
-        jobId: "job_cancelled",
+        runId: newRunId(),
+        jobId: newJobId(),
         domain: DOMAIN,
         permissions: [{ toolId: "echo_fixture", mode: "read" }],
         trace,
@@ -285,8 +285,8 @@ describe("startEveDevServer lifecycle", () => {
             domains: [{ id: DOMAIN.id, version: DOMAIN.version, outputSchema }],
           });
           const context = createExecutionContext({
-            runId: `run_cycle_${String(cycle)}`,
-            jobId: `job_cycle_${String(cycle)}`,
+            runId: newRunId(),
+            jobId: newJobId(),
             domain: DOMAIN,
             permissions: [{ toolId: "echo_fixture", mode: "read" }],
           });

@@ -1,4 +1,5 @@
 import type { Budget, DomainRef, ToolGrant } from "./context.js";
+import type { JobId } from "./ids.js";
 import type { JsonObject } from "./json.js";
 
 /**
@@ -51,10 +52,11 @@ export declare const JOB_OUTPUT_TYPE: unique symbol;
  */
 export interface Job<TInput = unknown, TOutput = unknown> {
   /**
-   * The job's unique identifier. Opaque in M1; **M2-T1** replaces the generator
-   * with a sortable scheme (UUIDv7 or equivalent).
+   * The job's unique identifier: a sortable UUIDv7, minted by `newJobId()`
+   * (M2-T1, ADR-0030). It is branded, so a `RunId` or a bare `string` cannot be
+   * passed here, and it sorts lexicographically in creation order.
    */
-  readonly id: string;
+  readonly id: JobId;
   /** The domain and domain version this job belongs to. */
   readonly domain: DomainRef;
   /** Which kind of job this is within the domain, e.g. `vendor-triage`. */

@@ -1,4 +1,5 @@
 import { ValidationError } from "./errors.js";
+import type { JobId, RunId } from "./ids.js";
 import type { JsonObject } from "./json.js";
 import { createNoopTraceWriter, type TraceWriter } from "./trace.js";
 
@@ -113,12 +114,18 @@ export const HARNESS_RUNTIME_INFO: RuntimeInfo = Object.freeze({
  */
 export interface ExecutionContext {
   /** The run this attempt belongs to. Matches `TraceEvent.runId`. */
-  readonly runId: string;
-  /** The job being executed. */
-  readonly jobId: string;
+  readonly runId: RunId;
+  /** The job being executed. Matches `Job.id`. */
+  readonly jobId: JobId;
   /** The domain the job belongs to. */
   readonly domain: DomainRef;
-  /** Which attempt this is, counting from 1. */
+  /**
+   * Which attempt this is, counting from 1.
+   *
+   * A **number, not an id.** M2-T1 defines an `AttemptId` type, but where an
+   * attempt id surfaces on a contract is M2-T2's and M2-T3's decision, so
+   * nothing here claims one yet.
+   */
   readonly attempt: number;
   /** The limits this attempt must stay inside. */
   readonly budget: Budget;
@@ -148,9 +155,9 @@ export interface RuntimeInfoInput {
 /** The input {@link createExecutionContext} accepts. */
 export interface CreateExecutionContextInput {
   /** The run this attempt belongs to. */
-  readonly runId: string;
+  readonly runId: RunId;
   /** The job being executed. */
-  readonly jobId: string;
+  readonly jobId: JobId;
   /** The domain the job belongs to. */
   readonly domain: DomainRef;
   /** Which attempt this is. Defaults to `1`. */

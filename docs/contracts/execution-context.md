@@ -31,8 +31,8 @@ budget or widen its own permissions part-way through a run.
 
 ```ts
 interface ExecutionContext {
-  readonly runId: string;
-  readonly jobId: string;
+  readonly runId: RunId;
+  readonly jobId: JobId;
   readonly domain: DomainRef;
   readonly attempt: number;
   readonly budget: Budget;
@@ -45,8 +45,8 @@ interface ExecutionContext {
 
 | Field | Meaning |
 | --- | --- |
-| `runId` | The run this attempt belongs to. The same value appears on every `TraceEvent` the attempt writes. |
-| `jobId` | The job being executed. |
+| `runId` | The run this attempt belongs to, a sortable branded `RunId`. The same value appears on every `TraceEvent` the attempt writes. |
+| `jobId` | The job being executed, a sortable branded `JobId`. Matches `Job.id`. |
 | `domain` | The domain the job belongs to, as `{ id, version }`. |
 | `attempt` | Which attempt this is, counting from **1**. |
 | `budget` | The limits this attempt must stay inside. |
@@ -200,7 +200,7 @@ buffered, order-preserving local implementation is M2-T4's work and belongs in
 
 ```ts
 interface TraceEvent {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly sequence: number;
   readonly timestamp: string;  // ISO 8601
   readonly type: string;
@@ -260,5 +260,9 @@ at construction instead of in the evidence.
 - `ToolGrant` will need expiry and approval semantics once approvals exist
   (M2), and an enforcement point once tools actually run (M5).
 - `TraceEvent` is replaced wholesale by M2-T3.
-- Identifier format is not fixed here. `runId` and `jobId` are opaque strings
-  in M1; M2-T1 chooses the sortable scheme.
+- Identifier format is fixed by M2-T1, not here: `runId` and `jobId` are
+  sortable, branded UUIDv7 values. See [identifiers.md](identifiers.md) and
+  [ADR-0030](../decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md).
+- `attempt` is still a **number**, not an `AttemptId`. M2-T1 defines that brand
+  but deliberately gives it no field: where an attempt id surfaces is M2-T2's
+  and M2-T3's decision.

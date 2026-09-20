@@ -37,7 +37,7 @@ the value, not a convention a caller has to honour.
 
 ```ts
 interface Job<TInput = unknown, TOutput = unknown> {
-  readonly id: string;
+  readonly id: JobId;
   readonly domain: DomainRef;
   readonly jobType: string;
   readonly objective: string;
@@ -51,7 +51,7 @@ interface Job<TInput = unknown, TOutput = unknown> {
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Unique identifier for this job. Opaque in M1. |
+| `id` | Unique identifier for this job: a sortable, branded `JobId`. |
 | `domain` | The domain and domain version the job belongs to, as `{ id, version }`. Stamped by `defineDomain()`. |
 | `jobType` | Which kind of job this is within the domain, e.g. `vendor-triage`. |
 | `objective` | What the job is for, in one sentence, addressed to whatever executes it. |
@@ -114,12 +114,16 @@ correct.
 
 ## Identifiers
 
-`defineDomain()` generates `id` with `crypto.randomUUID()`.
+`defineDomain()` generates `id` with `newJobId()`, which mints a sortable
+RFC 9562 UUIDv7 (M2-T1, [ADR-0030](../decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md)).
+Jobs created in order therefore sort in order.
 
-**M2-T1 replaces this.** That task chooses the sortable scheme (UUIDv7 or
-equivalent) for every entity ID in the system, `job_id` among them. Nothing may
-depend on the current format: it is an opaque string, not a v4 UUID that
-anything is entitled to parse.
+`JobId` is a branded string: at runtime it is a plain lowercase UUID that needs
+no unwrapping to serialize, and at compile time it is distinct from `RunId` and
+from a bare `string`, so the two cannot be transposed. Build one with
+`newJobId()`, or turn an untrusted value into one with
+`parseEntityId("job", value)`. The full scheme, its ordering guarantee, and the
+other eleven brands are in [the identifier contract](identifiers.md).
 
 ## Where jobs come from
 
@@ -130,7 +134,7 @@ job; the harness stamps `id` and `domain` and applies the defaults. See
 ## Open for later milestones
 
 - **M2-T2** finalizes the schema and defines persistence.
-- **M2-T1** fixes the identifier format.
+- **M2-T1** fixed the identifier format; see [identifiers.md](identifiers.md).
 - **M1-T9** defines what a `contracts` reference resolves to.
 - `Job` has no `parentJobId` or workflow linkage yet. Subworkflows and fallback
   (build plan sections 5 and 9) will need one; inventing it now would be a guess.

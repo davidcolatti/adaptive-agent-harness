@@ -5,6 +5,7 @@ import { HARNESS_RUNTIME_INFO } from "./context.js";
 import { defineDomain } from "./domain.js";
 import { ValidationError } from "./errors.js";
 import { type Clock, createHarness, type HarnessRunResult } from "./harness.js";
+import { isEntityId, newJobId, newRunId } from "./ids.js";
 import type { Job } from "./job.js";
 import type { Schema, SchemaResult } from "./schema.js";
 import type { TraceEvent, TraceWriter } from "./trace.js";
@@ -261,6 +262,10 @@ describe("harness.run: the happy path", () => {
     expect(result.attempt).toBe(1);
     expect(result.domain).toEqual({ id: "triage", version: "1.0.0" });
     expect(result.runId).not.toBe(result.jobId);
+    // M2-T1: both ids are minted in the sortable UUIDv7 scheme, at the two real
+    // call sites (`createHarness` for the run, `defineDomain` for the job).
+    expect(isEntityId(result.runId)).toBe(true);
+    expect(isEntityId(result.jobId)).toBe(true);
   });
 
   it("hands the runtime the job the domain built, and a context describing it", async () => {
@@ -523,8 +528,8 @@ describe("harness.run: per-run overrides", () => {
 
 describe("HarnessRunResult", () => {
   const base = {
-    runId: "run_1",
-    jobId: "job_1",
+    runId: newRunId(),
+    jobId: newJobId(),
     domain: { id: "triage", version: "1.0.0" },
     attempt: 1,
     usage: USAGE,

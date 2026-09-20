@@ -1,4 +1,11 @@
-import { createExecutionContext, type Job, type JsonObject, type JsonValue } from "@internal/core";
+import {
+  createExecutionContext,
+  type Job,
+  type JsonObject,
+  type JsonValue,
+  newJobId,
+  newRunId,
+} from "@internal/core";
 import { createRecordingTraceWriter } from "@internal/testing";
 import type { CancelSessionResult, MessageStreamEvent, SendTurnInput } from "eve/client";
 import { describe, expect, it, vi } from "vitest";
@@ -173,11 +180,18 @@ function createFakeClient(options: FakeClientOptions): FakeClient {
   };
 }
 
+/**
+ * One id per file rather than per call, so the job a test builds and the
+ * context it runs under agree, the way they do in a real run.
+ */
+const JOB_ID = newJobId();
+const RUN_ID = newRunId();
+
 function createJob(
   overrides: Partial<Job<JsonObject, JsonObject>> = {},
 ): Job<JsonObject, JsonObject> {
   return {
-    id: "job_1",
+    id: JOB_ID,
     domain: DOMAIN,
     jobType: "fixture",
     objective: "Decide the fixture verdict.",
@@ -196,8 +210,8 @@ function createJob(
 
 function createContext(overrides: Partial<Parameters<typeof createExecutionContext>[0]> = {}) {
   return createExecutionContext({
-    runId: "run_1",
-    jobId: "job_1",
+    runId: RUN_ID,
+    jobId: JOB_ID,
     domain: DOMAIN,
     permissions: [{ toolId: "echo_fixture", mode: "read" }],
     // `runtime` is deliberately left unset. `createExecutionContext` defaults it
@@ -297,7 +311,7 @@ describe("EveAgentRuntime.run, completed", () => {
 
     expect(sent?.message).toBe("Decide the fixture verdict.");
     expect(sent?.clientContext).toEqual({
-      jobId: "job_1",
+      jobId: JOB_ID,
       domain: { id: "fixture-domain", version: "1.0.0" },
       jobType: "fixture",
       input: { vendorName: "Northwind Ledger" },
@@ -691,7 +705,7 @@ describe("EveAgentRuntime.run, trace", () => {
       "eve.session.waiting",
     ]);
     expect(trace.events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(trace.events.every((event) => event.runId === "run_1")).toBe(true);
+    expect(trace.events.every((event) => event.runId === RUN_ID)).toBe(true);
     expect(trace.events[0]?.timestamp).toBe("2026-09-19T12:00:00.000Z");
   });
 

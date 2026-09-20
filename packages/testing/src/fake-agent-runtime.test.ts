@@ -5,6 +5,8 @@ import {
   createExecutionContext,
   type ExecutionContext,
   type Job,
+  newJobId,
+  newRunId,
   serializeError,
 } from "@internal/core";
 import { describe, expect, it } from "vitest";
@@ -18,7 +20,7 @@ const USAGE: AgentExecutionUsage = { modelCalls: 1, toolCalls: 1, durationMs: 3 
 const RUNTIME = { name: "fake", version: "0.0.0", metadata: {} };
 
 const JOB: Job<{ vendorName: string }, TriageOutput> = {
-  id: "job_1",
+  id: newJobId(),
   domain: { id: "vendor-triage", version: "1.0.0" },
   jobType: "vendor-triage",
   objective: "Triage Acme.",
@@ -42,7 +44,7 @@ const COMPLETED: AgentExecution = {
 
 function contextWith(signal?: AbortSignal): ExecutionContext {
   return createExecutionContext({
-    runId: "run_1",
+    runId: newRunId(),
     jobId: JOB.id,
     domain: JOB.domain,
     runtime: { name: "fake", version: "0.0.0" },

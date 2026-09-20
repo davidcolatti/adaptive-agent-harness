@@ -60,6 +60,10 @@ function createStubStorage(fail?: unknown): StubStorage {
     listWorkflowVersions: unused,
     setWorkflowVersionStatus: unused,
     listWorkflowPromotions: unused,
+    // The decision half of the port (M3-T3). Same reason: a trace sink writes
+    // trace events and nothing else.
+    saveDecision: unused,
+    listDecisions: unused,
   };
 }
 
@@ -211,6 +215,10 @@ describe("createStorageTraceSink", () => {
       listWorkflowVersions: unused,
       setWorkflowVersionStatus: unused,
       listWorkflowPromotions: unused,
+      // The decision half of the port (M3-T3). Same reason: a trace sink writes
+      // trace events and nothing else.
+      saveDecision: unused,
+      listDecisions: unused,
     };
 
     const writer = createBufferedTraceWriter({ sink: createStorageTraceSink({ storage }) });

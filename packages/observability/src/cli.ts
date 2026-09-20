@@ -95,7 +95,9 @@ export type HarnessCommand = RunShowCommand | HarnessCliUsageError;
 const CLI_TARGETS: readonly (readonly [string, string])[] = [
   ["harness run <fixture>", "not yet implemented"],
   ["harness run show <run-id>", "available now"],
-  ["harness workflow list", "not yet implemented (M4)"],
+  // M5-T1 gave the `Storage` port `listWorkflowVersions()`, so the data this
+  // would print now exists; the command itself does not.
+  ["harness workflow list", "not yet implemented (M5 landed the storage read)"],
   ["harness workflow inspect <version>", "not yet implemented (M4)"],
   ["harness workflow validate <path>", "not yet implemented (M4)"],
   ["harness workflow replay <version>", "not yet implemented (M6)"],

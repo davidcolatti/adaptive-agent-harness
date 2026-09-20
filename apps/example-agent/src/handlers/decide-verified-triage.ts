@@ -33,9 +33,12 @@ import { noProceedWithOpenRiskFlags } from "../policies/no-proceed-with-open-ris
  *
  * Two rules, in order:
  *
- * 1. **An unsupported triage escalates.** `supported: false` means the triage
- *    concluded something its own cited evidence does not carry, and no
- *    deterministic rule can repair that.
+ * 1. **An unsupported triage escalates**, and so does one the harness is not
+ *    confident about. The `verify` node answers a bounded question and bands
+ *    its own confidence (M3-T5); this rule treats anything but a confident
+ *    `true` as unsupported, because an answer the harness cannot trust is not
+ *    support, and no deterministic rule can repair a conclusion its evidence
+ *    does not carry.
  * 2. **`noProceedWithOpenRiskFlags` is enforced**, and a refusal escalates
  *    rather than being softened to `proceed_with_conditions`: this code cannot
  *    invent the condition that would make an open risk flag acceptable, and a
@@ -49,13 +52,21 @@ import { noProceedWithOpenRiskFlags } from "../policies/no-proceed-with-open-ris
  */
 export function decideVerifiedTriage(input: VendorTriageDecisionInput): VendorTriageOutput {
   const { triage, verification } = input;
+  // A confident `true`, and nothing else, is support. `band` is `auto` only
+  // when the question's own calibration says the confidence clears its
+  // threshold, so this one condition covers "the evidence does not support it"
+  // and "the harness cannot tell" without conflating them in the rationale.
+  const supported = verification.answer === true && verification.band === "auto";
 
-  if (!verification.supported) {
+  if (!supported) {
     return {
       ...triage,
       recommendation: {
         decision: "escalate",
-        rationale: `The triage's own evidence does not support its conclusion: ${verification.rationale}`,
+        rationale:
+          verification.answer === true
+            ? `The verification answered that the triage's evidence supports it, but only at confidence ${verification.confidence ?? "(none)"} (band \`${verification.band}\`), which this policy does not act on.`
+            : `The triage's own evidence does not support its conclusion (confidence ${verification.confidence ?? "(none)"}, band \`${verification.band}\`, decision ${verification.decisionId}).`,
       },
     };
   }

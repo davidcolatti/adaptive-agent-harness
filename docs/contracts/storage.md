@@ -97,6 +97,8 @@ implementations exist and both run the same contract suite:
 | `listWorkflowVersions(filter?, cursor?)` | **M5.** Versions newest first, filtered and keyset-paged. |
 | `setWorkflowVersionStatus(input)` | **M5.** One transition, applied as a compare-and-set, plus its promotion ledger row. |
 | `listWorkflowPromotions(versionId)` | **M5.** One version's history, oldest first, unpaged. |
+| `saveDecision(record)` | **M3.** Plain insert of one decision's complete evidence. A duplicate `DecisionId` rejects loudly. |
+| `listDecisions(runId)` | **M3.** One run's decisions, oldest first by `id`, unpaged. |
 
 Every method is `async` and rejects with `StorageError` (cause preserved) when
 the store fails, or `ValidationError` when the caller passed something the port
@@ -114,6 +116,10 @@ mid-pagination; a keyset cursor over a sortable id cannot. Both return
 `listWorkflowVersions` pages the same way, newest first, with a `WorkflowVersionId` cursor.
 `listWorkflowPromotions` is the one list that is neither newest-first nor paged: it is the
 narrative of how a version reached its status, and the transition table bounds it.
+
+`listDecisions` is the other unpaged list, and for the same kind of reason: it is one run's
+judgments in the order they were made, and the number of `jev` nodes in a workflow bounds it. A
+`DecisionId` is a sortable UUIDv7, so `id` order **is** that order.
 
 `DEFAULT_RUN_PAGE_SIZE` is 50, `DEFAULT_WORKFLOW_VERSION_PAGE_SIZE` is 50 and
 `DEFAULT_TRACE_PAGE_SIZE` is 500.
@@ -151,7 +157,7 @@ run it.
 | `latencyMs` | `latency_ms` | Measured by the harness clock. |
 | `modelCalls` | `model_calls` | From the execution's usage. |
 | `toolCalls` | `tool_calls` | From the execution's usage. |
-| `jevCalls` | `jev_calls` | **0 until M3**, and a real zero: a run today makes none. |
+| `jevCalls` | `jev_calls` | Decisions the run asked a `DecisionEngine` for, including ones that threw. See below. |
 | `fallbackCount` | `fallback_count` | **0 until M5**, for the same reason. |
 | `humanReview` | `human_review` | **M5/M6.** `null` means not reviewed. |
 | `workflowVersionId` | `workflow_version_id` | **M4.** `null` is also the honest answer for a run that used the full agent. |
@@ -181,6 +187,27 @@ share a fingerprint and nothing else in the record distinguishes them.
 `target` is the application or agent that actually executed, taken from
 `CreateHarnessOptions.target`, and it is on the harness rather than on a run
 because it identifies the deployment rather than the work.
+
+
+### `jev_calls`, and the comment on the column (M3, M5)
+
+`runs.jev_calls` is a **measurement** as of M5. The harness no longer writes a hardcoded `0`: the
+workflow interpreter counts each decision it asks a `jev` node's engine for, the router carries
+that count through both the compiled path and a fallback, summing the workflow's decisions with any
+the full agent made after taking over, and `createHarness()` copies
+`AgentExecution.jevCalls` into `RunFinish`. A runtime that makes no decisions reports none, so `0`
+is now "it made none" rather than "nobody counted".
+
+A call is counted **where `decide()` is invoked**, not derived from the node records afterwards. A
+record's `attempts` counts retries of the whole node, including an attempt that failed input
+validation before any engine was reached, and this column is meant to be what the decision layer
+was asked to do. A call that threw still counts: it was made, and it may well have been paid for.
+
+**The SQL comment on the column still says otherwise.** `supabase/migrations/20260920030258_runs_outcome_ledger.sql`
+describes `jev_calls` as a placeholder that is zero until M3, and migrations are append-only and
+never hand-edited after the fact (AGENTS.md rule 12 and the M2 migration rules), so it cannot be
+corrected in place. This section is the authority; a future migration may restate the comment if
+one is needed for another reason.
 
 ## Where it sits in the harness
 
@@ -360,3 +387,28 @@ than as a half-working setup that fails at the first query.
 - Both **skip with a printed reason** when Supabase is unavailable, rather than
   failing. `pnpm check` must pass on a machine with no Docker, and a suite that
   fails for a missing environment gets ignored.
+
+## `DecisionRecord`: one decision's evidence (M3-T3)
+
+`saveDecision` and `listDecisions` write and read the `decisions` table, which M2-T5 created as a
+minimal keyed placeholder and `20260920205520_decisions_columns.sql` filled. ADR-0045 records the
+model; `decision-engine.md` documents what a record carries and why the two halves are apart.
+
+What matters at the port's level is three rules:
+
+1. **A duplicate id rejects.** A `DecisionId` is minted by the engine when it answers, so the same
+   id twice means either a retry that should not have re-recorded or a collision, and both are
+   facts a caller has to see. Nothing upserts; overwriting a decision would destroy the evidence a
+   replay depends on.
+2. **Reading goes through `parseDecisionRecord()`**, like every other read here. The six columns
+   denormalized out of `result` — `state_fingerprint`, `question_ids`, `model_provider`, `model_id`,
+   `cost_usd`, `latency_ms` — are deliberately **not** read back, for the same reason
+   `workflow_versions.domain_id` is not: they exist so a query can `group by` without opening a JSON
+   document, and reading them instead of the authoritative `result` would make a drifted row look
+   consistent.
+3. **`policy` may be `null`**, and that is a real state rather than a gap. It means no policy
+   consumed the answer.
+
+The `decisions` row and the run's trace join on `run_id`, and a record's `node_id` lines it up with
+the `node.*` and `decision.*` spans of the same run, so `pnpm harness run show` and a `select`
+describe the same judgments.

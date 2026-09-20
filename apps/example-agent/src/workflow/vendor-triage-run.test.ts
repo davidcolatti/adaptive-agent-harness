@@ -14,9 +14,9 @@ import {
 import { createWorkflowRuntime } from "@internal/workflow";
 import { describe, expect, it } from "vitest";
 import { createVendorTriageRegistry } from "../capabilities.js";
+import { createVendorDecisionPort } from "../decisions/index.js";
 import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "../domain/index.js";
 import type { VendorTriageOutput } from "../domain/schemas.js";
-import { createFixtureDecisionPort } from "./fixture-decision-port.js";
 import { compileVendorTriageWorkflow } from "./vendor-triage-workflow.js";
 
 /**
@@ -88,13 +88,16 @@ function createFixture(
     },
   });
   const compiled = compileVendorTriageWorkflow(registry);
+  const storage = createInMemoryStorage();
   const runtime = createWorkflowRuntime({
     registry,
     agentRuntime,
-    decisionEngine: createFixtureDecisionPort(),
+    // M3-T8: the real decision port over the credential-free fixture engine,
+    // and the storage the run already has, so every route's decisions land in
+    // the same in-memory store the run's ledger row does.
+    decisionEngine: createVendorDecisionPort({ storage }),
   });
   const trace = createRecordingTraceWriter();
-  const storage = createInMemoryStorage();
   const harness = createHarness({
     agentRuntime: runtime.asAgentRuntime(compiled),
     trace,
@@ -153,9 +156,9 @@ describe("the `clear` route", () => {
 
     // The domain's own output schema accepted it, which is `createHarness()`'s
     // second validation on top of the node's own.
-    expect(result.output.category).toBe(
-      "Cloud bookkeeping and expense reconciliation for small finance teams.",
-    );
+    // The category a `jev` node decided, in the SOP's own vocabulary (M3-T8),
+    // rather than the fixture's stated offering copied through.
+    expect(result.output.category).toBe("finance and accounting");
     expect(result.output.recommendation.decision).toBe("proceed_with_conditions");
 
     // The whole point of the compiled path: the full agent was never reached.
@@ -221,6 +224,43 @@ describe("the `clear` route", () => {
       "input",
     );
     expect(finalize?.payload).toHaveProperty("output");
+  });
+
+  it("stores one decision record per jev node executed, with its policy outcome (M3-T3)", async () => {
+    const { harness, storage, trace } = createFixture();
+    const result = await harness.run({
+      domain: vendorTriage,
+      input: request("Northwind Ledger"),
+    });
+
+    // The `clear` route executes exactly one `jev` node, so the run has exactly
+    // one decision. This is the count `select count(*) from decisions where
+    // run_id = ...` returns against Supabase on the same route.
+    const decisions = await storage.listDecisions(result.runId);
+
+    expect(decisions).toHaveLength(1);
+    // One stored record per `decision.*` span the runtime opened: the trace and
+    // the table agree about how many judgments this run made, which is what
+    // makes `pnpm harness run show`'s Jev-calls line and the table joinable.
+    expect(trace.events.filter((event) => event.type === "decision.completed")).toHaveLength(1);
+
+    const record = decisions[0];
+
+    expect(record?.nodeId).toBe("classify");
+    // The raw judgment: three answers about the vendor, keyed as the bundle
+    // keyed them, with the distributions the provider reported.
+    expect(Object.keys(record?.result.answers ?? {})).toStrictEqual([
+      "lowRisk",
+      "category",
+      "evidenceSufficient",
+    ]);
+    expect(record?.result.answers.category?.value).toBe("finance and accounting");
+    // The organization's decision about it, beside it and not inside it.
+    expect(record?.policy).toMatchObject({
+      route: "clear",
+      policy: { id: "vendor-triage.route", version: "1.0.0" },
+    });
+    expect(record?.policy?.reasons.length).toBeGreaterThan(0);
   });
 });
 
@@ -325,7 +365,7 @@ describe("the default route", () => {
 
     expect(result.error.code).toBe("WORKFLOW");
     expect(result.error.details?.fallback).toMatchObject({
-      reason: "escalate-node",
+      reason: "unsupported_case",
       workflow: {
         id: "vendor-triage-v1",
         version: "1.0.0",
@@ -360,11 +400,10 @@ describe("the default route", () => {
       readonly completedNodes: readonly { readonly nodeId: string; readonly trusted: boolean }[];
     };
 
-    expect(fallback.completedNodes.map((node) => node.nodeId)).toStrictEqual([
-      "classify",
-      "route",
-      "full-agent",
-    ]);
+    // The `escalate` node ran and its span closed, but it produces a
+    // `FallbackContext` rather than a value, so it is not offered to the agent
+    // as a completed node (M5-T6, ADR-0044).
+    expect(fallback.completedNodes.map((node) => node.nodeId)).toStrictEqual(["classify", "route"]);
     // A `jev` answer is judgment, not established fact, so it is not trusted; a
     // `branch`'s pass-through output is.
     expect(fallback.completedNodes.find((node) => node.nodeId === "classify")?.trusted).toBe(false);
@@ -387,7 +426,7 @@ describe("a failed node", () => {
 
     const fallback = trace.events.find((event) => event.type === "fallback.started");
 
-    expect(fallback?.payload).toMatchObject({ reason: "node-failed", nodeId: "finalize" });
+    expect(fallback?.payload).toMatchObject({ reason: "workflow_error", nodeId: "finalize" });
   });
 });
 

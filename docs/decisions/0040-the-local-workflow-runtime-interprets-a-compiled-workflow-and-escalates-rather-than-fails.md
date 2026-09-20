@@ -199,6 +199,18 @@ The `FallbackReason` is chosen from the closed six: `escalate-node` for an `esca
 escalation raised inside a container node passes through it unchanged rather than being re-wrapped,
 so the reason the node that actually gave up chose is the one that reaches the envelope.
 
+> **Amended by [ADR-0044](0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md)
+> (2026-09-20).** Two statements in this ADR were superseded by M5, and nothing else was. First,
+> the closed six named in the paragraph above are now the build plan's **eight**
+> (`low_confidence`, `unsupported_case`, `missing_evidence`, `budget`, `tool_failure`,
+> `schema_mismatch`, `policy`, `workflow_error`); ADR-0044 carries the cause-to-reason table, and
+> the pass-through rule for a container node is unchanged. Second, **the router, not
+> `asAgentRuntime()`, is the fallback path**: `createRouter()` in `@internal/registry` calls
+> `WorkflowRuntime.run()` directly, reads `result.fallback` and invokes the registered full agent
+> with it. `asAgentRuntime()` keeps its escalated-to-failed mapping for standalone use, where there
+> is no full agent to hand the job to; it is no longer described as a stopgap, because a fallback
+> with nowhere to go is honestly a failed run.
+
 `trusted` on a completed node is decided by **who produced the value**, not by whether it validated —
 everything in `completedNodes` validated, or it would not be there. `code`, `artifact` and every
 control shape are trusted, because they are deterministic harness-side computation over

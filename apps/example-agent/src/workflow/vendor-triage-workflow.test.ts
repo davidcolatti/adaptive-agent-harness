@@ -33,12 +33,17 @@ describe("the vendor-triage workflow definition", () => {
     ]);
   });
 
-  it("routes the three labels the fixture decision port can produce", () => {
+  it("branches on the policy's route, not on the model's answer (M3-T8)", () => {
+    // Before M3 this selected on `["category"]`, because the `classify` node
+    // answered with the route directly. It now selects on `["route"]`: the
+    // node's `answers.category` is a judgment about the **vendor** and `route`
+    // is what the organization's policy decided to do about it, and keeping the
+    // two apart is ADR-0009.
     const route = vendorTriageWorkflowDefinition.nodes.route;
 
     expect(route).toMatchObject({
       type: "branch",
-      on: { kind: "field", path: ["category"] },
+      on: { kind: "field", path: ["route"] },
       cases: { clear: "finalize", research: "research" },
       default: "full-agent",
     });

@@ -1,8 +1,11 @@
 import {
+  type DecisionRecord,
   describeWorkflowCompatibility,
+  fingerprint,
   HARNESS_RUNTIME_INFO,
   type Job,
   MAX_PAGE_SIZE,
+  newDecisionId,
   newJobId,
   newPromotionId,
   newRunId,
@@ -223,6 +226,64 @@ function makeVersion(
     metadata: { suite: "storage-contract" },
     ...overrides,
   };
+}
+
+/**
+ * One decision record, complete enough for every field of the contract to be
+ * exercised.
+ *
+ * The defaults are the *honest* ones a real engine produces: a `choice` answer
+ * with a distribution, a `boolean` answer with none (so `distribution` and
+ * `confidence` are `null` in the same record that has both), and a `costUsd` of
+ * `null`, because the installed evaluation API exposes no cost anywhere.
+ */
+function makeDecision(runId: RunId, overrides: Partial<DecisionRecord> = {}): DecisionRecord {
+  const id = overrides.id ?? newDecisionId();
+  const state = { vendor: "Northwind Ledger", marker: "contract" };
+
+  return {
+    id,
+    runId,
+    nodeId: "classify",
+    result: {
+      decisionId: id,
+      answers: {
+        category: {
+          questionId: "storage-contract.category",
+          questionVersion: "1.0.0",
+          kind: "choice",
+          value: "software",
+          distribution: { software: 0.96, services: 0.03, hardware: 0.01 },
+          confidence: 0.96,
+        },
+        lowRisk: {
+          questionId: "storage-contract.low-risk",
+          questionVersion: "1.0.0",
+          kind: "boolean",
+          value: true,
+          probabilityTrue: 0.88,
+          // No distribution, and therefore no confidence. Both `null` in the
+          // same record whose other answer has both, which is what makes the
+          // round trip prove absence is preserved rather than filled in.
+          distribution: null,
+          confidence: null,
+        },
+      },
+      stateFingerprint: fingerprint(state),
+      model: { provider: "fake", modelId: "fake-decision-engine" },
+      usage: { inputTokens: 120, outputTokens: 8, totalTokens: 128, costUsd: null },
+      latencyMs: 42,
+      providerMetadata: { typesafe: { confidence: 0.91 } },
+      warnings: [],
+    },
+    policy: {
+      route: "clear",
+      policy: { id: "storage-contract.triage", version: "1.0.0" },
+      reasons: ["the category is confident and the vendor is low risk"],
+    },
+    createdAt: new Date("2026-09-20T16:00:00.000Z").toISOString(),
+    ...overrides,
+  } as DecisionRecord;
 }
 
 /**
@@ -690,6 +751,87 @@ function describeStorageContract(name: string, create: () => Storage): void {
       expect(stillRunning.runs.map((run) => run.runId)).toEqual([running.runId]);
     });
 
+    it("filters runs by the compiled workflow version that ran (M5-T7)", async () => {
+      // The circuit breaker's one query: "the last N runs of *this* version".
+      // Paging the whole ledger and filtering in memory would make the window
+      // depend on how busy the rest of the domain has been.
+      const storage = create();
+      const workflow = await storage.saveWorkflow(makeWorkflow());
+      const version = await storage.saveWorkflowVersion(makeVersion(workflow));
+      const job = makeJob(`route-${newJobId()}`);
+
+      await storage.saveJob(job);
+
+      const routed = makeRunStart(job, { attempt: 1, workflowVersionId: version.id });
+      const fullAgent = makeRunStart(job, { attempt: 2, workflowVersionId: null });
+
+      await storage.startRun(routed);
+      await storage.startRun(fullAgent);
+
+      const page = await storage.listRuns({ jobId: job.id, workflowVersionId: version.id });
+
+      expect(page.runs.map((run) => run.runId)).toEqual([routed.runId]);
+    });
+
+    it("records the version that ran and a real Jev count, and leaves an absent field alone", async () => {
+      // `startRun` writes `null`, because the harness does not know which way a
+      // run will go before the runtime speaks. A router reports the version it
+      // chose, and only then; an absent field is not a request to clear it.
+      const storage = create();
+      const workflow = await storage.saveWorkflow(makeWorkflow());
+      const version = await storage.saveWorkflowVersion(makeVersion(workflow));
+      const job = makeJob(`finish-route-${newJobId()}`);
+
+      await storage.saveJob(job);
+
+      const routed = makeRunStart(job, { attempt: 1 });
+      const untouched = makeRunStart(job, { attempt: 2, workflowVersionId: version.id });
+
+      await storage.startRun(routed);
+      await storage.startRun(untouched);
+
+      const outcome = {
+        status: "completed",
+        success: true,
+        costUsd: null,
+        latencyMs: 5,
+        modelCalls: 0,
+        toolCalls: 0,
+        runtime: HARNESS_RUNTIME_INFO,
+        finishedAt: new Date().toISOString(),
+        error: null,
+      } as const;
+
+      const withVersion = await storage.finishRun({
+        ...outcome,
+        runId: routed.runId,
+        fallbackCount: 1,
+        // **Non-zero on purpose.** Every other case in this suite finishes a
+        // run with `jevCalls: 0`, so an implementation that wrote a constant
+        // zero for the column would pass all of them. M5 made this a
+        // measurement rather than a placeholder, and this is the case that
+        // would notice if it stopped being one.
+        jevCalls: 3,
+        workflowVersionId: version.id,
+      });
+      const withoutField = await storage.finishRun({
+        ...outcome,
+        runId: untouched.runId,
+        fallbackCount: 0,
+        jevCalls: 0,
+      });
+
+      expect(withVersion.workflowVersionId).toBe(version.id);
+      expect(withVersion.fallbackCount).toBe(1);
+      expect(withVersion.jevCalls).toBe(3);
+      expect(withoutField.workflowVersionId).toBe(version.id);
+      expect(withoutField.jevCalls).toBe(0);
+
+      // And it round-trips through a fresh read, not only through the record
+      // `finishRun` handed back.
+      expect((await storage.getRun(routed.runId))?.jevCalls).toBe(3);
+    });
+
     it("rejects a page limit above the documented maximum rather than truncating", async () => {
       const storage = create();
 
@@ -1019,6 +1161,131 @@ function describeStorageContract(name: string, create: () => Storage): void {
           })
         ).versions.map((one) => one.id),
       ).not.toContain(version.id);
+    });
+
+    // Decision evidence (M3-T3).
+
+    it("round-trips a decision, including a null distribution, confidence and cost", async () => {
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+
+      const saved = await storage.saveDecision(makeDecision(run.runId));
+      const [read] = await storage.listDecisions(run.runId);
+
+      expect(read).toEqual(saved);
+      expect(read?.id).toBe(saved.id);
+      expect(read?.nodeId).toBe("classify");
+      expect(read?.result.answers.category).toEqual({
+        questionId: "storage-contract.category",
+        questionVersion: "1.0.0",
+        kind: "choice",
+        value: "software",
+        distribution: { software: 0.96, services: 0.03, hardware: 0.01 },
+        confidence: 0.96,
+      });
+      // Absence is recorded rather than filled in, in both places it can occur.
+      expect(read?.result.answers.lowRisk?.distribution).toBeNull();
+      expect(read?.result.answers.lowRisk?.confidence).toBeNull();
+      expect(read?.result.usage.costUsd).toBeNull();
+      // The provider's own statistic is carried verbatim and never adopted as
+      // the harness's confidence.
+      expect(read?.result.providerMetadata).toEqual({ typesafe: { confidence: 0.91 } });
+      expect(read?.policy?.route).toBe("clear");
+      expect(read?.policy?.policy).toEqual({ id: "storage-contract.triage", version: "1.0.0" });
+    });
+
+    it("stores a decision no policy consumed, with a null policy and an intact result", async () => {
+      // Milestone 3's "raw Jev result is stored separately from policy
+      // outcome", proved rather than asserted: the same result stored with and
+      // without a policy round-trips to the same bytes.
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+
+      const withoutPolicy = await storage.saveDecision(makeDecision(run.runId, { policy: null }));
+      const withPolicy = await storage.saveDecision(makeDecision(run.runId));
+
+      expect(withoutPolicy.policy).toBeNull();
+      expect(JSON.stringify(withoutPolicy.result.answers)).toBe(
+        JSON.stringify(withPolicy.result.answers),
+      );
+      expect(withoutPolicy.result.stateFingerprint).toBe(withPolicy.result.stateFingerprint);
+    });
+
+    it("lists a run's decisions oldest first, and only that run's", async () => {
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+      const other = await storage.startRun(makeRunStart(job, { attempt: 2 }));
+
+      const first = await storage.saveDecision(makeDecision(run.runId));
+      const second = await storage.saveDecision(makeDecision(run.runId));
+      await storage.saveDecision(makeDecision(other.runId));
+
+      expect((await storage.listDecisions(run.runId)).map((one) => one.id)).toEqual([
+        first.id,
+        second.id,
+      ]);
+      expect(await storage.listDecisions(other.runId)).toHaveLength(1);
+    });
+
+    it("returns an empty list for a run with no decisions", async () => {
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+
+      expect(await storage.listDecisions(run.runId)).toEqual([]);
+    });
+
+    it("rejects a second decision with the same id, loudly", async () => {
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+
+      const saved = await storage.saveDecision(makeDecision(run.runId));
+
+      await expect(storage.saveDecision(makeDecision(run.runId, { id: saved.id }))).rejects.toThrow(
+        StorageError,
+      );
+    });
+
+    it("rejects a decision whose id and evidence disagree, before it is stored", async () => {
+      // The hand-edited row: a record whose key says one decision and whose
+      // `result` says another is not one decision, and the read boundary is
+      // what says so on the way in as well as on the way out.
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+      const decision = makeDecision(run.runId);
+
+      await expect(
+        storage.saveDecision({
+          ...decision,
+          result: { ...decision.result, decisionId: newDecisionId() },
+        }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("rejects a decision whose stored policy outcome carries no reason", async () => {
+      const storage = create();
+      const job = makeJob();
+      await storage.saveJob(job);
+      const run = await storage.startRun(makeRunStart(job));
+      const decision = makeDecision(run.runId);
+
+      await expect(
+        storage.saveDecision({
+          ...decision,
+          policy: { route: "clear", policy: { id: "p", version: "1.0.0" }, reasons: [] },
+        }),
+      ).rejects.toThrow(ValidationError);
     });
   });
 }

@@ -1,6 +1,7 @@
 # Milestone 3, Jev as a First-Class Decision Primitive
 
-**Status:** in progress. No task has started.
+**Status:** in progress. M3-T1, M3-T2, M3-T4, M3-T5 and M3-T6 are `completed` (Phase A commit
+`df0de79`). M3-T3, M3-T7, M3-T8 and M3-T9 are in progress.
 
 **Goal (from the build plan):** introduce cheap bounded judgment without mixing it with policy.
 Vercel currently exposes Jev through AI Gateway as `typesafe-ai/jev`, and AI SDK 7 exposes
@@ -154,7 +155,7 @@ exactly as `runtime/ports.ts` predicted.
 
 ### M3-T3, Persist complete decision evidence
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Store:
 
@@ -167,6 +168,43 @@ Store:
 - cost
 - latency
 - policy version that consumed the answer
+
+**Result.** A decision's evidence is one `DecisionRecord`
+(`packages/core/src/decision-record.ts`): `{ id, runId, nodeId, result, policy, createdAt }`, where
+`result` is exactly what the engine produced and `policy` is exactly what the organization decided
+about it. All nine items above are reachable from it, and the module's own doc comment states the
+mapping as a table that `decision-record.test.ts > parseDecisionRecord > reaches every item on the
+build plan's evidence list` asserts, so the claim is checkable rather than promised. `cost` is
+`result.usage.costUsd` and is `null` on every row this milestone writes, which is a **measurement**:
+the installed evaluation API exposes no cost anywhere, and an estimate would be indistinguishable
+from a reported number once it was in a column.
+
+**The raw result and the policy outcome are two fields of one record, and two columns of one row.**
+That is the acceptance criterion "raw Jev result is stored separately from policy outcome" turned
+into a schema fact: a policy cannot alter a byte of `result`, and a decision nothing routed stores
+`policy: null` rather than a fabricated route. `parseDecisionRecord()` is the strict read boundary
+in `parseJob()`'s style; three of its checks are the ones a corrupted row fails — `id` must equal
+`result.decisionId`, `stateFingerprint` must be a `sha256:<64 hex>` digest, and a stored
+`PolicyOutcome` must carry at least one reason.
+
+`Storage` gains `saveDecision()` (a plain insert; a duplicate `DecisionId` rejects) and
+`listDecisions(runId)` (oldest first by `id`, unpaged, because a `DecisionId` is a sortable UUIDv7
+and the number of `jev` nodes bounds the list). `supabase/migrations/20260920205520_decisions_columns.sql`
+fills the M2-T5 placeholder the way `..._workflow_registry_columns.sql` filled the registry's: the
+earlier migration untouched, `payload` dropped, and six fields denormalized beside the authoritative
+`result` so cost and latency per question are a `group by`. The read boundary deliberately does not
+read those six, so a drifted row cannot look consistent.
+
+**Persistence happens inside `createDecisionPort()`**, the one place that already turns a `jev` node
+into an engine call; putting it in `workflow-runtime.ts` would make the interpreter depend on
+`Storage` for one node type. A storage failure is a `StorageError` that **fails the node** and is
+not caught: a workflow must not act on a judgment nobody recorded.
+
+**Replay is a pure function with no engine parameter.** `replayDecisions(records, policy)` reads
+only the `result` half of each record and returns each stored outcome beside the one the supplied
+policy produces, plus a summary of changed routes. There is no engine to call, which is the
+strongest available statement of the milestone's third acceptance criterion; a record with
+`policy: null` counts as changed, because nothing routed it before and something routes it now.
 
 ### M3-T4, Policy API
 
@@ -251,7 +289,7 @@ from a `code` node that calls the engine directly.
 
 ### M3-T7, `verify` primitive
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Given:
 
@@ -264,9 +302,40 @@ compile configured fields into Jev questions.
 Failed fields should be able to return to the same logical agent task with explicit repair
 instructions.
 
+**Result.** `compileVerification()` and `readVerification()` live in `packages/core/src/verify.ts`,
+**not** in `@internal/decision-jev`, because composing questions is engine-agnostic: the compiled
+`QuestionSet` goes to the Jev adapter, to the fake engine, or to anything else implementing
+`DecisionEngine`, and in the adapter it could not be tested without a provider.
+
+`compileVerification({ output, outputSchema?, evidence, fields })` produces **one boolean question
+per configured field** over one shared state `{ evidence, output, outputSchema? }` — one state, so
+the whole batch is one call by construction (M3-T6). One question for the whole output would answer
+with one bit for an object with ten fields and give a re-run nothing to act on; per-field questions
+are what make "identify a deliberately unsupported field" mean the *field*. A field the output does
+**not** carry is still asked about, with a question that says so, because a missing required field
+must not be indistinguishable from a supported one.
+
+`readVerification(result, fields)` counts a field as supported when the answer is `true` **and**,
+when the question declares bands, the band is `auto`. A field whose question declares no bands is
+judged by its answer alone: there is no calibration to apply, and inventing one would be exactly the
+global threshold M3-T5 forbids.
+
+The `repair` value is a **sentence**, not a flag, because it is appended to the same logical agent
+task's input: *"The field `recommendation.rationale` (`Audited in 2019.`) is not supported by the
+evidence; cite a source that establishes it, or remove it."* There are three wordings for the three
+failures — the evidence contradicts the value, the evidence supports it only weakly, or the output
+never produced it — because the three need three different fixes.
+
+**Not wired into the vendor workflow.** The workflow's `research` route already ends in a `jev`
+`verify` node followed by `decide-verified-triage`, which is the same shape at the graph level; a
+`verify` step *inside* the `research` node would need the runtime to re-enter a node with a repaired
+input, which is a loop the IR does not express today. M6 owns that: `compileVerification()` produces
+the questions and `readVerification()` produces the instructions, and what is missing is a node type
+that feeds the instructions back, not a primitive.
+
 ### M3-T8, Neutral fixture
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Add Jev to vendor triage:
 
@@ -278,9 +347,45 @@ Is evidence sufficient?
 
 Policy decides whether to continue, research, or escalate.
 
+**Result.** `apps/example-agent/src/decisions/` registers those three questions as one **bundle**,
+`vendor-triage.classify@1.0.0`, which the workflow's `classify` node names. All three are answered
+in **one** Jev call, because they are three questions about one vendor and batching is by shared
+state. `createTriagePolicy()` turns the answers into `clear`, `research` or `uncertain`, and the
+branch now selects on `["route"]` rather than on `["category"]`.
+
+**That rename is the substance of the task, not cosmetics.** Under M4-T10 the `classify` node
+answered `clear | research | uncertain` directly, because the deterministic placeholder standing in
+for Jev had no way to separate the model's judgment from the organization's decision. `category` is
+now the SOP's own five-category list — a judgment about the **vendor** — and `route` is what the
+organization does about it. Keeping them fused would have made M3-T4's policy layer and M3-T6's
+batching decorative in the one fixture that exists to demonstrate them. `finalize` reads
+`answers.category` for the triage output's `category` field, which the domain schema already
+describes as "what the vendor sells, in the SOP's own vocabulary".
+
+The policy's asymmetry is worth naming: a confident `false` on `low-risk` routes to `research`,
+because it is a judgment that the case needs reading; an **unconfident** answer routes to
+`uncertain`, because sending a case to an agent that already said it does not know is not a plan.
+
+The `verify` node names a bare question with **no** policy, so its record stores `policy: null`.
+Two decisions in one `research` run, one routed and one not, is the clearest demonstration in the
+repository that the two halves really are stored apart.
+
+`resolveDecisionEngine()` returns live Jev (`typesafe-ai/jev` through the AI Gateway) when
+`AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` is set and a deterministic fixture engine otherwise, and
+`src/run.ts` prints which on stderr. The fixture engine derives a script per call from the frozen
+vendor evidence using the **exact** rules M4-T10's placeholder used, and runs it through
+`createFakeDecisionEngine()`, so the answers go through the same validation and the same
+`deriveConfidence()` a real adapter's do and the three demo routes still hold with no credential.
+`createFixtureDecisionPort()` and its test are deleted.
+
+One rule did have to change: the placeholder matched category terms against the whole evidence text,
+and the freight vendor's evidence contains an invoice dispute, which would have filed a freight
+forwarder under finance. The category is now read from the vendor's **stated offering** first and
+from its documents only as a fallback, which is the question the SOP actually asks.
+
 ### M3-T9, Calibration fixture
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Create a small labeled set.
 
@@ -292,14 +397,121 @@ Report:
 - false-auto rate
 - fallback rate
 
+**Result.** `runCalibration({ engine, questions, policy, cases, primary, fallbackRoute })` and
+`renderCalibrationReport()` live in `src/decisions/calibration.ts`, and
+`pnpm --filter @internal/example-agent run calibrate` prints the report. The five metrics are
+**defined once**, in the module's own doc comment, so a number in a report is not open to
+interpretation.
+
+**The false-auto rate is the one that matters, and it excludes fallbacks deliberately**: it counts
+the cases whose primary answer landed in `auto`, whose route was **not** the fallback, and whose
+route was wrong. Falling back is not acting, so raising a threshold can cost accuracy but can never
+raise this number. For the same reason the report refuses to combine accuracy and fallback rate into
+a single score: falling back is the safe outcome and being confidently wrong is not, and a reader
+comparing two threshold sets has to watch the two move against each other. A test asserts exactly
+that trade by raising the category threshold above what the engine can produce.
+
+**Three cases would have said nothing.** `calibration-cases.ts` adds eleven synthetic vendors to the
+three frozen ones — one complete vendor in each SOP category, and one missing each of the SOP's
+requirements, including the payment-integrity flag — for sixteen labeled cases: seven `clear`, seven
+`research`, two `uncertain`. The three frozen records are unchanged, so a calibration run and a demo
+run see the same evidence for the same vendor. The labels are what a careful reviewer would decide,
+not what the engine happens to do; a label copied from the engine would make the accuracy number
+meaningless.
+
 ## Acceptance criteria
 
-From the build plan.
+From the build plan. Evidence is dated and cites the test by file > title, or the run id and table
+count it was observed on.
 
-- Jev can route at least one example-agent decision. **not yet verified**
-- Raw Jev result is stored separately from policy outcome. **not yet verified**
-- Changing a policy threshold can replay stored decisions without rerunning Jev. **not yet verified**
-- A Jev failure escalates safely rather than silently guessing. **not yet verified**
-- Verification can identify a deliberately unsupported field. **not yet verified**
-- Decision tests use fake engines by default; live Jev tests are explicitly tagged. **not yet verified**
-- Live-provider tests do not run on normal pre-commit. **not yet verified**
+### Jev can route at least one example-agent decision — **verified (2026-09-20)**
+
+Three real runs of the vendor workflow through `createHarness()` against local Supabase, each
+routed by `vendor-triage.route@1.0.0` reading a decision the engine produced:
+
+| Vendor | Run id | Route | `decisions` rows |
+| --- | --- | --- | --- |
+| Northwind Ledger | `01a0c0ad-359e-7001-a2d9-73515254a721` | `clear` | 1 |
+| Tessellate Analytics | `01a0c0ad-5b44-7001-afc3-e5a721f3ca9f` | `research` | 2 |
+| Aurelia Freight | `01a0c0ad-6d8a-7001-bb78-03c5bcedc8e7` | `uncertain` (escalation) | 1 |
+
+The row count is the number of `jev` nodes each route executes.
+`select policy->>'route' from decisions where run_id = ...` returns `clear`, `research` and
+`uncertain` respectively. In tests: `apps/example-agent/src/decisions/engine.test.ts >
+createVendorDecisionEngine > keeps the three demo routes the M4-T10 placeholder produced`, and
+`apps/example-agent/src/workflow/vendor-triage-run.test.ts > the `clear` route > stores one decision
+record per jev node executed, with its policy outcome (M3-T3)`.
+
+The engine was the deterministic fixture one, because no model credential exists on this host. What
+that proves is the harness path — question, batch, policy, band, persistence, route — end to end;
+what it does not prove is a model's judgment, which is the tagged live test's job.
+
+### Raw Jev result is stored separately from policy outcome — **verified (2026-09-20)**
+
+They are two fields of one record and two `jsonb` columns of one row
+(`supabase/migrations/20260920205520_decisions_columns.sql`). Proved three ways:
+
+- `packages/workflow/src/runtime/decision-port.test.ts > createDecisionPort: persistence (M3-T3) >
+  stores `policy: null` when nothing routed the answer, with identical result bytes` — the same
+  script through a policied and an unpolicied entry produces byte-identical `answers` and the same
+  `stateFingerprint`; only `policy` differs.
+- `packages/storage-supabase/src/storage.contract.test.ts > stores a decision no policy consumed,
+  with a null policy and an intact result`, run against **both** the in-memory and the real Supabase
+  implementation.
+- On a real run: `01a0c0ad-5b44-7001-afc3-e5a721f3ca9f` has two rows, `classify` with
+  `policy->>'route' = 'research'` and `verify` with `policy is null`.
+
+### Changing a policy threshold can replay stored decisions without rerunning Jev — **verified (2026-09-20)**
+
+`replayDecisions(records, policy)` takes **no engine parameter**, so there is nothing to call.
+
+- `packages/core/src/decision-record.test.ts > replayDecisions > re-routes stored evidence through
+  a tightened threshold with no engine`, and `> leaves every stored record untouched`. The whole
+  file constructs no `DecisionEngine`.
+- End to end, including the store:
+  `packages/workflow/src/runtime/decision-port.test.ts > createDecisionPort: persistence (M3-T3) >
+  replays stored decisions through a tightened policy with no further engine call` — it decides
+  once, reads the record back out of the store, replays it, and asserts that `engine.calls.length`
+  did not move and that the route changed from `clear` to `uncertain`.
+- At the fixture's level: `apps/example-agent/src/decisions/triage-policy.test.ts > re-routes a JSON
+  round trip of a stored result, with no engine anywhere`.
+
+### A Jev failure escalates safely rather than silently guessing — **verified (2026-09-20)**
+
+- `packages/workflow/src/runtime/decision-port.test.ts > createDecisionPort failure semantics`:
+  an engine failure comes out as a `DecisionError`, and an unregistered reference or a mismatched
+  `questionKind` is refused **before** the engine is called (`engine.calls` is empty).
+- `packages/workflow/src/runtime/decision-port.test.ts > createDecisionPort: persistence (M3-T3) >
+  fails the node when the store fails, rather than continuing unrecorded` — the storage half of the
+  same rule: a decision nobody recorded does not become a decision the workflow acted on.
+- The runtime turns any of these into `decision.failed` and then into an escalation, which M4's own
+  suite already covers.
+
+### Verification can identify a deliberately unsupported field — **verified (2026-09-20)**
+
+`packages/core/src/verify.test.ts > readVerification > identifies a deliberately unsupported field
+and leaves the supported one alone`: an output whose `recommendation.rationale` claims *"Audited in
+2019."* against evidence that says only *"SOC 2 Type II, renewed annually"* is reported as
+unsupported, `category` is not, and the repair instruction is the exact sentence a re-run can be
+given. `> applies the field's bands: a weakly supported `true` is not support` covers the banded
+case, and `> asks a missing field to be produced, not cited` the absent one.
+
+### Decision tests use fake engines by default; live Jev tests are explicitly tagged — **verified (2026-09-20)**
+
+Every decision test in the repository runs against `createFakeDecisionEngine()` from
+`@internal/testing`, or against `Experimental_EvaluationMockModelV4` from `ai/test` inside the
+adapter's own unit tests, or against no engine at all. Two files are tagged `live:jev` and are the
+only ones that would call a provider:
+
+- `packages/decision-jev/src/jev-decision-engine.integration.test.ts` (M3-T2)
+- `apps/example-agent/src/decisions/live-jev.integration.test.ts` (M3-T8/M3-T9)
+
+Both skip with a printed reason when neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set,
+and **neither has been run against a live model**, because no credential exists on this host.
+
+### Live-provider tests do not run on normal pre-commit — **verified (2026-09-20)**
+
+Both files are named `*.integration.test.ts`, which `vitest.config.ts` assigns to the `integration`
+project and excludes from `unit` by suffix. `pnpm check` runs `pnpm test`, and `.husky/pre-commit`
+runs the `unit` layer, so neither file is reachable from a commit. Observed: `pnpm vitest run
+--project unit --project contract` (2026-09-20) collected 78 files and neither of the two.

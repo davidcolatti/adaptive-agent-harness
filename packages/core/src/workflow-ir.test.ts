@@ -910,9 +910,21 @@ describe("the IR's closed vocabularies", () => {
     }
   });
 
-  it("names six fallback reasons", () => {
-    expect(FALLBACK_REASONS).toHaveLength(6);
-    expect(FALLBACK_REASONS).toContain("escalate-node");
+  it("names the build plan's eight fallback reasons, in its order", () => {
+    // The list M5-T4 states, reconciled with M4's six mechanical stop reasons
+    // in ADR-0044. The order is asserted as well as the membership, because
+    // `FALLBACK_REASONS` is a closed vocabulary that a stored reason, an
+    // aggregate and a database check constraint all read.
+    expect([...FALLBACK_REASONS]).toEqual([
+      "low_confidence",
+      "unsupported_case",
+      "missing_evidence",
+      "budget",
+      "tool_failure",
+      "schema_mismatch",
+      "policy",
+      "workflow_error",
+    ]);
   });
 
   it("accepts the node ids a workflow actually uses", () => {

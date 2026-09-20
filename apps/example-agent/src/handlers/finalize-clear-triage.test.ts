@@ -17,27 +17,48 @@ import { finalizeClearTriage } from "./finalize-clear-triage.js";
  * output turns a deterministic route into an escalation.
  */
 
-/** A classification of the shape the `clear` route carries. */
-function classification(vendorName: string): VendorTriageClassification {
+/**
+ * A classification of the shape the `clear` route carries (M3-T8).
+ *
+ * The `jev` node's output is now a judgment plus the policy's route rather than
+ * prose: `answers.category` is the SOP category the `vendor-triage.category`
+ * question chose, and `route` is what the policy decided to do about it.
+ */
+function classification(
+  category = "finance and accounting",
+  route: string | null = "clear",
+): VendorTriageClassification {
   return {
-    category: "clear",
-    rationale: `The frozen evidence for ${vendorName} carries no indicator that needs a model's reading.`,
-    vendorName,
+    answer: category,
+    confidence: 0.95,
+    band: "auto",
+    distribution: { [category]: 0.95 },
+    decisionId: "01a0c0a0-3d14-7000-8bad-000000000001",
+    route,
+    reasons: [
+      "the vendor is confidently low risk (0.94) and the evidence is confidently sufficient (0.92)",
+    ],
+    answers: { lowRisk: true, category, evidenceSufficient: true },
   };
 }
 
 /** The composite input the workflow's `object` binding builds. */
-function finalizeInput(vendorName: string): VendorTriageFinalizeInput {
+function finalizeInput(
+  vendorName: string,
+  category = "finance and accounting",
+): VendorTriageFinalizeInput {
   return {
-    classification: classification(vendorName),
+    classification: classification(category),
     request: { vendorName, procurementSop: PROCUREMENT_SOP },
   };
 }
 
 describe("finalizeClearTriage", () => {
-  it("categorizes a vendor by what its own evidence says it sells", () => {
+  it("categorizes a vendor by the category the decision chose, in the SOP's vocabulary", () => {
+    // Since M3-T8 the category is a **judgment** carried on the classification,
+    // not a string lifted out of the fixture's stated offering.
     expect(finalizeClearTriage(finalizeInput("Northwind Ledger")).category).toBe(
-      "Cloud bookkeeping and expense reconciliation for small finance teams.",
+      "finance and accounting",
     );
   });
 

@@ -166,6 +166,91 @@ describe("EveAgentRuntime against a real eve server", () => {
   );
 
   it(
+    "sends a fallback envelope as turn-scoped clientContext a real server accepts (M5-T6)",
+    async () => {
+      if (server === undefined) {
+        throw new Error("the fixture server did not start");
+      }
+
+      // The real `Client`, wrapped in the seam the adapter already takes, so
+      // the exact `sessions.create()` input that crossed the wire can be read
+      // back. eve exposes no way to ask a running server what a turn's
+      // `clientContext` was — it is ephemeral by design and never persisted to
+      // durable session history — so the request is the observable, and the
+      // server accepting the turn is the other half of the proof.
+      const real = new Client({ host: server.host });
+      const created: { readonly clientContext?: unknown }[] = [];
+      const recording: EveClientLike = {
+        health: () => real.health(),
+        sessions: {
+          create: async (input) => {
+            created.push(input);
+
+            return await real.sessions.create(input);
+          },
+        },
+      };
+
+      const execution = await new EveAgentRuntime({
+        client: recording,
+        domains: [{ id: DOMAIN.id, version: DOMAIN.version, outputSchema }],
+      }).run(
+        createJob("Produce a fixture verdict."),
+        createExecutionContext({
+          runId: newRunId(),
+          jobId: newJobId(),
+          domain: DOMAIN,
+          permissions: [{ toolId: "echo_fixture", mode: "read" }],
+          fallback: {
+            reason: "unsupported_case",
+            detail: "the compiled path has no route it can justify",
+            nodeId: "full-agent",
+            workflow: { id: "fixture-workflow", version: "1.0.0", fingerprint: "sha256:abc" },
+            completedNodes: [
+              {
+                nodeId: "classify",
+                outputRef: "node:classify",
+                trusted: true,
+                output: { category: "logistics", confidence: 0.91 },
+              },
+            ],
+            evidenceRefs: [],
+            remainingBudget: { maxModelCalls: 4 },
+          },
+        }),
+      );
+
+      // The envelope travelled on the documented surface, beside the job.
+      expect(created).toHaveLength(1);
+      expect(created[0]?.clientContext).toMatchObject({
+        jobType: "fixture-contract",
+        harness: {
+          fallback: {
+            reason: "unsupported_case",
+            nodeId: "full-agent",
+            completedNodes: [
+              {
+                nodeId: "classify",
+                outputRef: "node:classify",
+                trusted: true,
+                // The evidence itself crossed the wire, not only its
+                // reference: a model cannot dereference `node:classify`.
+                output: { category: "logistics", confidence: 0.91 },
+              },
+            ],
+          },
+        },
+      });
+      // And a real eve server accepted the turn with it: `clientContext` is
+      // typed `string | readonly string[] | JsonObject`
+      // (`eve/dist/src/protocol/message.d.ts`), and a nested object is a
+      // `JsonObject`.
+      expect(execution.status === "failed" ? execution.error : execution.status).toBe("completed");
+    },
+    TURN_TIMEOUT_MS,
+  );
+
+  it(
     "counts a real tool-call round trip and still produces structured output",
     async () => {
       const context = createExecutionContext({

@@ -31,6 +31,24 @@ makes the committed history stop describing any database that ever existed. What
 mean is [ADR-0043](../../docs/decisions/0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md)
 and [`../../docs/contracts/workflow-registry.md`](../../docs/contracts/workflow-registry.md).
 
+## What M3 added
+
+One further migration fills the `decisions` table the M2 file created as a minimal keyed
+placeholder:
+
+| Migration | Tables |
+| --- | --- |
+| `..._decisions_columns.sql` | `decisions` (real columns; the `payload jsonb` placeholder dropped) |
+
+Its two `jsonb` columns are the point: `result` is exactly what the engine produced and `policy` is
+exactly what the organization decided about it, so a policy can never alter the judgment it
+consumed, and a changed threshold can be replayed against stored evidence without calling Jev
+again. Six further columns are denormalized out of `result` so that cost and latency per question
+are a `group by`; the read boundary deliberately ignores them, so a drifted row cannot look
+consistent. What they mean is
+[ADR-0045](../../docs/decisions/0045-decision-evidence-is-one-record-with-the-raw-result-and-the-policy-outcome-apart.md)
+and [`../../docs/contracts/decision-engine.md`](../../docs/contracts/decision-engine.md).
+
 The workflow tables come before `runs` because the ledger carries a `workflow_version_id` foreign
 key, and the CLI's timestamps are second-resolution, so two migrations created in the same second
 sort by name instead. If you create several at once, check the resulting order rather than assuming

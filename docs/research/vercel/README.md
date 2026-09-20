@@ -37,4 +37,16 @@ convention `docs/research/vercel/YYYY-MM-DD-<slug>.md` and covering findings abo
   implementation because the types leave them open, batching by shared state, and the explicit list
   of what Milestone 3 must own because the API does not provide it.
 
+- [`2026-09-20-m5-eve-client-context-for-fallback.md`](2026-09-20-m5-eve-client-context-for-fallback.md):
+  the M5-T6 research checkpoint, answering which documented eve surface carries a fallback envelope
+  to a full agent. Records that the turn's `clientContext` is the one: an object is JSON-serialized
+  into a single user-role context message that is present on every model call of the turn and then
+  discarded, and is never persisted to durable session history, which is exactly a one-shot
+  escalation's lifetime. Covers the wire type
+  (`string | readonly string[] | JsonObject`), the constraint that message-free session creation
+  accepts no turn-scoped `clientContext`, the absence of any documented size limit in 0.63.0, which
+  parts are therefore harness-owned (the `harness.fallback` key and the envelope's shape), and the
+  four rejected alternatives — the message text, user-role instructions, the sandbox workspace and
+  session state — each with the installed-doc sentence that rules it out.
+
 The Workflow SDK and `@vercel/sandbox` are still not installed, so no note covers them yet.

@@ -1,6 +1,7 @@
 # Milestone 5, Workflow Registry, Router, and Fallback
 
-**Status:** in progress. No task has started.
+**Status:** in progress. M5-T1 and M5-T2 are `completed` (Phase A commit `df0de79`). M5-T3
+through M5-T7 are in progress.
 
 **Goal (from the build plan):** choose between a proven compiled workflow and the full agent.
 
@@ -146,7 +147,7 @@ reason and the tie-break are unit-tested with no database
 
 ### M5-T3, Router
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Initial routing is deterministic.
 
@@ -158,9 +159,33 @@ compatible active workflow?
 
 Do not use an LLM to decide whether a known workflow exists.
 
+**Result.** `createRouter()` in `packages/registry/src/router.ts` returns something that **is** an
+`AgentRuntime` and additionally exposes `route(job)`, so `createHarness({ agentRuntime: router })`
+needs no new option and `createHarness()`'s own contract did not change — that is how "the same
+harness call can execute either workflow or full agent" is satisfied without core learning about
+workflow versions, which it could not do anyway since `registry` sits beneath `core` in the
+dependency diagram. `run()` calls `registry.resolve(job, { manifest, harnessVersion,
+sopFingerprint? })`; a `match` compiles the stored IR (cached by version id) and runs it through
+`workflowRuntime.run()`, a `none` goes straight to the registered full agent. The router takes the
+domain's **`CapabilityRegistry`**, not a manifest, because it is the only thing that needs both
+halves: the selector compares pins against `capabilities.toManifest()` and `compileWorkflow()`
+resolves them to real values, so a router given only a manifest could choose a workflow it cannot
+run. **Compilation is cached; routing is not** — the active version is re-resolved on every run,
+which is what makes a retirement take effect with nothing to invalidate. There is no model
+anywhere in the decision. `RouteDecision` reports the chosen version, every candidate rejection,
+and a `refusal` when a matched version was refused by an optional circuit breaker or failed to
+compile. Every execution carries `route`, `workflowVersionId`, `workflowId`, `workflowVersion` and
+`rejections` in `AgentExecution.metadata`, plus `workflowVersionId` and `fallbackCount` as fields
+of their own — **not** metadata, because they are ledger columns and two runtimes must not be free
+to spell them differently. `createHarness()` copies those into `RunFinish`, both `Storage`
+implementations write them, and the inspector's `route:` line therefore prints a version id with
+no inspector change. Recorded in
+[ADR-0044](../decisions/0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md),
+documented in [`../contracts/workflow-registry.md`](../contracts/workflow-registry.md).
+
 ### M5-T4, Fallback contract
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Every compiled execution can return:
 
@@ -183,9 +208,28 @@ policy
 workflow_error
 ```
 
+**Result.** `FallbackReason` in `packages/core/src/workflow-ir.ts` is now exactly these eight, in
+this order, and M4's six are gone rather than kept beside them: two closed vocabularies for one
+stored field is the text-matching problem a closed union exists to prevent. The reconciliation the
+"Before starting" section called for is an explicit mapping in
+`escalationReasonFor(cause, nodeType)`: an `escalate` node is `unsupported_case`, a budget or a
+node timeout is `budget`, a `ValidationError` at a node or at the workflow's own contract is
+`schema_mismatch`, a `PermissionDeniedError` is `policy`, an exhausted `call` node is
+`tool_failure`, and anything else that exhausted its retries — including a `jev` node whose engine
+produced no usable answer — is `workflow_error`. **`low_confidence` and `missing_evidence` are
+deliberately unreachable from the interpreter**: they are policy outcomes, and a decision that
+could not be obtained at all is not a low-confidence one, because no judgment was made. M3's policy
+layer is what raises them. The IR is unchanged: an `escalate` node's authored free text becomes the
+envelope's new `detail` field, which nothing compares, beside a new `nodeId` that is `null` when
+the workflow itself stopped. `WorkflowRunResult`'s four cases carry the plan's three outcomes —
+`completed` is `success`, `escalated` is `fallback(reason)`, `failed` is `failure`, and `aborted`
+belongs to none of them — and the correspondence is stated in
+[`../contracts/workflow-ir.md`](../contracts/workflow-ir.md). ADR-0040 carries a dated amendment
+note rather than a rewrite.
+
 ### M5-T5, Full-agent escalation
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Fallback should preserve:
 
@@ -197,9 +241,23 @@ Fallback should preserve:
 The full agent should not blindly repeat completed research if trustworthy evidence already
 exists.
 
+**Result.** When `workflowRuntime.run()` returns `escalated`, the **router** — not
+`asAgentRuntime()` — invokes the registered full agent with the original immutable `Job` and a
+context carrying the envelope. `asAgentRuntime()` keeps its escalated-to-failed mapping for
+standalone use, and its doc comment and ADR-0040's amendment now say plainly that it is the honest
+record of a fallback with nowhere to go rather than a stopgap: a run driven that way shows
+`fallback.started` with no `fallback.completed`. The interpreter records `fallback.started`
+because only it knows why the path stopped, and now returns that event's id as
+`EscalatedWorkflowRun.fallbackSpanId`; the router records `fallback.completed` because only it
+knows what happened next. The execution the router returns is the agent's own outcome with the
+**whole** attempt's usage — the workflow's plus the agent's — because reporting only the second
+half would make the compiled path look free every time it gave up, and with `fallbackCount: 1` and
+the `workflowVersionId` that gave up, so the ledger can tell a fallback from a workflow that
+answered on its own.
+
 ### M5-T6, Fallback context handoff
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 Construct `FallbackContext` from persisted node outputs and evidence references.
 
@@ -215,22 +273,142 @@ Rules:
 Add an integration test proving the full agent can consume already completed research without the
 harness repeating the research tool call.
 
+**Result.** All six rules hold and each is asserted. `trusted` keeps ADR-0040's rule unchanged —
+`code`, `artifact` and every control shape are trusted, a `read-only` `call` is trusted, and
+`agent`, `jev` and every write `call` are not — and the build plan's "only successfully validated
+node outputs may be marked `trusted`" is the necessary condition that rule refines: a failed or
+partial node is not listed at all, and an `escalate` node is not listed either, because it produces
+a `FallbackContext` rather than a value and an `outputRef` pointing at nothing would be worse than
+an omission. `evidenceRefs` now carries `artifact:<id>` for every `artifact` node the run
+completed, read off the node's own validated output.
+
+**Each completed node carries its validated output inline**, in a new
+`output: JsonValue | null` beside `outputRef`. This is a deliberate deviation from build plan
+section 5, which names only the reference: that shape assumes the recipient can dereference a
+pointer, and across the only channel a fallback has — the adapter's documented context surface —
+it cannot, because what receives the envelope is a model rather than a process holding a `Storage`
+handle. An envelope of references alone would have made M5-T5 unachievable in principle, and would
+have left `instructions.md` telling the agent to reuse results it could not see. The reference
+survives beside the value for a reader that does have the trace or the store. Outputs are carried
+for **every** listed node, untrusted ones included, because everything in `completedNodes`
+validated or it would not be listed, and withholding an `agent` node's result would withhold
+exactly the expensive thing the fallback exists to reuse; `trusted` governs how a value may be
+used, not whether it is shown. The interpreter leaves the outputs `null` and the **router** fills
+them from the run's records, so `asAgentRuntime()`'s error payload stays lean and the size budget
+is applied once. That budget is `FALLBACK_ENVELOPE_MAX_BYTES`, 64 KiB and harness-chosen, because
+eve documents no limit for `clientContext` and an undocumented limit is not an absent one; over it,
+the largest outputs drop to `null` first, `outputRef` and `trusted` survive, and `detail` names
+what was dropped. The original `Job` is handed over untouched;
+everything the fallback adds lives in a new optional `ExecutionContext.fallback`, because a job is
+immutable and describes *what* to do while a context describes *this attempt*. The remaining budget
+is recalculated **in the router, immediately before the agent is invoked** — the job's budget minus
+what the workflow actually spent, floored at zero per dimension, with an absent dimension left
+absent — and the context the agent runs under carries that budget, not the job's. The documented
+runtime boundary is eve's turn-scoped `clientContext`: `EveAgentRuntime` adds the envelope under a
+`harness.fallback` key beside the job it already sends there, which eve's shipped docs establish
+is JSON-serialized into one context message that every model call of the turn sees and that is
+discarded before the next turn and never persisted to durable session history. The transport is
+eve's; the key and the shape under it are harness-owned, and the envelope carries references and
+flags only, never node output, so an escalation cannot put an unredacted tool result into a prompt
+(`../research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`). The trace link is one
+span: the agent runs against the same recorder reporting `fallback.started` as its `rootId`, so its
+whole `agent.*` subtree hangs under the escalation, and `fallback.completed` closes it — one
+recorder and one sequence per run throughout (ADR-0031).
+`apps/example-agent/agent/instructions.md` gained a paragraph telling the agent to build on a
+trusted completed node rather than calling `lookup_vendor_evidence` again;
+`pnpm --filter @internal/example-agent exec eve info` reports 0 errors, 0 warnings.
+
 ### M5-T7, Circuit breaker
 
-**Status:** not started.
+**Status:** completed (2026-09-20).
 
 If an active workflow exceeds configured failure/fallback thresholds over a rolling local
 evaluation window, disable routing to it.
 
 Initial version can require manual invocation.
 
+**Result.** `createCircuitBreaker({ storage, registry, window: { runs }, thresholds })` in
+`packages/registry/src/circuit-breaker.ts`. `evaluate(versionId)` reads that version's most recent
+runs through a new `RunFilter.workflowVersionId` — implemented by both `Storage` implementations,
+so "the last N runs of this version" is one indexed keyset range rather than a scan of the whole
+ledger — and returns `{ tripped, fallbackRate, failureRate, sample }`. Only **finished** runs are
+evidence: a `running` run has no outcome yet and an `aborted` run is evidence about its caller, and
+an empty sample never trips, because an untried workflow is not a failing one and `0/0` is not `1`.
+The window is a count of runs rather than a span of time, because a workflow that runs twice a day
+and one that runs twice a minute need the same number of observations before anyone should conclude
+anything about either. `trip(versionId, { actor, reason })` retires the version through the
+registry and therefore appends a promotion row naming whose decision it was; **nothing calls it on
+a timer**, which is AD-005 kept structural, and the build plan's "initial version can require
+manual invocation" taken literally. Disabling routing needs no cache invalidation because the
+router re-resolves per run, which is the same mechanism that makes the retirement acceptance
+criterion true. `createRouter({ breaker })` is an optional seam that refuses *traffic* to a tripped
+version without changing its status — the reversible half of the same idea.
+
+**Not built, deliberately:** `pnpm harness workflow list`. M5-T1 gave the `Storage` port
+`listWorkflowVersions()`, so the data exists, but the command needs a new parsed command shape, two
+filter flags, a renderer and its own tests in `@internal/observability`, which is not the "small
+addition" the task made it conditional on. The CLI's target list now marks it
+`not yet implemented (M5 landed the storage read)` rather than `(M4)`, so the marker is accurate
+about where it stands.
+
 ## Acceptance criteria
 
-From the build plan.
+From the build plan. Every line below was verified on **2026-09-20** against the code in this
+working tree; run ids are from local Supabase.
 
-- Same harness call can execute either workflow or full agent. **not yet verified**
-- Unsupported jobs never force-fit into a workflow. **not yet verified**
-- Fallback reaches the full agent with accumulated context. **not yet verified**
-- Workflow failure does not mark the job successful. **not yet verified**
-- Retiring an active workflow immediately returns traffic to the full agent. **not yet verified**
-- Registry lookup is deterministic and unit-tested. **not yet verified**
+- **Same harness call can execute either workflow or full agent.** Verified. `createRouter()` is an
+  `AgentRuntime`, so `createHarness({ agentRuntime: router, trace, storage })` is the one call.
+  Three runs of the **same** command differ only in their input and their flags:
+  `pnpm example:run:mock -- --workflow` completed through the compiled workflow
+  (`01a0c0ac-0454-7001-a5f7-00f6684b00b4`, `pnpm harness run show` prints
+  `route: 01a0c0ac-042d-7000-976e-ca5b4edf0bbf`, `fallbacks: 0`);
+  `… --vendor "Aurelia Freight"` completed through the full agent after escalating
+  (`01a0c0ac-5ac4-7001-9a3b-be76b059b7ab`, same `route:`, `fallbacks: 1`);
+  `… --no-register-workflow` completed through the full agent directly
+  (`01a0c0ac-e6c3-7001-99eb-82bd70a9964b`, `route: full-agent`, `fallbacks: 0`). Unit coverage:
+  `packages/registry/src/router.test.ts` > "routes to the compiled workflow when an active
+  compatible version exists" and "routes to the full agent when the registry holds nothing at all".
+- **Unsupported jobs never force-fit into a workflow.** Verified. An exact-match selector has no
+  nearest neighbour: `router.test.ts` > "never force-fits an unsupported job into a workflow, and
+  says why" (a job type no active version declares) and "reports the selector's rejections when an
+  active version is incompatible" (an input contract mismatch, reported as
+  `input-schema-mismatch` in `RouteDecision.rejections` and in the execution's metadata). End to
+  end: run `01a0c0ac-e6c3-7001-99eb-82bd70a9964b` has `workflow_version_id = null`.
+- **Fallback reaches the full agent with accumulated context.** Verified. M5-T6's required
+  integration test is `apps/example-agent/src/workflow/vendor-triage-fallback.test.ts` — the real
+  domain, the real compiled workflow, the real router, the whole `createHarness()` path — with
+  nine cases. "reaches the full agent with the research the workflow already completed" asserts the
+  agent received `context.fallback` with `reason: "workflow_error"`, `nodeId: "decide"`, the
+  workflow's id and version, and `node:research` among `completedNodes`; "does not repeat the
+  research tool call" asserts exactly **one** `tool.started` and one `tool.completed` in the whole
+  trace, both from the workflow, and `agent.started` twice with distinguishable payloads;
+  "recalculates the remaining budget before the agent is invoked" asserts
+  `maxModelCalls` 8 → 4 and `maxToolCalls` 8 → 7; "links the compiled run span to the fallback agent
+  execution" asserts the agent's `agent.started` and the `fallback.completed` are both children of
+  the `fallback.started` event. End to end, run `01a0c0ac-5ac4-7001-9a3b-be76b059b7ab`'s timeline
+  is `node.completed` (the escalate node) → `fallback.started` → `agent.started` → `model.started`
+  → `model.completed` → `agent.completed` → `fallback.completed` → `run.completed`, at sequences 8
+  through 15, and its ledger row carries `fallback_count = 1`.
+- **Workflow failure does not mark the job successful.** Verified. The router maps a
+  `FailedWorkflowRun` to a failed execution and never escalates it, because a defect is not a
+  fallback condition: `router.test.ts` > "reports a workflow defect as a failure, and never
+  escalates it" (`fallbackCount: 0`, `status: "failed"`, the version id still recorded). A failed
+  *fallback agent* also fails the run: "reports a failed fallback agent as a failure". M4's
+  existing evidence that an escalated run is not reported as completed is unchanged
+  (`vendor-triage-run.test.ts`).
+- **Retiring an active workflow immediately returns traffic to the full agent.** Verified, with no
+  invalidation call in between, because the router re-resolves per run and has no routing cache:
+  `router.test.ts` > "returns traffic to the full agent the moment an active version is retired"
+  routes the same job to the workflow, retires the version, and routes the next one to the full
+  agent through the **same router instance**. The whole-path version is
+  `vendor-triage-fallback.test.ts` > "routes straight to the full agent and leaves the workflow
+  column null", which retires the active version mid-fixture and asserts
+  `workflowVersionId: null` on the ledger row. `createCircuitBreaker().trip()` is what an operator
+  calls to do this from evidence (`circuit-breaker.test.ts` > "retires the version through the
+  registry, with an actor and a reason").
+- **Registry lookup is deterministic and unit-tested.** Verified. The decision is
+  `selectCompatibleWorkflow()`, a pure function with nine ordered checks and a stated tie-break
+  (M5-T2, `packages/core/src/workflow-registry.test.ts`), and the router adds no non-determinism:
+  `router.test.ts` > "is deterministic: the same job and registry decide the same way every time"
+  routes one job three times concurrently and gets the same version each time. No model is
+  reachable from the routing path.

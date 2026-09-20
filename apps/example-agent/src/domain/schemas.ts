@@ -104,28 +104,92 @@ export type VendorTriageOutput = z.infer<typeof vendorTriageOutputSchema>;
  * and `src/capabilities.ts` registers all six from one place.
  */
 
-/** What the classification step decides, and why. */
+/**
+ * The fields every `jev` node's output carries, whatever it asked (M3-T3).
+ *
+ * This is `DecisionNodeOutput` from `@internal/workflow`, written as a schema
+ * so the runtime's own output validation checks it. It is the same shape for
+ * every decision node, which is the point: a node's output is a **judgment**
+ * plus the route the organization's policy chose, and what the judgment was
+ * about is in `answers`.
+ *
+ * `distribution`, `confidence` and `route` are all nullable, and each `null`
+ * means something different and real: no distribution is what a provider often
+ * gives for a choice, no confidence follows from no distribution, and no route
+ * means no policy consumed the answer. None of the three is ever invented.
+ */
+const decisionNodeFields = {
+  answer: z
+    .union([z.boolean(), z.string(), z.number()])
+    .describe("The primary question's judgment: a boolean, the chosen option, or the score."),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .nullable()
+    .describe("How much probability mass sits on the answer, or null when none could be derived."),
+  band: z
+    .enum(["auto", "agent-review", "human-review"])
+    .describe("Which of the three bands the primary answer's confidence falls in."),
+  distribution: z
+    .record(z.string(), z.number())
+    .nullable()
+    .describe("The provider's probability distribution, verbatim, or null when it gave none."),
+  decisionId: z.string().min(1).describe("The stored decision this output points at."),
+  route: z
+    .string()
+    .min(1)
+    .nullable()
+    .describe("The route the policy chose, or null when no policy consumed the answer."),
+  reasons: z
+    .array(z.string().min(1))
+    .describe("Why the policy chose that route. Empty when there is no policy."),
+} as const;
+
+/**
+ * What the `classify` node outputs: three judgments about the vendor, and the
+ * route the policy chose from them (M3-T8).
+ *
+ * **`route` is what the branch selects on, and `answers.category` is what
+ * `finalize` puts in the triage output.** Before M3 these were one field: the
+ * node answered `clear | research | uncertain` directly, because the
+ * deterministic placeholder standing in for Jev could not separate a judgment
+ * about the vendor from a decision about what to do. They are separate now,
+ * which is ADR-0009 in the fixture rather than only in a document.
+ */
 export const vendorTriageClassificationSchema = z.object({
-  category: z
-    .enum(["clear", "research", "uncertain"])
-    .describe(
-      "`clear` when the frozen evidence is good enough to finalize deterministically, `research` when it needs the full agent's reading, `uncertain` when neither is established.",
-    ),
-  rationale: z.string().min(1).describe("Why this category, in one sentence."),
-  vendorName: z.string().min(1).describe("The vendor the classification is about."),
+  ...decisionNodeFields,
+  answers: z
+    .object({
+      lowRisk: z.boolean().describe("Whether the vendor is obviously low risk."),
+      category: z
+        .string()
+        .min(1)
+        .describe("Which of the SOP's categories applies, in the SOP's own vocabulary."),
+      evidenceSufficient: z
+        .boolean()
+        .describe("Whether the evidence suffices to triage without research."),
+    })
+    .describe("Every question's answer, under the bundle's own keys."),
 });
 
-/** What the verification step decides about a triage's own evidence. */
+/**
+ * What the `verify` node outputs: one judgment about whether a triage's own
+ * cited evidence supports it.
+ *
+ * `route` is always `null` here, because nothing branches on this answer:
+ * `decide-verified-triage` is the rule that consumes it, and it is a `code`
+ * node.
+ */
 export const vendorTriageVerificationSchema = z.object({
-  supported: z
-    .boolean()
-    .describe(
-      "Whether the triage cites evidence for what it concluded. `false` means it does not.",
-    ),
-  rationale: z.string().min(1).describe("Why, in one sentence."),
-  citedSources: z
-    .array(z.string().min(1))
-    .describe("The sources the triage cited, as it cited them. Empty means it cited none."),
+  ...decisionNodeFields,
+  answers: z
+    .object({
+      "vendor-triage.evidence-supports": z
+        .boolean()
+        .describe("Whether the cited evidence supports the triage's conclusion."),
+    })
+    .describe("The one question's answer, under its own id."),
 });
 
 /**

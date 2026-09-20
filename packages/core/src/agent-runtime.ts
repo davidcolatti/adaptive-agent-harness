@@ -1,5 +1,6 @@
 import type { ExecutionContext, RuntimeInfo } from "./context.js";
 import type { SerializedHarnessError } from "./errors.js";
+import type { WorkflowVersionId } from "./ids.js";
 import type { Job } from "./job.js";
 import type { JsonObject } from "./json.js";
 
@@ -33,6 +34,44 @@ interface AgentExecutionBase {
    * without its vocabulary becoming part of this contract (ADR-0003).
    */
   readonly metadata?: JsonObject;
+  /**
+   * The compiled workflow version that executed this attempt, when one did
+   * (M5-T3, ADR-0044).
+   *
+   * **Absent, not `null`, from a runtime that does not route.** The harness
+   * copies it onto the run's ledger row (`runs.workflow_version_id`), and an
+   * absent field leaves `startRun`'s value alone rather than overwriting it. A
+   * router sets it for a workflow run *and* for a run that escalated from one,
+   * because the ledger's question is "which compiled version was this job given
+   * to?", and `fallbackCount` is what says the workflow handed it back.
+   *
+   * It is not in `metadata` because `metadata` is adapter vocabulary and this is
+   * a harness column: two runtimes must not be free to spell it differently.
+   */
+  readonly workflowVersionId?: WorkflowVersionId;
+  /**
+   * How many times this attempt fell back from a compiled path to a full agent.
+   *
+   * `0` or absent for a run that never escalated; `1` for one that did. It is a
+   * count rather than a flag because a future router may escalate more than
+   * once, and `runs.fallback_count` is already a count.
+   */
+  readonly fallbackCount?: number;
+  /**
+   * How many decisions this attempt asked a `DecisionEngine` for (M3, M5).
+   *
+   * The harness copies it into `runs.jev_calls`. **Absent and `0` mean
+   * different things to the reader of this field and the same thing to the
+   * ledger**: absent is "this runtime does not make decisions and has no
+   * opinion", `0` is "it does, and made none". Both land as `0`, which is the
+   * honest ledger value either way.
+   *
+   * It is not part of {@link AgentExecutionUsage} because a decision is not one
+   * of the four dimensions a `Budget` limits. The workflow interpreter charges
+   * the budget one model call per decision, which is a documented floor rather
+   * than a measurement of what the decision cost; this is the count itself.
+   */
+  readonly jevCalls?: number;
 }
 
 /** The agent produced an output. */

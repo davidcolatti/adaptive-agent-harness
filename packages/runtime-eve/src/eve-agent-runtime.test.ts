@@ -334,6 +334,109 @@ describe("EveAgentRuntime.run, completed", () => {
       jobType: "fixture",
       input: { vendorName: "Northwind Ledger" },
     });
+    // No `harness` key on an ordinary run: nothing escalated to this agent, so
+    // there is nothing it should avoid repeating, and an empty envelope would
+    // be a claim rather than an absence.
+    expect(sent?.clientContext).not.toHaveProperty("harness");
+  });
+
+  it("carries a fallback envelope to the agent under `harness.fallback` (M5-T6)", async () => {
+    const client = createFakeClient({ script: HAPPY_PATH });
+
+    await createRuntime(client).run(
+      createJob(),
+      createContext({
+        fallback: {
+          reason: "unsupported_case",
+          detail: "the compiled path has no route it can justify",
+          nodeId: "full-agent",
+          workflow: { id: "fixture-workflow", version: "1.0.0", fingerprint: "sha256:abc" },
+          completedNodes: [
+            {
+              nodeId: "research",
+              outputRef: "node:research",
+              trusted: false,
+              output: { verdict: "needs a DPA" },
+            },
+          ],
+          evidenceRefs: ["artifact:01"],
+          remainingBudget: { maxModelCalls: 4 },
+        },
+      }),
+    );
+
+    const sent = client.created[0];
+
+    // eve's documented turn-scoped surface: an object `clientContext` is
+    // JSON-serialized into one context message that every model call in the
+    // turn sees, then discarded (`eve/docs/guides/client/messages.mdx`). The
+    // key and the shape under it are the harness's own contract (ADR-0044).
+    expect(sent?.clientContext).toMatchObject({
+      jobId: JOB_ID,
+      harness: {
+        fallback: {
+          reason: "unsupported_case",
+          detail: "the compiled path has no route it can justify",
+          nodeId: "full-agent",
+          workflow: { id: "fixture-workflow", version: "1.0.0", fingerprint: "sha256:abc" },
+          completedNodes: [
+            {
+              nodeId: "research",
+              outputRef: "node:research",
+              trusted: false,
+              output: { verdict: "needs a DPA" },
+            },
+          ],
+          evidenceRefs: ["artifact:01"],
+          remainingBudget: { maxModelCalls: 4 },
+        },
+      },
+    });
+  });
+
+  it("sends a dropped output as an explicit null rather than as a missing key", async () => {
+    const client = createFakeClient({ script: HAPPY_PATH });
+
+    await createRuntime(client).run(
+      createJob(),
+      createContext({
+        fallback: {
+          reason: "workflow_error",
+          detail: "node `decide` failed (the result of research was too large to carry inline)",
+          nodeId: "decide",
+          workflow: { id: "fixture-workflow", version: "1.0.0", fingerprint: "sha256:abc" },
+          // What the router produces when an output did not fit the envelope's
+          // size budget: the node is still named and still flagged, and only
+          // the value is gone.
+          completedNodes: [
+            { nodeId: "research", outputRef: "node:research", trusted: true, output: null },
+          ],
+          evidenceRefs: [],
+          remainingBudget: {},
+        },
+      }),
+    );
+
+    const sent = JSON.parse(JSON.stringify(client.created[0]?.clientContext ?? null)) as {
+      readonly harness: {
+        readonly fallback: {
+          readonly detail: string;
+          readonly completedNodes: readonly Record<string, unknown>[];
+        };
+      };
+    };
+
+    // An explicit `null`, not an absent key: an agent has to be able to tell
+    // "this node completed and I cannot show you its result" from "this node is
+    // not in the envelope", and only the first of those means the work was done.
+    expect(sent.harness.fallback.completedNodes[0]).toHaveProperty("output", null);
+    expect(sent.harness.fallback.completedNodes[0]).toMatchObject({
+      nodeId: "research",
+      outputRef: "node:research",
+      trusted: true,
+    });
+    // And the agent is told why, so it does not conclude the work was skipped.
+    expect(sent.harness.fallback.detail).toContain("too large to carry inline");
   });
 
   it("lowers the domain schema to a plain JSON Schema object with no $schema key", async () => {

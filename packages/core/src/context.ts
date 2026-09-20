@@ -8,6 +8,11 @@ import {
   type TraceRecorder,
   type TraceWriter,
 } from "./trace.js";
+// Type-only, and deliberately so: `workflow-ir.ts` imports `Budget` from this
+// module, and a value import either way would close the cycle at runtime. The
+// envelope is a contract about a workflow and belongs beside the IR; what
+// belongs here is only the statement that an attempt may carry one.
+import type { FallbackContext } from "./workflow-ir.js";
 
 /**
  * A reference to a versioned thing by stable ID.
@@ -155,6 +160,24 @@ export interface ExecutionContext {
   readonly signal: AbortSignal;
   /** What is executing. */
   readonly runtime: RuntimeInfo;
+  /**
+   * What a compiled workflow already established, when this attempt is a
+   * fallback from one (M5-T6, ADR-0044).
+   *
+   * **Absent on an ordinary run**, and that absence is the statement: nothing
+   * escalated to this agent, so there is nothing it should avoid repeating. The
+   * envelope reaches a runtime here rather than in the `Job` because a `Job` is
+   * immutable and describes *what* to do, while this describes *this particular
+   * attempt* at doing it — the same reason `attempt`, `budget` and `signal` live
+   * here. The router is what sets it, and the budget beside it is already
+   * recalculated: what the job started with, minus what the workflow spent.
+   *
+   * An adapter presents it to its agent through whatever input or context
+   * surface its framework documents; `EveAgentRuntime` puts it in the turn's
+   * `clientContext`. An adapter that has no such surface may ignore it, and the
+   * run is then merely no cheaper than a cold one.
+   */
+  readonly fallback?: FallbackContext;
 }
 
 /** The {@link RuntimeInfo} fields {@link createExecutionContext} accepts. */
@@ -229,6 +252,11 @@ export interface CreateExecutionContextInput {
    * its own identity here.
    */
   readonly runtime?: RuntimeInfoInput;
+  /**
+   * The fallback envelope, when this attempt is an escalation from a compiled
+   * workflow. Defaults to absent, which is an ordinary run.
+   */
+  readonly fallback?: FallbackContext;
 }
 
 /**
@@ -283,5 +311,8 @@ export function createExecutionContext(input: CreateExecutionContextInput): Exec
             version: input.runtime.version,
             metadata: input.runtime.metadata ?? {},
           },
+    // Omitted rather than set to `undefined`, so `"fallback" in context` is a
+    // true statement about whether one was supplied.
+    ...(input.fallback === undefined ? {} : { fallback: input.fallback }),
   };
 }

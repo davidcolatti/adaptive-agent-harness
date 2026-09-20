@@ -93,6 +93,9 @@ and related ADRs that motivated it.
 | [0040](0040-the-local-workflow-runtime-interprets-a-compiled-workflow-and-escalates-rather-than-fails.md) | The local workflow runtime interprets a `CompiledWorkflow`, records into the run's trace, and escalates rather than fails | accepted |
 | [0041](0041-the-typed-dsl-is-a-wiring-front-end-that-parses-its-own-ir.md) | The typed DSL is a wiring front end that parses its own IR | accepted |
 | [0042](0042-the-decision-contract-is-core-the-experimental-evaluation-api-is-the-adapter.md) | The decision contract is a core contract; the experimental evaluation API is an adapter | accepted |
+| [0043](0043-the-workflow-registry-is-a-status-model-in-core-with-an-exact-match-selector.md) | The workflow registry is a status model in core, with an exact-match selector | accepted |
+| [0044](0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md) | The router is an `AgentRuntime`, and a fallback envelope travels in the execution context | accepted |
+| [0045](0045-decision-evidence-is-one-record-with-the-raw-result-and-the-policy-outcome-apart.md) | Decision evidence is one record with the raw result and the policy outcome apart | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -330,3 +333,58 @@ keyset read. Implemented in `packages/core/src/workflow-registry.ts` and `storag
 `packages/registry/src/`, `packages/storage-supabase/src/supabase-storage.ts` and
 `packages/testing/src/in-memory-storage.ts`, and documented in
 `docs/contracts/workflow-registry.md`.
+
+Entry 0044 records M5-T3 through M5-T7, the router and the fallback contract. The router **is** an
+`AgentRuntime`, so `createHarness()` gains no option and "the same harness call can execute either
+workflow or full agent" needs no new core surface; routing is `selectCompatibleWorkflow()` over the
+registry, re-resolved on every run, so retiring a version returns traffic immediately with no cache
+to invalidate. M4's six mechanical stop reasons are replaced by the build plan's eight, because a
+stored reason is read to answer "why could the compiled path not be trusted with this job?" rather
+than "what did the interpreter hit?", and the specific case now lives in a `detail` string nothing
+compares; `low_confidence` and `missing_evidence` are deliberately unreachable from the interpreter
+and are reserved for M3's policy layer. The envelope reaches the full agent through
+`ExecutionContext.fallback` rather than the `Job`, because the job is immutable and an escalation is
+a property of the attempt, and an adapter presents it on its framework's own documented surface —
+for `EveAgentRuntime` that is the turn's `clientContext`, verified against eve's shipped docs and a
+real server. The trace links the two halves through one span: the interpreter returns its
+`fallback.started` event id, the agent runs against a recorder rooted at it, and the router closes
+it with `fallback.completed`. `trusted` keeps ADR-0040's rule, so an `agent` or `jev` node's output
+is offered by reference and never as fact. The circuit breaker reads the last N finished runs of one
+version and reports; retiring stays a human act under AD-005. Implemented in
+`packages/registry/src/router.ts` and `circuit-breaker.ts`, `packages/core/src/workflow-ir.ts`,
+`context.ts`, `agent-runtime.ts`, `harness.ts` and `storage.ts`,
+`packages/workflow/src/runtime/workflow-runtime.ts`,
+`packages/runtime-eve/src/eve-agent-runtime.ts` and `apps/example-agent/src/run.ts`; documented in
+`docs/contracts/workflow-registry.md` and `docs/contracts/workflow-ir.md`, and grounded in
+`docs/research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`.
+
+Entry 0045 records M3-T3/M3-T7/M3-T8/M3-T9, everything that happens around a decision once one has
+been made. A decision's evidence is **one** `DecisionRecord` whose `result` is exactly what the
+engine produced and whose `policy` is exactly what the organization decided, in two `jsonb` columns,
+which is how "raw Jev result is stored separately from policy outcome" becomes a schema fact rather
+than a convention; `policy` is `null` when nothing routed the answer, which the vendor fixture's
+`verify` node demonstrates. Because `result` is complete and JSON-representable,
+`replayDecisions(records, policy)` is pure and takes **no engine**, so re-routing history through a
+tightened threshold cannot accidentally become a second Jev bill. Six fields are denormalized into
+columns so that cost and latency per question are a `group by`, and the read boundary deliberately
+does not read them, so a drifted row cannot look consistent. `cost_usd` is nullable and `null` on
+every row, because the installed evaluation API exposes no cost anywhere and an estimate would be
+indistinguishable from a measurement once it was in the column. Persistence lives **inside**
+`createDecisionPort()`, the one place that already turns a `jev` node into an engine call, and a
+storage failure fails the node rather than letting the workflow act on an unrecorded judgment. A
+`jev` node may name a **bundle** — several questions about its one input, a primary, and a policy —
+which travels in one call because batching is by shared state; the policy belongs to the bundle
+rather than to the port, because one port serves every node and two nodes ask different questions.
+`verify` is in core rather than in the Jev adapter, because compiling an output's fields into
+boolean questions is engine-agnostic, and each unsupported field returns a repair **sentence** the
+same agent task can be re-run with. The vendor fixture asks the build plan's three questions in one
+call and lets the policy decide `clear`/`research`/`uncertain`, so the branch selects on the route
+and not on the model's answer; the engine is live Jev with a Gateway credential and a deterministic
+fixture engine without. The calibration metrics are defined once, and the false-auto rate excludes
+fallbacks on purpose, so raising a threshold can cost accuracy but can never raise the one number
+that measures being confidently wrong. Implemented in `packages/core/src/decision-record.ts`,
+`packages/core/src/verify.ts`, `packages/core/src/storage.ts`,
+`packages/workflow/src/runtime/decision-port.ts`, both `Storage` implementations,
+`supabase/migrations/20260920205520_decisions_columns.sql` and
+`apps/example-agent/src/decisions/`, and documented in `docs/contracts/decision-engine.md` and
+`docs/contracts/storage.md`.

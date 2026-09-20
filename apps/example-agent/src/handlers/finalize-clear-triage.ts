@@ -83,6 +83,22 @@ const SOP_REQUIREMENTS: readonly SopRequirement[] = [
   },
 ];
 
+/**
+ * Why the compiled path took this route, in the policy's own words.
+ *
+ * The classification no longer carries a `rationale` string, because a `jev`
+ * node's output is a judgment and a route rather than prose. The **policy's**
+ * reasons are the prose, and they are better than what a placeholder used to
+ * write: they name the thresholds that were cleared.
+ */
+function classificationRationale(input: VendorTriageFinalizeInput): string {
+  const reasons = input.classification.reasons;
+
+  return reasons.length === 0
+    ? "The compiled path classified this request without recording a reason."
+    : `The compiled path routed this to \`${input.classification.route ?? "(no route)"}\` because ${reasons.join("; ")}.`;
+}
+
 /** Every document's text, lowercased and joined, which is what the terms are matched against. */
 function evidenceText(vendor: VendorEvidenceRecord): string {
   return vendor.documents.map((document) => document.text.toLowerCase()).join("\n");
@@ -142,7 +158,7 @@ export function finalizeClearTriage(input: VendorTriageFinalizeInput): VendorTri
       ],
       recommendation: {
         decision: "request_information",
-        rationale: `The compiled path classified this request as \`${input.classification.category}\`, but no frozen evidence exists for ${input.request.vendorName}, so nothing about the SOP can be established.`,
+        rationale: `The compiled path routed this request to \`${input.classification.route ?? "(no route)"}\`, but no frozen evidence exists for ${input.request.vendorName}, so nothing about the SOP can be established.`,
       },
       evidence: [
         {
@@ -160,14 +176,17 @@ export function finalizeClearTriage(input: VendorTriageFinalizeInput): VendorTri
   const clean = riskFlags.length === 0 && missingInformation.length === 0;
 
   return {
-    category: vendor.statedOffering,
+    // The **judgment**, not a string match: `answers.category` is what the
+    // `vendor-triage.category` question decided, in the SOP's own vocabulary,
+    // which is exactly what the output schema asks this field for.
+    category: input.classification.answers.category,
     riskFlags,
     missingInformation: [...missingInformation],
     recommendation: {
       decision: clean ? "proceed" : "proceed_with_conditions",
       rationale: clean
-        ? `${input.classification.rationale} Every SOP requirement the frozen evidence can establish is established, and no risk flag is open.`
-        : `${input.classification.rationale} The evidence leaves ${missingInformation.length} SOP requirement${missingInformation.length === 1 ? "" : "s"} unestablished and ${riskFlags.length} risk flag${riskFlags.length === 1 ? " is" : "s are"} open, so this may not proceed unconditionally.`,
+        ? `${classificationRationale(input)} Every SOP requirement the frozen evidence can establish is established, and no risk flag is open.`
+        : `${classificationRationale(input)} The evidence leaves ${missingInformation.length} SOP requirement${missingInformation.length === 1 ? "" : "s"} unestablished and ${riskFlags.length} risk flag${riskFlags.length === 1 ? " is" : "s are"} open, so this may not proceed unconditionally.`,
       // Only when there is something to condition on: the schema makes
       // `conditions` optional, and an empty list beside `proceed` would read as
       // a condition that was forgotten rather than as none being needed.

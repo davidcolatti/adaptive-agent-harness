@@ -6,6 +6,7 @@
   "description": "Neutral vendor-triage example agent. An eve project authored the way a consuming domain repository would author one (ADR-0025).",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && eve build",
+    "calibrate": "node --env-file-if-exists=../../.env.local dist/src/decisions/calibrate.js",
     "dev": "eve dev",
     "info": "eve info",
     "start": "node --env-file-if-exists=../../.env.local dist/src/run.js",
@@ -13,8 +14,11 @@
   },
   "dependencies": {
     "@internal/core": "workspace:*",
+    "@internal/decision-jev": "workspace:*",
+    "@internal/registry": "workspace:*",
     "@internal/runtime-eve": "workspace:*",
     "@internal/storage-supabase": "workspace:*",
+    "@internal/testing": "workspace:*",
     "@internal/trace": "workspace:*",
     "@internal/workflow": "workspace:*",
     "ai": "7.0.107",
@@ -23,7 +27,6 @@
   },
   "devDependencies": {
     "@internal/config": "workspace:*",
-    "@internal/testing": "workspace:*",
     "vitest": "5.0.1"
   }
 }

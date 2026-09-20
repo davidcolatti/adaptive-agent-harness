@@ -9,10 +9,14 @@ import {
   type JsonValue,
   type Storage,
   StorageError,
+  type WorkflowVersionId,
+  type WorkflowVersionRecord,
 } from "@internal/core";
+import { createRouter, createWorkflowRegistry, type WorkflowRegistry } from "@internal/registry";
 import { EveAgentRuntime } from "@internal/runtime-eve";
 import { type EveDevServer, startEveDevServer } from "@internal/runtime-eve/testing";
 import { createSupabaseStorage } from "@internal/storage-supabase";
+import { createInMemoryStorage } from "@internal/testing";
 import {
   createBufferedTraceWriter,
   createFanOutTraceSink,
@@ -21,8 +25,9 @@ import {
   createStorageTraceSink,
   type TraceSink,
 } from "@internal/trace";
-import { createWorkflowRuntime } from "@internal/workflow";
+import { type CompiledWorkflow, createWorkflowRuntime } from "@internal/workflow";
 import { createVendorTriageRegistry } from "./capabilities.js";
+import { createVendorDecisionPort, resolveDecisionEngine } from "./decisions/index.js";
 import {
   createVendorTriageDomain,
   PROCUREMENT_SOP,
@@ -30,7 +35,6 @@ import {
   type VendorTriageOutput,
   vendorTriage,
 } from "./domain/index.js";
-import { createFixtureDecisionPort } from "./workflow/fixture-decision-port.js";
 import { compileVendorTriageWorkflow } from "./workflow/vendor-triage-workflow.js";
 
 /**
@@ -85,27 +89,50 @@ import { compileVendorTriageWorkflow } from "./workflow/vendor-triage-workflow.j
  * the model is scripted. What it cannot show is whether a real model produces a
  * useful triage, which is the live target's job.
  *
- * ## Two execution paths
+ * ## Two execution paths, and a router between them
  *
- * `--workflow` (or `EXAMPLE_RUN_MODE=workflow`) runs the job through the
- * hand-authored compiled workflow (M4-T10) instead of straight through the full
- * agent. The workflow's one `agent` node is handed the **same**
- * `EveAgentRuntime` the agent path would have used, so `--mock --workflow`
- * still needs no credential, and the ledger row records
- * `<agent>+workflow` as its target.
+ * `--workflow` (or `EXAMPLE_RUN_MODE=workflow`) puts the **router** (M5-T3) in
+ * front of the job instead of the eve adapter. The router registers and
+ * activates the hand-authored compiled workflow (M4-T10), resolves the active
+ * version on every run, executes it when it matches, and invokes the full agent
+ * when it does not or when the compiled path gives up. The workflow's one
+ * `agent` node and the router's full agent are the **same**
+ * `EveAgentRuntime`, so `--mock --workflow` still needs no credential, and the
+ * ledger row records `<agent>+workflow` as its target.
  *
  * ```sh
- * pnpm example:run:mock -- --workflow                              # the `clear` route
- * pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"   # the `research` route
- * pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"        # escalation
+ * pnpm example:run:mock -- --workflow                                    # the `clear` route
+ * pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"    # the `research` route
+ * pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"         # escalation to the full agent
+ * pnpm example:run:mock -- --workflow --no-register-workflow             # no active version: the full agent
  * ```
  *
  * `--vendor <name>` exists because the workflow routes on the vendor's own
  * frozen evidence, so it is the only way to reach all three routes from the
  * command line. Without either flag nothing about this command has changed.
  *
- * The two `jev` nodes are answered by a deterministic placeholder until M3
- * lands a `DecisionEngine`; see `src/workflow/fixture-decision-port.ts`.
+ * **`Aurelia Freight` now exits 0**, where under M4 it exited 1. Nothing about
+ * the workflow changed: it still escalates, and `asAgentRuntime()` had nowhere
+ * to escalate *to*, so it reported the escalation as a failure. The router has
+ * a full agent, so the job is finished by it and the run's ledger row records
+ * `fallback_count = 1` beside the `workflow_version_id` that gave up. Read it
+ * with `pnpm harness run show <run-id>`.
+ *
+ * ## The decision layer (M3-T8)
+ *
+ * The two `jev` nodes go through the real decision port: `classify` asks three
+ * bounded questions about the vendor in **one** call and a versioned policy
+ * turns the answers into the route the branch selects on, and `verify` asks one.
+ * Every decision's complete evidence is written to the `decisions` table when
+ * Supabase is configured, with the raw judgment and the policy outcome in
+ * separate columns, so a changed threshold can be replayed against stored
+ * evidence without calling Jev again.
+ *
+ * The engine behind it is **live Jev** (`typesafe-ai/jev` through the AI
+ * Gateway) when `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` is set, and a
+ * deterministic fixture engine otherwise; the command says which on stderr.
+ * The fixture engine reproduces the three demo routes exactly, so
+ * `--mock --workflow` still needs no credential at all.
  */
 
 /** The output the harness prints. Printed as JSON so it can be piped. */
@@ -129,6 +156,15 @@ interface RunSummary {
     readonly version: string;
     readonly fingerprint: string;
   } | null;
+  /**
+   * The registered version the router could route to, or `null`.
+   *
+   * `null` in `agent` mode, and `null` under `--no-register-workflow`, which is
+   * how the demo shows an unmatched job going straight to the full agent. It is
+   * the value the run's ledger row carries in `workflow_version_id` when the
+   * router actually chose it.
+   */
+  readonly workflowVersionId: WorkflowVersionId | null;
   /** The JSONL file this run's ordered trace was written to (M2-T4). */
   readonly tracePath: string;
   /**
@@ -260,6 +296,62 @@ function chooseVendorName(argv: readonly string[]): string {
 }
 
 /**
+ * Whether to register and activate the compiled workflow before running.
+ *
+ * `--no-register-workflow` leaves the registry empty, so the router resolves
+ * nothing and the job goes straight to the full agent with
+ * `workflow_version_id` null. That is the other half of M5's first acceptance
+ * criterion — the **same** harness call, the same router, the same command —
+ * and it is a flag rather than a separate script because "unsupported jobs
+ * never force-fit into a workflow" is only convincing if the unsupported case
+ * is one command away from the supported one.
+ */
+function shouldRegisterWorkflow(argv: readonly string[]): boolean {
+  return !argv.includes("--no-register-workflow");
+}
+
+/**
+ * The active registered version of `compiled`, registering and promoting it if
+ * this is the first time.
+ *
+ * Idempotent on purpose: the demo is run repeatedly against the same local
+ * database, and `saveWorkflowVersion` rejects a second version with the same
+ * IR fingerprint, so re-registering would fail every run after the first. The
+ * fingerprint is the identity, which is why the existing row is found by it
+ * rather than by name.
+ *
+ * `actor` is `example-agent` because AD-005 requires every status change to
+ * name someone answerable, and for a demo command that is the demo command.
+ */
+async function ensureActiveVersion(
+  registry: WorkflowRegistry,
+  compiled: CompiledWorkflow,
+): Promise<WorkflowVersionRecord> {
+  const active = await registry.findActive({
+    domainId: compiled.definition.domain,
+    jobType: compiled.definition.jobType,
+  });
+  const already = active.find((version) => version.fingerprint === compiled.fingerprint);
+
+  if (already !== undefined) {
+    return already;
+  }
+
+  const draft = await registry.register(compiled, {
+    domain: { id: vendorTriage.id, version: vendorTriage.version },
+    actor: "example-agent",
+    // The SOP the workflow was authored against, matching the job's own
+    // `contracts.sop`. A mismatch here is a `sop-mismatch` rejection, not a
+    // silent route to a workflow written for a different procedure.
+    sop: "procurement-sop",
+  });
+
+  await registry.promote(draft.id, "candidate", { actor: "example-agent" });
+
+  return await registry.promote(draft.id, "active", { actor: "example-agent" });
+}
+
+/**
  * The credential names that are actually set.
  *
  * Only the **names** are ever read out of the environment here, never the
@@ -377,6 +469,7 @@ async function main(): Promise<number> {
   const name = chooseTarget(argv);
   const mode = chooseMode(argv);
   const vendorName = chooseVendorName(argv);
+  const registerWorkflow = shouldRegisterWorkflow(argv);
   const target = TARGETS[name];
   const input: VendorTriageInput = { vendorName, procurementSop: PROCUREMENT_SOP };
 
@@ -459,26 +552,74 @@ async function main(): Promise<number> {
       domains: [vendorTriage],
     });
 
-    // M4-T10. In `workflow` mode the harness drives the local deterministic
-    // runtime over the compiled vendor workflow, and the eve adapter above
-    // becomes one node inside it. `asAgentRuntime()` is what makes that
-    // invisible to `createHarness()`, so trace, storage, the run ledger and
-    // `pnpm harness run show` keep working with no router (M5 adds one).
+    // M5-T3. In `workflow` mode the harness's `AgentRuntime` is the **router**,
+    // not the workflow: it resolves the domain's active compiled version on
+    // every run, executes it when one matches, and hands the job to the eve
+    // adapter above when none does or when the compiled path gives up. From
+    // `createHarness()`'s point of view there is still exactly one runtime, so
+    // trace, storage, the run ledger and `pnpm harness run show` keep working
+    // unchanged — which is what "the same harness call can execute either
+    // workflow or full agent" means in practice (M4-T10 used
+    // `asAgentRuntime()` here, which could not fall back).
     let domain: DomainDefinition<VendorTriageInput, VendorTriageOutput> = vendorTriage;
     let agentRuntime: AgentRuntime = eveRuntime;
     let workflow: RunSummary["workflow"] = null;
+    let workflowVersionId: WorkflowVersionId | null = null;
 
     if (mode === "workflow") {
-      const registry = createVendorTriageRegistry();
-      const compiled = compileVendorTriageWorkflow(registry);
+      const capabilities = createVendorTriageRegistry();
+      const compiled = compileVendorTriageWorkflow(capabilities);
+      // The registry needs a `Storage`. It is the run's own when Supabase is
+      // configured, so a registered version outlives the process; otherwise it
+      // is an in-memory one that lives for this command, because the
+      // credential-free path has to keep working with no database at all
+      // (north-star invariant 15).
+      //
+      // Under `--no-register-workflow` it is **always** a fresh in-memory
+      // store, and nothing is registered in it. Skipping registration against
+      // the durable store would not demonstrate anything: a previous run of
+      // this command already activated the version there, and the router would
+      // correctly find it. An empty registry is the actual condition being
+      // shown.
+      const registryStorage = registerWorkflow
+        ? (storage ?? createInMemoryStorage())
+        : createInMemoryStorage();
+      const registry = createWorkflowRegistry({ storage: registryStorage });
+      const version = registerWorkflow ? await ensureActiveVersion(registry, compiled) : null;
 
-      agentRuntime = createWorkflowRuntime({
+      if (version === null) {
+        process.stderr.write(
+          [
+            "--no-register-workflow: the router is given a registry with no active version",
+            "for this job, so it sends the job straight to the full agent. The ledger row",
+            "records workflow_version_id = null, which is what an unsupported job looks like.",
+            "",
+          ].join("\n"),
+        );
+      }
+
+      // Which engine answers the `jev` nodes, said out loud (M3-T8). A run
+      // whose judgments came from a fixture rather than from a model must never
+      // look the same as one that called Jev.
+      process.stderr.write(`Decisions are answered by ${resolveDecisionEngine().description}.\n`);
+
+      agentRuntime = createRouter({
         registry,
-        agentRuntime: eveRuntime,
-        // A placeholder until M3 lands a `DecisionEngine`; see
-        // `src/workflow/fixture-decision-port.ts`.
-        decisionEngine: createFixtureDecisionPort(),
-      }).asAgentRuntime(compiled);
+        capabilities,
+        workflowRuntime: createWorkflowRuntime({
+          registry: capabilities,
+          agentRuntime: eveRuntime,
+          // M3-T8. The real decision layer: the three registered questions in
+          // one Jev call, the versioned policy that routes their answers, and
+          // the stored evidence behind both. The engine is live Jev when an AI
+          // Gateway credential is present and a deterministic fixture engine
+          // otherwise, so this path still needs no credential.
+          decisionEngine: createVendorDecisionPort(storage === null ? {} : { storage }),
+        }),
+        // The full agent an escalation reaches, and the one an unmatched job
+        // goes straight to: the same `EveAgentRuntime` the agent path uses.
+        fullAgent: eveRuntime,
+      });
       // The behavior fingerprint's `workflowIr` component (ADR-0034): a run
       // through the compiled path is a different behavior from a run through
       // the full agent, and this is what makes the two fingerprints differ.
@@ -490,6 +631,7 @@ async function main(): Promise<number> {
         version: compiled.definition.version,
         fingerprint: compiled.fingerprint,
       };
+      workflowVersionId = version?.id ?? null;
     }
 
     const harness = createHarness({
@@ -541,6 +683,7 @@ async function main(): Promise<number> {
       mode,
       vendorName,
       workflow,
+      workflowVersionId,
       tracePath: traces.pathFor(result.runId),
       // The URL only. The service-role key is never printed.
       storage: storage === null ? null : (process.env.SUPABASE_URL ?? null),

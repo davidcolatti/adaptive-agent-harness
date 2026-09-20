@@ -3,8 +3,11 @@ import {
   DEFAULT_RUN_PAGE_SIZE,
   DEFAULT_TRACE_PAGE_SIZE,
   DEFAULT_WORKFLOW_VERSION_PAGE_SIZE,
+  type DecisionId,
+  type DecisionRecord,
   type Job,
   type JobId,
+  parseDecisionRecord,
   parseJob,
   parseRunRecord,
   parseWorkflowPromotionRecord,
@@ -68,6 +71,8 @@ export interface InMemoryStorage extends Storage {
   readonly workflowVersions: readonly WorkflowVersionRecord[];
   /** Every promotion ledger row, oldest first, for assertions. */
   readonly workflowPromotions: readonly WorkflowPromotionRecord[];
+  /** Every decision record, oldest first, for assertions. */
+  readonly decisions: readonly DecisionRecord[];
 }
 
 /** Compare two sortable entity ids. */
@@ -81,7 +86,8 @@ function matchesFilter(run: RunRecord, filter: RunFilter): boolean {
     (filter.domainVersion === undefined || run.domain.version === filter.domainVersion) &&
     (filter.jobType === undefined || run.jobType === filter.jobType) &&
     (filter.status === undefined || run.status === filter.status) &&
-    (filter.jobId === undefined || run.jobId === filter.jobId)
+    (filter.jobId === undefined || run.jobId === filter.jobId) &&
+    (filter.workflowVersionId === undefined || run.workflowVersionId === filter.workflowVersionId)
   );
 }
 
@@ -123,6 +129,9 @@ export function createInMemoryStorage(): InMemoryStorage {
   const versions = new Map<WorkflowVersionId, WorkflowVersionRecord>();
   const versionFingerprints = new Set<string>();
   const promotions: WorkflowPromotionRecord[] = [];
+  // Decision evidence (M3-T3), keyed by `DecisionId`, which is the primary key
+  // the database enforces.
+  const decisions = new Map<DecisionId, DecisionRecord>();
 
   function eventKey(event: TraceEvent): string {
     return `${event.runId}\u0000${event.sequence}`;
@@ -158,6 +167,9 @@ export function createInMemoryStorage(): InMemoryStorage {
     },
     get workflowPromotions(): readonly WorkflowPromotionRecord[] {
       return [...promotions];
+    },
+    get decisions(): readonly DecisionRecord[] {
+      return [...decisions.values()].sort((left, right) => compareIds(left.id, right.id));
     },
 
     // Every method is `async`, even where nothing is awaited. The port says
@@ -232,6 +244,11 @@ export function createInMemoryStorage(): InMemoryStorage {
         toolCalls: input.toolCalls,
         jevCalls: input.jevCalls,
         fallbackCount: input.fallbackCount,
+        // Absent leaves `startRun`'s value alone; present overwrites it,
+        // including with an explicit `null` (M5-T3).
+        ...(input.workflowVersionId === undefined
+          ? {}
+          : { workflowVersionId: input.workflowVersionId }),
         runtime: {
           name: input.runtime.name,
           version: input.runtime.version,
@@ -464,6 +481,31 @@ export function createInMemoryStorage(): InMemoryStorage {
     ): Promise<readonly WorkflowPromotionRecord[]> {
       return promotions
         .filter((promotion) => promotion.workflowVersionId === versionId)
+        .sort((left, right) => compareIds(left.id, right.id));
+    },
+
+    // Decision evidence (M3-T3). The one constraint the database enforces --
+    // `id` is the primary key, so a duplicate insert fails -- is enforced here
+    // too, because the contract suite runs against both and a test that passes
+    // here must mean the same thing there.
+
+    async saveDecision(record: DecisionRecord): Promise<DecisionRecord> {
+      const parsed = parseDecisionRecord(record);
+
+      if (decisions.has(parsed.id)) {
+        throw new StorageError(`storage: decision \`${parsed.id}\` already exists`, {
+          details: { operation: "saveDecision", decisionId: parsed.id },
+        });
+      }
+
+      decisions.set(parsed.id, parsed);
+
+      return parsed;
+    },
+
+    async listDecisions(runId: RunId): Promise<readonly DecisionRecord[]> {
+      return [...decisions.values()]
+        .filter((decision) => decision.runId === runId)
         .sort((left, right) => compareIds(left.id, right.id));
     },
   };

@@ -212,7 +212,7 @@ describe("createWorkflowRuntime", () => {
       expect(result.status).toBe("completed");
     });
 
-    it("escalates with `validation-failed` when a node's output does not satisfy its schema", async () => {
+    it("escalates with `schema_mismatch` when a node's output does not satisfy its schema", async () => {
       const registry = createCapabilityRegistry();
 
       registerSchema(registry, "test.any");
@@ -239,7 +239,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("validation-failed");
+      expect(result.fallback.reason).toBe("schema_mismatch");
     });
 
     it("escalates when a node's input does not satisfy its schema", async () => {
@@ -266,7 +266,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("validation-failed");
+      expect(result.fallback.reason).toBe("schema_mismatch");
       expect(result.fallback.completedNodes).toEqual([]);
     });
 
@@ -349,7 +349,7 @@ describe("createWorkflowRuntime", () => {
       expect(result.usage.modelCalls).toBe(1);
     });
 
-    it("escalates with `decision-failed` when no decision engine was supplied", async () => {
+    it("escalates with `workflow_error` when no decision engine was supplied", async () => {
       const registry = createTestRegistry();
       const compiled = compiledWorkflow("classify", [
         jevNode("classify", "vendor.is-clear", "boolean", null),
@@ -364,7 +364,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("decision-failed");
+      expect(result.fallback.reason).toBe("workflow_error");
     });
 
     it("runs an `agent` node through the agent runtime without emitting its own `agent.*`", async () => {
@@ -420,7 +420,7 @@ describe("createWorkflowRuntime", () => {
       expect(trace.types()).toContain("artifact.created");
     });
 
-    it("escalates from an `escalate` node with `escalate-node` and a fallback envelope", async () => {
+    it("escalates from an `escalate` node with `unsupported_case` and a fallback envelope", async () => {
       const registry = createTestRegistry();
 
       registerFunction(registry, "handler", "identity", (value: never) => value);
@@ -444,15 +444,22 @@ describe("createWorkflowRuntime", () => {
       }
 
       expect(result.fallback).toMatchObject({
-        reason: "escalate-node",
+        reason: "unsupported_case",
         workflow: { id: "test-workflow", version: "1.0.0", fingerprint: compiled.fingerprint },
         evidenceRefs: [],
         remainingBudget: { maxToolCalls: 4, maxModelCalls: 2 },
       });
+      // The `escalate` node itself is **not** listed (M5-T6, ADR-0044). It
+      // completed, but it produces a `FallbackContext` rather than a value, so
+      // an `outputRef` for it would resolve to nothing.
+      // `output` is `null` here because the **interpreter** built this
+      // envelope: filling the outputs is the router's step, so that
+      // `asAgentRuntime()`'s error payload stays lean (ADR-0044).
       expect(result.fallback.completedNodes).toEqual([
-        { nodeId: "first", outputRef: "node:first", trusted: true },
-        { nodeId: "give-up", outputRef: "node:give-up", trusted: false },
+        { nodeId: "first", outputRef: "node:first", trusted: true, output: null },
       ]);
+      expect(result.fallback.detail).toBe("classification was uncertain");
+      expect(result.fallback.nodeId).toBe("give-up");
       expect(trace.types()).toContain("fallback.started");
     });
 
@@ -485,9 +492,8 @@ describe("createWorkflowRuntime", () => {
       }
 
       expect(result.fallback.completedNodes).toEqual([
-        { nodeId: "decide", outputRef: "node:decide", trusted: false },
-        { nodeId: "send", outputRef: "node:send", trusted: false },
-        { nodeId: "give-up", outputRef: "node:give-up", trusted: false },
+        { nodeId: "decide", outputRef: "node:decide", trusted: false, output: null },
+        { nodeId: "send", outputRef: "node:send", trusted: false, output: null },
       ]);
     });
   });
@@ -650,7 +656,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("node-failed");
+      expect(result.fallback.reason).toBe("workflow_error");
     });
 
     it("runs a `map` with bounded concurrency", async () => {
@@ -753,12 +759,12 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("node-failed");
+      expect(result.fallback.reason).toBe("workflow_error");
     });
   });
 
   describe("timeouts, retries and budgets (M4-T6)", () => {
-    it("escalates with `timeout` when a node exceeds its `timeoutMs`", async () => {
+    it("escalates with `budget` when a node exceeds its `timeoutMs`", async () => {
       const registry = createTestRegistry();
 
       registerFunction(
@@ -779,7 +785,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("timeout");
+      expect(result.fallback.reason).toBe("budget");
       expect(trace.types()).toEqual(["node.started", "node.failed", "fallback.started"]);
     });
 
@@ -844,7 +850,7 @@ describe("createWorkflowRuntime", () => {
       ]);
     });
 
-    it("escalates with `budget-exceeded` and does not retry when the run's tool budget runs out", async () => {
+    it("escalates with `budget` and does not retry when the run's tool budget runs out", async () => {
       const registry = createTestRegistry();
       let calls = 0;
 
@@ -877,7 +883,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("budget-exceeded");
+      expect(result.fallback.reason).toBe("budget");
       // The second call is charged **before** the tool runs, so the budget
       // prevents the call rather than reporting it afterwards, and it is not
       // retried: a budget that ran out does not refill.
@@ -910,7 +916,7 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("budget-exceeded");
+      expect(result.fallback.reason).toBe("budget");
       // The run's budget is unlimited; only the `map` node's own budget bit.
       expect(result.usage.toolCalls).toBe(3);
     });
@@ -1108,7 +1114,7 @@ describe("createWorkflowRuntime", () => {
 
       expect(execution.error.code).toBe("WORKFLOW");
       expect(execution.error.details?.fallback).toMatchObject({
-        reason: "escalate-node",
+        reason: "unsupported_case",
         workflow: { id: "test-workflow", version: "1.0.0" },
       });
     });
@@ -1270,11 +1276,8 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("escalate-node");
-      expect(result.fallback.completedNodes.map((node) => node.nodeId)).toEqual([
-        "route",
-        "give-up",
-      ]);
+      expect(result.fallback.reason).toBe("unsupported_case");
+      expect(result.fallback.completedNodes.map((node) => node.nodeId)).toEqual(["route"]);
     });
   });
 
@@ -1406,19 +1409,15 @@ describe("createWorkflowRuntime", () => {
         return;
       }
 
-      expect(result.fallback.reason).toBe("escalate-node");
+      expect(result.fallback.reason).toBe("unsupported_case");
       expect(result.fallback.completedNodes.map((node) => node.nodeId)).toEqual([
         "classify",
         "route",
-        "full-agent",
       ]);
       // A `jev` output is never trusted; a `branch` routes deterministically
-      // over an already-validated value, so it is.
-      expect(result.fallback.completedNodes.map((node) => node.trusted)).toEqual([
-        false,
-        true,
-        false,
-      ]);
+      // over an already-validated value, so it is. The `escalate` node is not
+      // listed at all, so there is no third flag.
+      expect(result.fallback.completedNodes.map((node) => node.trusted)).toEqual([false, true]);
     });
   });
 

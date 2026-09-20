@@ -7862,7 +7862,7 @@ landed by the time they are reached.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, concurrent-implementer session)
-**Commit:** not committed
+**Commit:** `df0de79`
 
 ### Goal
 
@@ -7920,7 +7920,7 @@ Implement `packages/core/src/workflow-registry.ts`.
 
 **Status:** started
 **Actor/session:** coding agent (Claude Opus 5, orchestrated implementer session)
-**Commit:** not committed
+**Commit:** `df0de79`
 
 ### Goal
 
@@ -8026,7 +8026,7 @@ Implement `packages/core/src/decision.ts`, then `packages/decision-jev`.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, orchestrated implementer session)
-**Commit:** not committed
+**Commit:** `df0de79`
 
 ### Goal
 
@@ -8187,7 +8187,7 @@ port and add the migration for the `decisions` table.
 
 **Status:** completed
 **Actor/session:** coding agent (Claude Opus 5, concurrent-implementer session)
-**Commit:** not committed
+**Commit:** `df0de79`
 
 ### Goal
 
@@ -8323,3 +8323,576 @@ calls
 `registry.resolve(job, { manifest, harnessVersion })` and routes on
 `selection.kind === "match"`, recording `selection.rejections` when it is `"none"`;
 `runs.workflow_version_id` takes `selection.version.id`.
+
+## 2026-09-20 21:05 — M5-T3..M5-T7 — Router, fallback contract, full-agent escalation, fallback handoff, circuit breaker
+
+**Status:** started
+**Actor/session:** coding agent (`m5-router`)
+**Commit:** not committed
+
+### Goal
+
+Give Milestone 5 its execution half: a deterministic router that picks a compatible active
+compiled workflow or the full agent (M5-T3); one typed `FallbackReason` union reconciling M4's six
+stop reasons with the build plan's eight (M5-T4); escalation that actually reaches the full agent
+(M5-T5); the fallback envelope handed over through a documented runtime boundary with trusted node
+outputs, evidence references and a recalculated remaining budget (M5-T6); and a rolling-window
+circuit breaker that retires a misbehaving active version (M5-T7). Recorded in ADR-0044.
+
+### Implementation references
+
+- package/version: `eve` 0.63.0, resolved at
+  `node_modules/.pnpm/eve@0.63.0_ai@7.0.107_zod@4.6.5_/node_modules/eve/package.json`
+  (the version `packages/runtime-eve/package.json` pins).
+- installed docs read: `eve/docs/guides/client/messages.mdx` ("Send a full turn payload" and the
+  `clientContext` paragraph), `eve/docs/guides/client/output-schema.mdx` (a `clientContext` beside
+  an `outputSchema` on the same turn), `eve/docs/concepts/sessions-runs-and-streaming.md`
+  (turn-scoped `clientContext` is accepted only when the session is created **with** a message),
+  `eve/docs/concepts/context-control.md` (the recommended context layout, and why runtime data
+  belongs in the narrowest surface rather than in instructions),
+  `eve/docs/concepts/state.md`.
+- official docs/repos/examples read: none beyond the installed package; the installed docs are
+  authoritative per AD-011 and they establish the surface.
+- public types/exports inspected: `eve/dist/src/protocol/message.d.ts`
+  (`HandleMessageRequestBody.clientContext?: string | readonly string[] | JsonObject`, documented
+  as "turn-scoped client/page context; the channel converts it into internal model context for
+  every model call in that turn"), `eve/dist/src/client/types.d.ts` line 102 (the same type on the
+  client's send-turn input), `eve/dist/src/harness/turn-client-context.d.ts`
+  (`TurnClientContextState`: the ephemeral per-turn context messages and their insertion index).
+- selected documented pattern: the fallback envelope travels as a JSON object under a
+  `harness.fallback` key inside the existing `clientContext` object that
+  `EveAgentRuntime` already sends with `sessions.create()`. eve JSON-serializes a
+  `clientContext` object into one user-role context message that every model call in the turn
+  sees, then discards it before the next turn — exactly the lifetime of a one-shot fallback
+  handoff, and the same surface `jobClientContext(job)` already uses. No documented size limit
+  exists for `clientContext` in 0.63.0; none is assumed.
+- not documented, therefore harness-owned: the **key name and the shape** of the envelope inside
+  `clientContext`. eve documents the transport, not a schema for it, so `harness.fallback` and its
+  field names are the harness's own contract, stated in `docs/architecture/runtime.md` and in
+  `docs/research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`.
+
+### Work completed
+
+- (in progress)
+
+### Files changed
+
+- (in progress)
+
+### Verification
+
+- (pending)
+
+### Decisions / deviations
+
+- (pending)
+
+### Known issues / blockers
+
+- No model credential on this host, so the live example agent cannot run. The credential-free eve
+  fixture agent and `createFakeAgentRuntime()` stand in as full agents.
+
+### Next exact step
+
+Implement the core contract changes (`FallbackReason`, `FallbackContext.detail`/`nodeId`,
+`ExecutionContext.fallback`, `AgentExecution.workflowVersionId`/`fallbackCount`,
+`RunFinish.workflowVersionId`, `RunFilter.workflowVersionId`), then the runtime reason mapping,
+then `createRouter()` and `createCircuitBreaker()` in `@internal/registry`.
+
+## 2026-09-20 21:10 — M3-T3/M3-T7/M3-T8/M3-T9 — Decision persistence, `verify`, and the neutral and calibration fixtures
+
+**Status:** completed
+**Actor/session:** coding agent (`m3-persist`, Claude Opus 5)
+**Commit:** not committed
+
+### Goal
+
+Finish Milestone 3's second half. Persist the complete evidence of every Jev decision as one
+record whose raw result and policy outcome are separate fields (M3-T3), with a new migration
+filling the `decisions` placeholder table, both `Storage` implementations, and a pure
+`replayDecisions()` that re-routes stored evidence through a changed policy with no engine call.
+Add a `verify` primitive in core that compiles configured output fields into boolean questions over
+evidence and returns explicit repair instructions for the fields the evidence does not support
+(M3-T7). Replace the example's deterministic fixture decision port with real registered questions,
+a versioned policy and a credential-selected engine (M3-T8), and add a labeled calibration fixture
+that reports the five metrics the build plan names (M3-T9). Then verify all seven of the
+milestone's acceptance criteria with dated evidence. Recorded in ADR-0045.
+
+### Implementation references
+
+- package/version: `ai@7.0.107` (the version `packages/decision-jev/package.json` pins);
+  `@supabase/supabase-js` as pinned by `packages/storage-supabase/package.json`; Supabase CLI as
+  pinned in the root `devDependencies`.
+- installed docs read: `node_modules/ai/docs/03-ai-sdk-core/32-evaluation.mdx` and
+  `docs/07-reference/01-ai-sdk-core/14-evaluate.mdx`, re-read for what a result actually carries:
+  a boolean answer has a **required** `probability`, a choice/score distribution is **optional**,
+  and there is **no cost field anywhere** — which is why `decisions.cost_usd` is nullable and is
+  `null` for every row this milestone writes.
+- official docs/repos/examples read: none beyond the installed package; AD-011 makes the installed
+  docs authoritative and they establish the surface.
+- public types/exports inspected: `ai`'s `Experimental_EvaluationResult`/`Experimental_EvaluationAnswer`
+  (no cost, optional `probabilities`), and this repository's own `DecisionResult`,
+  `PolicyOutcome`, `Policy`, `deriveConfidence`, `bandFor` in `packages/core/src/decision.ts`.
+- selected documented pattern: persistence lives **inside** `createDecisionPort()` rather than in
+  the workflow runtime, so the one place that already turns a `jev` node into an engine call is the
+  one place that records what the call produced; the record's columns follow
+  `20260920202604_workflow_registry_columns.sql`'s model of dropping the `payload jsonb`
+  placeholder and denormalizing exactly the fields a query needs.
+- not documented, therefore harness-owned: the decision record's shape and its column set, the
+  raw-result/policy-outcome split, `replayDecisions()`, the `verify` compilation and its repair
+  strings, and the calibration metrics. All recorded in ADR-0045.
+
+### Work completed
+
+- **M3-T3.** `DecisionRecord`, `parseDecisionRecord()` and the pure `replayDecisions()` in
+  `packages/core/src/decision-record.ts`; `saveDecision()`/`listDecisions()` on the `Storage` port;
+  a new migration filling the `decisions` placeholder; both storage implementations plus seven new
+  cases in the shared contract suite; and persistence wired into `createDecisionPort()`, which now
+  also applies a policy and returns `route` beside the answer.
+- **M3-T7.** `compileVerification()`/`readVerification()` in `packages/core/src/verify.ts`,
+  engine-agnostic by construction, with per-field boolean questions over one shared state and
+  three-way repair sentences.
+- **M3-T8.** `apps/example-agent/src/decisions/`: the three registered questions as one bundle, the
+  versioned `vendor-triage.route` policy, credential-selected engine, and the question registry and
+  decision-port factory. `createFixtureDecisionPort()` and its test deleted; the workflow's branch
+  moved from `["category"]` to `["route"]`; the two domain node schemas and both `code` handlers
+  updated to the new node-output shape.
+- **M3-T9.** `runCalibration()`/`renderCalibrationReport()`, sixteen labeled cases over the three
+  frozen vendors plus eleven synthetic ones, and
+  `pnpm --filter @internal/example-agent run calibrate`.
+- **Docs.** ADR-0045 plus its row and paragraph in `docs/decisions/README.md`; persistence, replay,
+  `verify` and calibration sections in `docs/contracts/decision-engine.md`; the two methods and a
+  `DecisionRecord` section in `docs/contracts/storage.md`; the decision layer and calibration in
+  `docs/examples/README.md`; a decisions section in `docs/runbooks/inspecting-a-run.md`; a "What M3
+  added" table in `supabase/migrations/README.md`; and the four task results plus seven dated
+  acceptance criteria in the M3 status file.
+
+### Files changed
+
+- `packages/core/src/decision-record.ts`, `decision-record.test.ts`, `verify.ts`, `verify.test.ts`
+  (new); `storage.ts`, `index.ts`, `harness.test.ts` (edited)
+- `packages/workflow/src/runtime/decision-port.ts`, `decision-port.test.ts`, `runtime/index.ts`,
+  `index.ts`
+- `packages/storage-supabase/src/supabase-storage.ts`, `storage.contract.test.ts`,
+  `database.types.ts` (regenerated)
+- `packages/testing/src/in-memory-storage.ts`
+- `packages/trace/src/storage-sink.test.ts` (two `Storage` stubs gained the two methods)
+- `supabase/migrations/20260920205520_decisions_columns.sql` (new), `supabase/migrations/README.md`
+- `apps/example-agent/src/decisions/{questions,triage-policy,engine,registry,calibration,calibration-cases,calibrate,index}.ts`
+  and `{engine,triage-policy,calibration}.test.ts`, `live-jev.integration.test.ts` (all new)
+- `apps/example-agent/src/workflow/fixture-decision-port.ts` and its test (**deleted**)
+- `apps/example-agent/src/workflow/vendor-triage-workflow.ts`, `vendor-triage-workflow.test.ts`,
+  `vendor-triage-run.test.ts`; `src/domain/schemas.ts`; `src/handlers/finalize-clear-triage.ts` and
+  `decide-verified-triage.ts` with their tests; `src/run.ts` (decision-port region only);
+  `package.json` (`calibrate` script, `@internal/decision-jev` dependency)
+- `docs/decisions/0045-decision-evidence-is-one-record-with-the-raw-result-and-the-policy-outcome-apart.md`
+  (new); `docs/decisions/README.md`, `docs/contracts/README.md`, `docs/contracts/decision-engine.md`,
+  `docs/contracts/storage.md`, `docs/examples/README.md`, `docs/runbooks/inspecting-a-run.md`,
+  `docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`
+
+### Verification
+
+- `pnpm supabase:reset` — PASS (all seven migrations applied from an empty database, in filename
+  order, including `20260920205520_decisions_columns.sql`)
+- `pnpm supabase:types` run twice, the two outputs compared byte for byte — PASS (identical;
+  `decisions` gains ten columns and loses `payload`)
+- `pnpm check` — PASS (format:check, lint, typecheck, test, build, check:handoff)
+- `pnpm test` — PASS, 1484 passed / 68 skipped across 82 files
+- `set -a; source .env.local; set +a; pnpm test:contract` — PASS, 97 tests, **both** legs of
+  `storage.contract.test.ts` (in-memory and real local Supabase) including the seven new decision
+  cases
+- `set -a; source .env.local; set +a; pnpm test:integration` — PASS, 34 passed / 3 skipped; the two
+  skips are the `live:jev` files, which print their reason
+- `pnpm --filter @internal/example-agent run calibrate` — PASS: 16 cases, accuracy 100.0%,
+  uncertain band 12.5%, false auto 0.0%, fallback 12.5%, exit 0
+- Three real runs of `pnpm example:run:mock -- --workflow` against local Supabase:
+
+  | Vendor | Run id | Route | `decisions` rows |
+  | --- | --- | --- | --- |
+  | Northwind Ledger | `01a0c0ad-359e-7001-a2d9-73515254a721` | `clear` | 1 |
+  | Tessellate Analytics | `01a0c0ad-5b44-7001-afc3-e5a721f3ca9f` | `research` | 2 |
+  | Aurelia Freight | `01a0c0ad-6d8a-7001-bb78-03c5bcedc8e7` | `uncertain` | 1 |
+
+  The `research` run's two rows are `classify` with `policy->>'route' = 'research'` and `verify`
+  with `policy is null`, which is the raw/policy separation visible in the database.
+  `pnpm harness run show 01a0c0ad-5b44-7001-afc3-e5a721f3ca9f` lists both decisions by
+  `questionId` in its Calls section — PASS
+
+### Decisions / deviations
+
+- **The policy is attached to a question bundle, not to the decision port** (AD-016; recorded in
+  ADR-0045). The task brief suggested a port-level `policy?` option; one port serves every `jev`
+  node in a workflow and two nodes ask different questions, so a port-level policy would
+  necessarily be wrong for one of them. The vendor fixture's `verify` node, which has none, is the
+  case that makes this concrete.
+- **A `jev` node's output gained `route`, `reasons` and `answers`**, and `answers` carries bare
+  values rather than per-question confidence and band. The full evidence is in the stored record,
+  which `decisionId` points at; copying it into every downstream node's input would duplicate it in
+  the trace as well.
+- **The vendor `category` question is the SOP's five categories, not `clear | research |
+  uncertain`.** The brief allowed either; keeping the route inside the answer would have made the
+  policy layer and the batch decorative in the one fixture that exists to demonstrate them. The
+  branch therefore selects on `["route"]`, the workflow's IR fingerprint changed, and `finalize`
+  now reports the decided category.
+- **The fixture engine reads the category from the vendor's stated offering first**, falling back to
+  its documents. The M4-T10 placeholder matched the whole evidence text, and the freight vendor's
+  evidence contains an invoice dispute, which would have filed a freight forwarder under finance.
+  Every other rule is carried over verbatim, and the three demo routes are unchanged.
+- **`verify` is not wired into the vendor workflow's `research` route.** Feeding repair
+  instructions back would need a node that re-enters an agent node with a repaired input, which the
+  IR does not express; the M3-T7 section of the status file records what M6 would add. The
+  primitive and its acceptance criterion are complete without it.
+- **The false-auto rate excludes fallbacks.** A case that fell back was not acted on, so a raised
+  threshold can cost accuracy but can never raise the number that measures being confidently wrong.
+  A test asserts that trade directly.
+
+### Known issues / blockers
+
+- **No model credential on this host**, so live Jev has never been run. The fixture engine is the
+  default and the two `live:jev` files skip with a printed reason.
+- **`runs.jev_calls` is still `0` for a run that made decisions.** `createHarness()` writes a
+  literal `0` (`packages/core/src/harness.ts`) and nothing on `AgentExecution` reports a Jev count,
+  so the ledger column was never wired; the trace's `decision.*` spans and the new `decisions` rows
+  are both correct and agree with each other. `harness.ts` belongs to the concurrent M5 router task,
+  so this is left for whoever owns that file next; `docs/runbooks/inspecting-a-run.md` records the
+  gap and says to count `decision.completed` events or query `decisions` instead.
+
+### Next exact step
+
+Commit M3-T3/T7/T8/T9 with ADR-0045, then wire `runs.jev_calls` from the runtime's own usage so the
+ledger column agrees with the `decisions` table.
+
+## 2026-09-20 22:40 — M5-T3..M5-T7 — Router, fallback contract, full-agent escalation, fallback handoff, circuit breaker
+
+**Status:** completed
+**Actor/session:** coding agent (`m5-router`)
+**Commit:** not committed
+
+### Goal
+
+As in the `started` entry above: the execution half of Milestone 5. The `Implementation references`
+checkpoint for the eve-facing half is in that entry and is not repeated here.
+
+### Work completed
+
+- **Core contract (M5-T4).** `FallbackReason` is now the build plan's eight
+  (`low_confidence | unsupported_case | missing_evidence | budget | tool_failure | schema_mismatch |
+  policy | workflow_error`); M4's six are gone rather than kept beside them. `FallbackContext`
+  gained `detail: string` and `nodeId: NodeId | null`. `ExecutionContext` and
+  `CreateExecutionContextInput` gained an optional `fallback?: FallbackContext`, imported
+  type-only from `workflow-ir.ts` so the existing `Budget` import does not close a runtime cycle.
+  `AgentExecution` gained optional `workflowVersionId` and `fallbackCount`;
+  `createHarness()` reads them once after the runtime returns and copies them into `RunFinish`.
+  `RunFinish.workflowVersionId` is optional (absent leaves the column as `startRun` wrote it) and
+  `RunFilter` gained `workflowVersionId`.
+- **Workflow runtime.** `escalationReasonFor(cause, nodeType)` maps the interpreter's causes onto
+  the eight; an `escalate` node raises `unsupported_case` with its authored prose as `detail`; an
+  exhausted node's `detail` now carries the underlying message. The envelope gained `detail`,
+  `nodeId` and real `evidenceRefs` (`artifact:<id>` per completed `artifact` node), and an
+  `escalate` node is **no longer listed** in `completedNodes`, because it produces a
+  `FallbackContext` rather than a value. `EscalatedWorkflowRun` gained `fallbackSpanId`, the id of
+  the `fallback.started` event, and that event's payload gained `trustedNodes` and `evidenceRefs`
+  counts. `asAgentRuntime()`'s escalated-to-failed mapping is unchanged in behaviour; its comment
+  now says the router is the fallback path.
+- **`@internal/registry` (M5-T3, M5-T5, M5-T6, M5-T7).** New `router.ts`: `createRouter()` returns
+  `AgentRuntime & { route(job) }`, resolves per run, compiles per version (cached), runs the
+  matched workflow, and on `escalated` invokes the full agent with the envelope, a recalculated
+  budget and a recorder rooted at the fallback span, then records `fallback.completed`. New
+  `circuit-breaker.ts`: `evaluate()` over the last N finished runs of one version, `trip()` through
+  the registry. New `test-workflow.ts` fixture, compiled for real. Both exported by name from
+  `src/index.ts`.
+- **eve adapter.** `jobClientContext(job, context)` adds `harness.fallback` to the turn's
+  `clientContext` when `context.fallback` is set, converted field by field by
+  `fallbackClientContext()`.
+- **Storages.** Both `finishRun` implementations write `workflow_version_id` when the field is
+  present and leave it alone when it is absent; both `listRuns` implementations filter on it.
+- **Example.** `src/run.ts`'s `--workflow` path now builds a router over a registry (the run's
+  `Storage` when configured, in-memory otherwise), registering and promoting the compiled workflow
+  idempotently on its IR fingerprint. New `--no-register-workflow` flag gives the router an empty
+  registry so the unmatched case is one flag away. `agent/instructions.md` gained a paragraph on
+  reading `harness.fallback`.
+- **Docs.** ADR-0044; a dated amendment note in ADR-0040; rows and prose in
+  `docs/decisions/README.md` (including the missing ADR-0043 table row, see deviations); the
+  envelope section of `docs/contracts/workflow-ir.md`; a "Router and fallback" section in
+  `docs/contracts/workflow-registry.md`; a fallback sequence in
+  `docs/architecture/workflow-runtime.md`; a `clientContext` subsection in
+  `docs/architecture/runtime.md`; the research note and its index entry; a fallback-run section in
+  `docs/runbooks/inspecting-a-run.md`; the router demo in `docs/examples/README.md`; the M5 status
+  file's `### M5-T3` .. `### M5-T7` results and its rewritten acceptance criteria.
+
+### Files changed
+
+- `packages/core/src/workflow-ir.ts`, `context.ts`, `agent-runtime.ts`, `harness.ts`, `storage.ts`
+- `packages/core/src/workflow-ir.test.ts`
+- `packages/workflow/src/runtime/workflow-runtime.ts`, `workflow-runtime.test.ts`
+- `packages/registry/src/router.ts`, `circuit-breaker.ts`, `test-workflow.ts`, `router.test.ts`,
+  `circuit-breaker.test.ts`, `index.ts`
+- `packages/runtime-eve/src/eve-agent-runtime.ts`, `eve-agent-runtime.test.ts`,
+  `eve-agent-runtime.contract.test.ts`
+- `packages/storage-supabase/src/supabase-storage.ts`, `storage.contract.test.ts`
+- `packages/testing/src/in-memory-storage.ts`
+- `packages/observability/src/cli.ts` (one target-list marker)
+- `apps/example-agent/src/run.ts`, `package.json`, `agent/instructions.md`,
+  `src/workflow/vendor-triage-fallback.test.ts`, `src/workflow/vendor-triage-run.test.ts`
+- `docs/decisions/0044-*.md`, `docs/decisions/0040-*.md`, `docs/decisions/README.md`,
+  `docs/contracts/workflow-ir.md`, `docs/contracts/workflow-registry.md`, `docs/contracts/README.md`,
+  `docs/architecture/workflow-runtime.md`, `docs/architecture/runtime.md`,
+  `docs/research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`,
+  `docs/research/vercel/README.md`, `docs/runbooks/inspecting-a-run.md`, `docs/examples/README.md`,
+  `docs/milestones/m5-workflow-registry-router-and-fallback.md`, `docs/progress/WORKLOG.md`
+
+### Verification
+
+- `pnpm format` — PASS (244 files, no fixes applied)
+- `pnpm lint` — PASS (245 files, no fixes applied)
+- `pnpm test` — PASS: 1482 passed, 66 skipped, 82 files, with no Supabase env.
+- `pnpm test` with `.env.local` exported — PASS: 1559 passed, 3 skipped (the three remaining skips
+  are `@internal/decision-jev`'s `live:jev` integration tests, which need a model credential).
+- `pnpm vitest run --project contract packages/storage-supabase` with `.env.local` exported — PASS:
+  89 passed, including the two new cases (the `workflowVersionId` run filter, and `finishRun`
+  writing the column when present and leaving it alone when absent) against **both** the Supabase
+  and in-memory implementations.
+- `pnpm vitest run --project contract packages/runtime-eve` — PASS: 8 passed, including the new
+  "sends a fallback envelope as turn-scoped clientContext a real server accepts (M5-T6)" against a
+  real `eve dev` server with no credential.
+- `pnpm --filter @internal/example-agent exec eve info` — PASS: 0 errors, 0 warnings, after the
+  instructions change.
+- `pnpm typecheck` — PASS (12/12 tasks). It failed three times mid-session with
+  `@internal/workflow: src/runtime/decision-port.test.ts(275,14): error TS18048: 'category' is
+  possibly 'undefined'` and two more in the same file, none of them from this task; the concurrent
+  M3-T3 persistence session fixed them in the same window. Recorded because the failure was real
+  and cost a re-run, not because it is outstanding.
+- `pnpm build` — PASS (12 tasks).
+- **`pnpm check` — PASS, exit 0** (re-run after the M3 fix landed, from a clean invocation rather
+  than a turbo cache replay of an earlier stage): 1484 passed, 68 skipped, 82 files with no
+  Supabase env; 1563 passed, 3 skipped with `.env.local` exported.
+- Demo runs against local Supabase (`pnpm example:run:mock`), all exit 0:
+  - `-- --workflow --vendor "Aurelia Freight"` → run `01a0c0ac-5ac4-7001-9a3b-be76b059b7ab`.
+    `pnpm harness run show` prints `route: 01a0c0ac-042d-7000-976e-ca5b4edf0bbf`,
+    `fallbacks: 1 (from the ledger)`, and the timeline
+    `node.completed` (escalate) → `fallback.started` → `agent.started` → `model.started` →
+    `model.completed` → `agent.completed` → `fallback.completed` → `run.completed` at sequences
+    8-15. Under M4 this command exited 1.
+  - `-- --workflow` → run `01a0c0ac-0454-7001-a5f7-00f6684b00b4`, same `route:`, `fallbacks: 0`.
+  - `-- --workflow --no-register-workflow` → run `01a0c0ac-e6c3-7001-99eb-82bd70a9964b`,
+    `route: full-agent`, `fallbacks: 0`, `workflow_version_id` null.
+
+### Decisions / deviations
+
+- **The brief's expectation that the `research` node is `trusted: true` was not followed.** ADR-0040
+  decides trust by *who produced the value*, and an `agent` node is probabilistic, so its output is
+  offered by reference with `trusted: false`. The brief also said to reuse ADR-0040's rule, so the
+  two halves of it conflicted; the recorded architecture won. The integration test asserts the
+  research node is present and untrusted, that the agent finishes without a tool call anyway, and
+  separately that a deterministic `branch` output **is** trusted.
+- **An `escalate` node is no longer listed in `completedNodes`.** It has no output, so its
+  `outputRef` resolved to nothing. Four existing M4 tests asserted the old behaviour and were
+  updated.
+- **`PermissionDeniedError` maps to `policy`.** The brief did not name it; a refused grant is a
+  policy refusal rather than a tool failure.
+- **`--no-register-workflow` gives the router a fresh in-memory registry** rather than skipping
+  registration against the durable one. Skipping would have demonstrated nothing: a previous run of
+  the command had already activated the version in Supabase, and the router correctly found it.
+  This was caught by running the demo and reading the ledger row, not by a test.
+- **`pnpm harness workflow list` was not built.** The task made it conditional on being a small
+  addition; it needs a new parsed command, two filter flags, a renderer and tests. The CLI's target
+  list marker now reads `not yet implemented (M5 landed the storage read)`.
+- **`@internal/testing` moved from `devDependencies` to `dependencies` in
+  `apps/example-agent`.** `src/run.ts` needs `createInMemoryStorage()` for the credential-free
+  registry path, and that function's own documentation already states it is "for tests **and for a
+  caller that wants a run's record without a database**".
+- **`@internal/decision-jev` was added to `apps/example-agent`'s dependencies.** The concurrent M3
+  session's `src/decisions/engine.ts` imports it and the dependency was not declared, which broke
+  `pnpm build` for everyone. Additive, and theirs to keep.
+- **The ADR index was missing a table row for ADR-0043.** Added beside 0044's rather than left as a
+  gap between 0042 and 0044.
+- `src/run.ts` and `apps/example-agent/package.json` were edited by this session and by the
+  concurrent M3 session in the same window; the merges are clean and `run.ts` now wires
+  `createVendorDecisionPort()` into the router's workflow runtime.
+
+### Known issues / blockers
+
+- **None blocking.** The `decision-port.test.ts` typecheck failure noted above is resolved.
+- `low_confidence` and `missing_evidence` are unreachable from the interpreter by design. **M3's
+  policy layer is what must raise them**, on a judgment whose confidence falls below its band.
+- `evidenceRefs` is non-empty only for a workflow with an `artifact` node; the vendor workflow has
+  none, so the demo's envelopes carry an empty list.
+
+### Next exact step
+
+Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end, so there is nothing left to wait
+on. The orchestrator owns the commit; this session does not commit or stage.
+
+One thing the M3 policy layer should know when it comes to raise `low_confidence`: `bandFor()`
+returns `human-review` both for a question with **no bands at all** and for one whose confidence
+falls below its `agentReview` threshold, so "uncalibrated" and "calibrated but uncertain" arrive at
+the same band. A policy that routes on the difference has to check `question.bands` itself.
+
+## 2026-09-20 23:35 — M5-T5, M5-T6 — Review follow-up: the envelope carries node outputs, not only references
+
+**Status:** completed
+**Actor/session:** coding agent (`m5-router`)
+**Commit:** not committed
+
+### Goal
+
+Close a real gap found in review of the entry above: `FallbackContext.completedNodes[]` carried
+`outputRef` and `trusted` and nothing else, so nothing downstream could dereference
+`node:research`. An eve agent is a model, not a process with a `Storage` handle, and
+`apps/example-agent/agent/instructions.md` was telling it to reuse trusted results it had no way
+to see. M5-T5's "the full agent should not blindly repeat completed research" was therefore
+unachievable in principle rather than merely unimplemented.
+
+### Work completed
+
+- `FallbackContext.completedNodes[]` gained `output: JsonValue | null` in
+  `packages/core/src/workflow-ir.ts`, beside the unchanged `outputRef`.
+- The interpreter builds entries with `output: null`; the **router** fills them from
+  `EscalatedWorkflowRun.nodes` (`withNodeOutputs`) and then applies the size budget
+  (`capFallbackOutputs`), so `asAgentRuntime()`'s `WorkflowError.details` stays lean and the budget
+  is applied once, in the only place that has an agent to hand the envelope to.
+- `FALLBACK_ENVELOPE_MAX_BYTES` is 64 KiB and harness-chosen, because eve documents no limit for
+  `clientContext` in its guides or its types. Over budget, the largest outputs drop to `null`
+  first, `outputRef` and `trusted` survive every drop, and `detail` names what was dropped.
+- `fallbackContextPayload` and the eve adapter's `fallbackClientContext` forward `output`.
+- `agent/instructions.md` now says the result is **in** `output`, what each `trusted` value means
+  for using it, and that a `null` output is the one case where the agent may have to re-establish
+  something.
+- Tests: five new `capFallbackOutputs` cases; the integration test's fake full agent now builds its
+  answer from the envelope via `triageFromEnvelope()` and returns visibly different evidence when
+  no envelope reached it, so the new "builds its answer out of the workflow's research, not out of
+  nothing" assertion (output `evidence`/`riskFlags`/`category` equal the workflow's) cannot pass by
+  matching a shared constant; the eve unit test that asserted the envelope carried **no** output was
+  replaced by one asserting a dropped output travels as an explicit `null` with its reason in
+  `detail`; the eve contract test now asserts `clientContext.harness.fallback.completedNodes[0].output`
+  crossed the wire to a real server.
+
+### Files changed
+
+- `packages/core/src/workflow-ir.ts`
+- `packages/workflow/src/runtime/workflow-runtime.ts`, `workflow-runtime.test.ts`
+- `packages/registry/src/router.ts`, `router.test.ts`, `index.ts`
+- `packages/runtime-eve/src/eve-agent-runtime.ts`, `eve-agent-runtime.test.ts`,
+  `eve-agent-runtime.contract.test.ts`
+- `apps/example-agent/agent/instructions.md`, `src/workflow/vendor-triage-fallback.test.ts`
+- `docs/decisions/0044-*.md`, `docs/contracts/workflow-ir.md`,
+  `docs/contracts/workflow-registry.md`, `docs/architecture/runtime.md`,
+  `docs/milestones/m5-workflow-registry-router-and-fallback.md`, `docs/progress/WORKLOG.md`
+
+### Verification
+
+- `pnpm check` — **PASS, exit 0**: 1490 passed, 68 skipped, 82 files.
+- `pnpm test` with `.env.local` exported — PASS: 1569 passed, 3 skipped.
+- `pnpm vitest run --project contract packages/runtime-eve` — PASS: 8 passed, against a real
+  `eve dev` server, including the `output` assertion on the created session's `clientContext`.
+- `pnpm --filter @internal/example-agent exec eve info` — PASS: 0 errors, 0 warnings.
+- `pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"` — exit 0, run
+  `01a0c0bd-7513-7000-9d5b-658849af969b`. Ledger: `workflow_version_id`
+  `01a0c0ac-042d-7000-976e-ca5b4edf0bbf` (unchanged, so idempotent re-registration worked),
+  `fallbackCount: 1`. Trace: `fallback.started` with
+  `completedNodes: 2, trustedNodes: 1, reason: unsupported_case`, then `fallback.completed` with
+  `outcome: completed, agentRuntime: eve`.
+
+### Decisions / deviations
+
+- **The review asked for `output` to be the validated output for `trusted: true` and `null` for
+  untrusted. That is not what was built, and it could not be.** In the worked example the expensive
+  completed node is `research`, an `agent` node, which ADR-0040 makes `trusted: false`; nulling
+  untrusted outputs would have made the review's own required test — the agent building its answer
+  from the research output — impossible. `output` is therefore carried for **every** node in
+  `completedNodes`. M5-T6's "failed/partial node output is not automatically reusable" still holds,
+  enforced by membership: everything listed validated, and a failed or partial node is absent
+  rather than present with a null output. `trusted` continues to govern how a value may be used.
+- **`output` is a deviation from build plan section 5**, recorded in ADR-0044 with three rejected
+  alternatives: references alone, trusted-only outputs, and persisting outputs behind a retrieval
+  tool (a second round trip, a new grant, and a durable store M4-T6 explicitly defers).
+- Node outputs now reach a model. They already passed a domain-authored schema and are the same
+  values the workflow's own `agent` node was handed, so no new class of content reaches the turn,
+  but the size budget rather than redaction is what bounds them. Noted in ADR-0044's negative
+  consequences.
+
+### Known issues / blockers
+
+- None.
+
+### Next exact step
+
+Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end.
+
+## 2026-09-21 00:20 — M5-T3 — Review follow-up: `runs.jev_calls` is a measurement, not a literal zero
+
+**Status:** completed
+**Actor/session:** coding agent (`m5-router`)
+**Commit:** not committed
+
+### Goal
+
+`packages/core/src/harness.ts` wrote `jevCalls: 0` as a literal, with a comment claiming a run
+makes no Jev calls. Since M3-T3 that is false: a `--workflow` run makes real decisions, each with a
+`decision.*` span and a row in `decisions`, and only the ledger column still read zero. Found by the
+M3 persistence session, which correctly did not fix it because the wiring runs through
+`AgentExecution`, the workflow runtime and the router.
+
+### Work completed
+
+- `AgentExecution` gained optional `jevCalls?: number`, beside `workflowVersionId` and
+  `fallbackCount`. It is deliberately **not** part of `AgentExecutionUsage`: a decision is not one
+  of the four dimensions a `Budget` limits, and the interpreter's one-model-call charge per
+  decision is a documented floor rather than a measurement of what the decision cost.
+- The workflow interpreter counts on `RunState.jevCalls`, incremented **immediately before**
+  `decisionEngine.decide()` so a call that throws still counts — it was made, and may have been
+  paid for. Counting at the call site rather than deriving from node records is deliberate: a
+  record's `attempts` counts retries of the whole node, including an attempt that failed input
+  validation before any engine was reached.
+- All four `WorkflowRunResult` variants carry `jevCalls` through a shared `WorkflowRunJevCalls`
+  interface, `asAgentRuntime()` forwards it, and the router carries it on every path — the
+  workflow path reports the run's count, and the fallback path reports
+  `result.jevCalls + (execution.jevCalls ?? 0)`, because reporting only the agent's half would make
+  the workflow's judgments free on the ledger.
+- `createHarness()` copies it into `RunFinish` alongside `fallbackCount`. Neither `Storage`
+  implementation changed: `RunFinish.jevCalls` already existed and both already wrote
+  `runs.jev_calls`, so only the harness's literal was wrong.
+
+### Files changed
+
+- `packages/core/src/agent-runtime.ts`, `harness.ts`
+- `packages/workflow/src/runtime/workflow-runtime.ts`
+- `packages/registry/src/router.ts`, `router.test.ts`
+- `apps/example-agent/src/workflow/vendor-triage-fallback.test.ts`
+- `docs/contracts/storage.md`, `docs/runbooks/inspecting-a-run.md`, `docs/progress/WORKLOG.md`
+
+### Verification
+
+- `pnpm check` — **PASS, exit 0**: 1491 passed, 68 skipped, 82 files.
+- `pnpm test` with `.env.local` exported — PASS: 1570 passed, 3 skipped.
+- Ledger rows read back from local Supabase through the `Storage` port:
+  - `01a0c0c2-28ee-7000-b77d-a9870d373c74` (`--workflow --vendor "Tessellate Analytics"`, the
+    research route, two `jev` nodes): **`jev_calls = 2`**, `fallback_count = 0`.
+    `pnpm harness run show` reports `jev: 2 calls, 18 ms total`, listing
+    `vendor-triage.classify` and `vendor-triage.evidence-supports`, so the column and the timeline
+    agree.
+  - `01a0c0c2-df82-7000-811b-d1d8eb9f3318` (`--workflow --vendor "Aurelia Freight"`, escalating at
+    `classify`): **`jev_calls = 1`**, `fallback_count = 1`, `workflow_version_id` set.
+- New tests: the router sums decisions across the handoff (workflow 2 + agent 1 = 3); the fixture
+  workflow's zero is asserted as a measurement; the integration test asserts `jev_calls` of 2, 1
+  and 0 on the research, escalation and full-agent-only ledger rows.
+
+### Decisions / deviations
+
+- **Counted at the `decide()` call site, not derived from node records**, and a throwing call
+  counts. Both stated above and in `docs/contracts/storage.md`.
+- **The SQL comment on `runs.jev_calls` still calls it a placeholder.** Migrations are append-only
+  and never hand-edited after the fact, so the comment in
+  `supabase/migrations/20260920030258_runs_outcome_ledger.sql` cannot be corrected in place.
+  `docs/contracts/storage.md` now carries a `jev_calls` section that says so and is the authority.
+- `docs/runbooks/inspecting-a-run.md` had a note, added by the M3 session, describing this exact
+  gap. It is now rewritten to say the column is wired and agrees with the timeline, leaving one
+  remaining inspector gap rather than two.
+
+### Known issues / blockers
+
+- None.
+
+### Next exact step
+
+Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end.

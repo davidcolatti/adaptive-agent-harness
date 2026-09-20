@@ -149,8 +149,22 @@ export interface NodeExecutionRecord {
   readonly error?: SerializedHarnessError;
 }
 
+/**
+ * How many decisions a run asked for, on every {@link WorkflowRunResult}.
+ *
+ * Separate from {@link AgentExecutionUsage}'s four dimensions because a Jev
+ * decision is not a model call in the sense a budget limits — the interpreter
+ * charges the budget one model call per decision, which is a floor rather than
+ * a measurement — and `runs.jev_calls` is a ledger column of its own that M6
+ * and M7 compare against cost.
+ */
+interface WorkflowRunJevCalls {
+  /** Decisions asked of a `jev` node's engine, including ones that threw. */
+  readonly jevCalls: number;
+}
+
 /** The workflow produced an output that satisfied the workflow's `outputSchema`. */
-export interface CompletedWorkflowRun {
+export interface CompletedWorkflowRun extends WorkflowRunJevCalls {
   readonly status: "completed";
   /** The terminal node's validated output. */
   readonly output: unknown;
@@ -169,7 +183,7 @@ export interface CompletedWorkflowRun {
  * validator (M4-T4/M4-T9) is expected to have rejected, so reporting them as a
  * fallback would hide a bug behind a working system.
  */
-export interface FailedWorkflowRun {
+export interface FailedWorkflowRun extends WorkflowRunJevCalls {
   readonly status: "failed";
   /** The defect, in its trace-safe form. */
   readonly error: SerializedHarnessError;
@@ -178,17 +192,31 @@ export interface FailedWorkflowRun {
 }
 
 /** `ExecutionContext.signal` fired. */
-export interface AbortedWorkflowRun {
+export interface AbortedWorkflowRun extends WorkflowRunJevCalls {
   readonly status: "aborted";
   readonly usage: AgentExecutionUsage;
   readonly nodes: readonly NodeExecutionRecord[];
 }
 
 /** The compiled path gave up and handed the job back, with what it had established. */
-export interface EscalatedWorkflowRun {
+export interface EscalatedWorkflowRun extends WorkflowRunJevCalls {
   readonly status: "escalated";
   /** Build plan section 5's envelope, ready for M5's router to hand to the full agent. */
   readonly fallback: FallbackContext;
+  /**
+   * The id of this escalation's `fallback.started` event, the span the full
+   * agent's own events hang off (M5-T5, ADR-0044).
+   *
+   * The runtime records `fallback.started` because it is the only thing that
+   * knows *why* the compiled path stopped; the router is the only thing that
+   * knows what happens next, so it parents the agent run on this id and closes
+   * the span with `fallback.completed`. Returning the id is what links the two
+   * halves without either one having to emit the other's event.
+   *
+   * Always present: a `TraceRecorder` stamps an id on every event it accepts,
+   * whether the writer behind it persists, buffers or discards.
+   */
+  readonly fallbackSpanId: TraceEventId;
   readonly usage: AgentExecutionUsage;
   readonly nodes: readonly NodeExecutionRecord[];
 }
@@ -316,6 +344,17 @@ interface RunState {
   readonly records: NodeExecutionRecord[];
   readonly ledger: BudgetLedger;
   readonly startedAtMs: number;
+  /**
+   * How many decisions this run asked a `jev` node's engine for (M3, M5).
+   *
+   * Counted where `decide()` is actually invoked rather than derived from the
+   * node records afterwards, because a record's `attempts` counts retries of
+   * the whole node — including an attempt that failed input validation before
+   * any engine was reached — and `runs.jev_calls` is meant to be what the
+   * decision layer was asked to do. A call that threw still counts: it was
+   * made, and it may well have been paid for.
+   */
+  jevCalls: number;
 }
 
 /** Where a node sits in the traversal: its trace parent and its `map` element. */
@@ -507,30 +546,51 @@ function isRetryable(cause: unknown): boolean {
 }
 
 /**
- * Which fallback reason an exhausted node escalates with.
+ * Which fallback reason a stopped node or run escalates with (ADR-0044).
  *
  * `FallbackReason` is a closed union whose members are stored, aggregated and
  * compared (M5 counts fallbacks per reason), so the mapping is explicit rather
- * than a catch-all.
+ * than a catch-all. It maps the interpreter's *mechanical* causes onto the
+ * build plan's eight "why the compiled path could not be trusted" reasons:
+ *
+ * | Cause | Reason |
+ * | --- | --- |
+ * | `BudgetExceededError`, a node timeout | `budget` |
+ * | `ValidationError` (a node's or the workflow's own schema) | `schema_mismatch` |
+ * | `PermissionDeniedError` | `policy` |
+ * | anything else in a `call` node | `tool_failure` |
+ * | anything else, including an unusable `jev` answer | `workflow_error` |
+ *
+ * `nodeType` is what separates the last two rows: a tool that kept failing is a
+ * fact about the world the workflow depends on, and a handler that threw is a
+ * fact about the workflow, and a human triaging a spike of fallbacks needs to
+ * know which. It is `null` when the workflow itself stopped rather than a node.
+ *
+ * Two members are deliberately unreachable from here. `unsupported_case` is
+ * raised only by an `escalate` node, which is an authored decision rather than
+ * a failure, and `low_confidence` and `missing_evidence` belong to a policy
+ * layer that reads a judgment's confidence — M3's, not the interpreter's. A
+ * decision the engine could not produce at all is a `workflow_error`, because
+ * no judgment was made and "low confidence" would claim one was.
  */
-function escalationReasonFor(cause: unknown): FallbackReason {
-  if (cause instanceof BudgetExceededError) {
-    return "budget-exceeded";
-  }
-
-  if (cause instanceof NodeTimeoutError) {
-    return "timeout";
+function escalationReasonFor(cause: unknown, nodeType: WorkflowNodeType | null): FallbackReason {
+  if (cause instanceof BudgetExceededError || cause instanceof NodeTimeoutError) {
+    return "budget";
   }
 
   if (cause instanceof ValidationError) {
-    return "validation-failed";
+    return "schema_mismatch";
+  }
+
+  if (cause instanceof PermissionDeniedError) {
+    return "policy";
   }
 
   if (cause instanceof DecisionError) {
-    return "decision-failed";
+    return "workflow_error";
   }
 
-  return "node-failed";
+  return nodeType === "call" ? "tool_failure" : "workflow_error";
 }
 
 /**
@@ -544,6 +604,8 @@ function escalationReasonFor(cause: unknown): FallbackReason {
 export function fallbackContextPayload(fallback: FallbackContext): JsonObject {
   return {
     reason: fallback.reason,
+    detail: fallback.detail,
+    nodeId: fallback.nodeId,
     workflow: {
       id: fallback.workflow.id,
       version: fallback.workflow.version,
@@ -553,6 +615,7 @@ export function fallbackContextPayload(fallback: FallbackContext): JsonObject {
       nodeId: node.nodeId,
       outputRef: node.outputRef,
       trusted: node.trusted,
+      output: node.output,
     })),
     evidenceRefs: [...fallback.evidenceRefs],
     remainingBudget: { ...fallback.remainingBudget },
@@ -607,7 +670,15 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
     // many times, and the agent cares which nodes established something rather
     // than how many attempts it took. The last completed execution of a node
     // wins, because that is the output run state is holding.
-    const completed = new Map<NodeId, { readonly outputRef: string; readonly trusted: boolean }>();
+    const completed = new Map<
+      NodeId,
+      { readonly outputRef: string; readonly trusted: boolean; readonly output: JsonValue | null }
+    >();
+    // Every artifact this run stored, in save order and deduplicated. An
+    // `artifact` node's validated output is `{ artifactId, name, … }`, so the
+    // references are read off the records rather than invented: an invented
+    // reference would be worse than none, because the agent would follow it.
+    const evidence = new Set<string>();
 
     for (const record of state.records) {
       if (record.status !== "completed") {
@@ -616,23 +687,48 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
 
       const node = state.definition.nodes[record.nodeId];
 
+      // An `escalate` node "completes" — it ran, and its span closed — but it
+      // produces a `FallbackContext` rather than a value, so it has no output
+      // for `outputRef` to point at. Listing it would hand the agent a
+      // reference that resolves to nothing, which is the one thing worse than
+      // omitting it.
+      if (node?.type === "escalate") {
+        continue;
+      }
+
       completed.set(record.nodeId, {
         outputRef: `node:${record.nodeId}`,
         trusted: node !== undefined && isTrustedNode(node),
+        // **The interpreter leaves this null and the router fills it**
+        // (ADR-0044). The value is on the record this loop is reading, but
+        // carrying it here would put every node output inside the
+        // `WorkflowError.details` that `asAgentRuntime()` builds, where nothing
+        // reads it and a trace has to store it. The router is the only caller
+        // that has an agent to hand it to, and it is where the size budget is
+        // applied.
+        output: null,
       });
+
+      if (node?.type === "artifact") {
+        const artifactId = readArtifactId(record.output);
+
+        if (artifactId !== null) {
+          evidence.add(`artifact:${artifactId}`);
+        }
+      }
     }
 
     return {
       reason: escalation.fallbackReason,
+      detail: escalation.detail,
+      nodeId: escalation.nodeId,
       workflow: {
         id: state.definition.id,
         version: state.definition.version,
         fingerprint: state.workflow.fingerprint,
       },
       completedNodes: [...completed].map(([nodeId, entry]) => ({ nodeId, ...entry })),
-      // Empty until M5 persists node outputs and evidence as artifacts. An
-      // invented reference would be worse than none: the agent would follow it.
-      evidenceRefs: [],
+      evidenceRefs: [...evidence],
       remainingBudget: state.ledger.remaining(nowMs()),
     };
   };
@@ -798,6 +894,10 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
     });
 
     let answer: JsonValue;
+
+    // Before the call, not after it: a decision that throws was still asked
+    // for. See `RunState.jevCalls`.
+    state.jevCalls += 1;
 
     try {
       answer = await decisionEngine.decide({
@@ -1445,9 +1545,9 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
     // run. North-star invariant 1: a domain can always fall back to its full
     // agent, and this is the case that exists for.
     throw new Escalation(
-      escalationReasonFor(lastCause),
+      escalationReasonFor(lastCause, node.type),
       node.id,
-      `node \`${node.id}\` failed after ${attempt} attempt(s)`,
+      `node \`${node.id}\` failed after ${attempt} attempt(s): ${messageOf(lastCause)}`,
     );
   };
 
@@ -1490,7 +1590,11 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
       const outcome = await runNode(state, node, scope);
 
       if (outcome.kind === "escalate") {
-        throw new Escalation("escalate-node", node.id, outcome.reason);
+        // The designed exit, not a failure: the author wrote this branch to give
+        // up, and `unsupported_case` is what "this graph has no route it can
+        // justify for this job" is called (ADR-0044). The node's authored prose
+        // becomes the envelope's `detail`, which is why the IR needs no change.
+        throw new Escalation("unsupported_case", node.id, outcome.reason);
       }
 
       state.outputs.set(node.id, outcome.output);
@@ -1517,6 +1621,7 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
       records: [],
       ledger: createBudgetLedger(context.budget, startedAtMs),
       startedAtMs,
+      jevCalls: 0,
     };
     const { definition } = state;
 
@@ -1561,10 +1666,16 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
         output: validOutput,
         usage: usageOf(state),
         nodes: state.records,
+        jevCalls: state.jevCalls,
       };
     } catch (cause) {
       if (cause instanceof RunAborted) {
-        return { status: "aborted", usage: usageOf(state), nodes: state.records };
+        return {
+          status: "aborted",
+          usage: usageOf(state),
+          nodes: state.records,
+          jevCalls: state.jevCalls,
+        };
       }
 
       const escalation = asEscalation(cause);
@@ -1576,12 +1687,13 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
           error: serializeError(cause),
           usage: usageOf(state),
           nodes: state.records,
+          jevCalls: state.jevCalls,
         };
       }
 
       const fallback = fallbackFor(state, escalation);
 
-      await context.trace.record({
+      const started = await context.trace.record({
         type: "fallback.started",
         node: escalation.nodeId,
         parentId: context.trace.rootId,
@@ -1593,10 +1705,22 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
           nodeId: escalation.nodeId,
           detail: escalation.detail,
           completedNodes: fallback.completedNodes.length,
+          // How many of those the agent may build on. The count rather than the
+          // list, because the list is the envelope's and a trace payload stays
+          // identity-sized (ADR-0031).
+          trustedNodes: fallback.completedNodes.filter((node) => node.trusted).length,
+          evidenceRefs: fallback.evidenceRefs.length,
         },
       });
 
-      return { status: "escalated", fallback, usage: usageOf(state), nodes: state.records };
+      return {
+        status: "escalated",
+        fallback,
+        fallbackSpanId: started.id,
+        usage: usageOf(state),
+        nodes: state.records,
+        jevCalls: state.jevCalls,
+      };
     }
   };
 
@@ -1632,23 +1756,34 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
               output: result.output as TOutput,
               usage: result.usage,
               runtime,
+              jevCalls: result.jevCalls,
             };
 
           case "failed":
-            return { status: "failed", error: result.error, usage: result.usage, runtime };
+            return {
+              status: "failed",
+              error: result.error,
+              usage: result.usage,
+              runtime,
+              jevCalls: result.jevCalls,
+            };
 
           case "aborted":
-            return { status: "aborted", usage: result.usage, runtime };
+            return { status: "aborted", usage: result.usage, runtime, jevCalls: result.jevCalls };
 
           case "escalated": {
-            // **M5 replaces this mapping.** An escalation is not a failure: it
-            // is the compiled path saying "hand this to the full agent, and here
-            // is what I already established". `AgentRuntime` has no such status,
-            // because in M4 there is no router to hand it to, so the envelope
-            // travels in a `WorkflowError`'s `details`, where a caller and a
-            // trace can both read it. When M5's router exists it calls
-            // `WorkflowRuntime.run()` directly, reads `result.fallback`, and
-            // invokes the full agent with it; nothing else has to change.
+            // **This is the standalone mapping, not the fallback path.** M5-T3's
+            // `createRouter()` in `@internal/registry` is what actually falls
+            // back: it calls `WorkflowRuntime.run()` directly, reads
+            // `result.fallback`, and invokes the registered full agent with it
+            // (ADR-0044). This method has no full agent to invoke — it presents
+            // *one* workflow as an `AgentRuntime` and nothing else — so an
+            // escalation it cannot act on is reported as a failure carrying the
+            // envelope in a `WorkflowError`'s `details`, where a caller and a
+            // trace can both read it. A run driven this way therefore shows
+            // `fallback.started` with no `fallback.completed`, which is the
+            // honest record of a fallback that had nowhere to go. Prefer the
+            // router for anything that should actually fall back.
             const error = new WorkflowError(
               `workflow \`${workflow.definition.id}\`: escalated to the full agent (${result.fallback.reason})`,
               { details: { fallback: fallbackContextPayload(result.fallback) } },
@@ -1659,6 +1794,7 @@ export function createWorkflowRuntime(options: CreateWorkflowRuntimeOptions): Wo
               error: serializeError(error),
               usage: result.usage,
               runtime,
+              jevCalls: result.jevCalls,
             };
           }
         }
@@ -1683,8 +1819,32 @@ function asEscalation(cause: unknown): Escalation | null {
   }
 
   if (cause instanceof BudgetExceededError || cause instanceof ValidationError) {
-    return new Escalation(escalationReasonFor(cause), null, cause.message);
+    // No node: the workflow's own input or output contract failed, or a budget
+    // ran out between nodes.
+    return new Escalation(escalationReasonFor(cause, null), null, cause.message);
   }
 
   return null;
+}
+
+/**
+ * The artifact id an `artifact` node's output carries, or `null`.
+ *
+ * Read defensively rather than cast: the value went through the node's own
+ * `outputSchema`, which a domain wrote, so nothing here can prove it kept the
+ * shape `executeArtifact` produced.
+ */
+function readArtifactId(output: unknown): string | null {
+  if (typeof output !== "object" || output === null) {
+    return null;
+  }
+
+  const artifactId: unknown = (output as { readonly artifactId?: unknown }).artifactId;
+
+  return typeof artifactId === "string" && artifactId !== "" ? artifactId : null;
+}
+
+/** One readable line from a thrown value, for a fallback envelope's `detail`. */
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }

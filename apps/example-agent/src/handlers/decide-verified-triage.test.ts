@@ -35,12 +35,27 @@ const OPEN_FLAG: VendorTriageRiskFlag = {
   evidence: "inbound email to accounts payable (captured 2026-09-08)",
 };
 
-/** A verification of the shape the `verify` node produces. */
-function verification(supported: boolean): VendorTriageVerification {
+/**
+ * A verification of the shape the `verify` node produces (M3-T8).
+ *
+ * Since M3 it is a `jev` node's output: a bounded boolean answer with its own
+ * confidence and band, and `route: null` because nothing branches on it.
+ * `probabilityTrue` decides the band, so a caller can build a confident answer
+ * and an unconvincing one from the same helper.
+ */
+function verification(
+  supported: boolean,
+  probabilityTrue = supported ? 0.94 : 0.05,
+): VendorTriageVerification {
   return {
-    supported,
-    rationale: supported ? "The triage cites 1 source." : "The triage cites no source at all.",
-    citedSources: supported ? ["vendor website, /about"] : [],
+    answer: supported,
+    confidence: supported ? probabilityTrue : 1 - probabilityTrue,
+    band: (supported ? probabilityTrue : 1 - probabilityTrue) >= 0.85 ? "auto" : "agent-review",
+    distribution: { true: probabilityTrue, false: 1 - probabilityTrue },
+    decisionId: "01a0c0a0-3d14-7000-8bad-000000000002",
+    route: null,
+    reasons: [],
+    answers: { "vendor-triage.evidence-supports": supported },
   };
 }
 
@@ -58,7 +73,20 @@ describe("decideVerifiedTriage", () => {
     });
 
     expect(output.recommendation.decision).toBe("escalate");
-    expect(output.recommendation.rationale).toContain("cites no source");
+    expect(output.recommendation.rationale).toContain("does not support its conclusion");
+  });
+
+  it("escalates a `true` the harness is not confident enough about", () => {
+    // Bands apply (M3-T5): an answer that says the evidence supports the triage
+    // but lands outside `auto` is not support, because an answer the harness
+    // cannot trust cannot be acted on automatically.
+    const output = decideVerifiedTriage({
+      triage: triage("proceed"),
+      verification: verification(true, 0.7),
+    });
+
+    expect(output.recommendation.decision).toBe("escalate");
+    expect(output.recommendation.rationale).toContain("only at confidence");
   });
 
   it("escalates when the policy refuses a `proceed` with an open risk flag", () => {

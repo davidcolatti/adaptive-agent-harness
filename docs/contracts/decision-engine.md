@@ -388,3 +388,131 @@ the installed package ships, so they run against the same type a real provider s
 the SDK's own answer validation. The single live test is `*.integration.test.ts`, tagged
 `live:jev`, excluded from the `unit` project by file suffix and therefore from pre-commit, and it
 skips with a printed reason when neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set.
+
+## Persistence (M3-T3)
+
+A decision's evidence is **one** `DecisionRecord`:
+
+```ts
+interface DecisionRecord {
+  readonly id: DecisionId;          // always equal to result.decisionId
+  readonly runId: RunId;
+  readonly nodeId: NodeId | null;   // null when no workflow node asked
+  readonly result: DecisionResult<QuestionSet>;   // exactly what the engine produced
+  readonly policy: PolicyOutcome<string> | null;  // exactly what the organization decided
+  readonly createdAt: string;
+}
+```
+
+**The two halves are separate fields of one record**, and that is Milestone 3's acceptance criterion
+"raw Jev result is stored separately from policy outcome" made structural: adding, changing or
+removing a policy cannot alter a byte of `result`. They are one row because they were produced by
+one call about one state.
+
+The build plan lists nine things to store. Every one is reachable from the record:
+
+| Build plan item | Where |
+| --- | --- |
+| question ID/version | `result.answers[key].questionId` / `.questionVersion` |
+| input-state fingerprint | `result.stateFingerprint` |
+| answer | `result.answers[key].value` |
+| available probability distribution | `result.answers[key].distribution`, `null` when the provider gave none |
+| confidence metadata | `result.answers[key].confidence` (harness-derived) and `result.providerMetadata` (the provider's own, verbatim) |
+| model/provider | `result.model.modelId` / `.provider` |
+| cost | `result.usage.costUsd`, plus three token counts |
+| latency | `result.latencyMs` |
+| policy version that consumed the answer | `policy.policy.id` / `.version` |
+
+`costUsd` is `null` on every row this milestone writes. That is a measurement rather than an
+omission: the installed evaluation API exposes no cost anywhere, and an estimate would be
+indistinguishable from a reported number once it was in a column.
+
+`parseDecisionRecord()` is the strict read boundary, in `parseJob()`'s style. Three of its checks
+are the ones a corrupted row fails: `id` must equal `result.decisionId`, `stateFingerprint` must be
+a `sha256:<64 hex>` digest, and a `policy` that is present must carry at least one reason.
+
+`Storage.saveDecision()` and `Storage.listDecisions()` are the port; see
+[`storage.md`](storage.md). Writing happens **inside** `createDecisionPort()`, the one place that
+already turns a `jev` node into an engine call, and a storage failure is a `StorageError` that
+**fails the node**: a workflow must not act on a judgment nobody recorded.
+
+## Replay (M3-T3)
+
+```ts
+const stored = await storage.listDecisions(runId);
+const report = replayDecisions(stored, tighterPolicy);
+
+report.changed;      // how many cases the new thresholds would route differently
+report.routeChanges; // each `from -> to` move, with a count
+```
+
+`replayDecisions()` is pure, lives in `@internal/core`, and **takes no engine**, which is the
+strongest available statement of "changing a policy threshold can replay stored decisions without
+rerunning Jev": there is no engine parameter to call. It reads only the `result` half of each
+record, which is exactly the half a policy is contractually allowed to see, and it modifies nothing.
+
+A record whose stored `policy` is `null` counts as changed, because nothing routed it before and
+something routes it now.
+
+## `verify` (M3-T7)
+
+```ts
+const compiled = compileVerification({
+  output: triage,
+  outputSchema: "vendor-triage.output@1.0.0",
+  evidence: documents,
+  fields: [
+    { path: ["category"] },
+    { path: ["recommendation", "decision"], bands: { auto: 0.9, agentReview: 0.7 } },
+  ],
+});
+
+const result = await engine.evaluate({ state: compiled.state, questions: compiled.questions });
+const reading = readVerification(result, compiled.fields);
+
+reading.unsupported[0]?.repair;
+// "The field `recommendation.decision` (`proceed`) is not supported by the evidence;
+//  cite a source that establishes it, or remove it."
+```
+
+It lives in `@internal/core`, **not** in the Jev adapter, because composing questions is
+engine-agnostic: the compiled set goes to the Jev adapter, to the fake engine, or to anything else
+implementing `DecisionEngine`.
+
+**One boolean question per configured field**, and all of them in one call, because they share one
+state. A single "is this output supported?" question would answer with one bit for an object with
+ten fields and give a re-run nothing to act on; per-field questions are what make "identify a
+deliberately unsupported field" mean the field. A field the output does **not** carry is still asked
+about, because a missing required field must not be indistinguishable from a supported one.
+
+A field counts as supported when the answer is `true` **and**, when its question declares bands, the
+band is `auto`. A field whose question declares no bands is judged by its answer alone: there is no
+calibration to apply, and inventing one would be the global threshold M3-T5 forbids.
+
+The `repair` string is a **sentence**, not a code, because it is appended to the same logical agent
+task's input. There are three wordings for the three failures: the evidence contradicts the value,
+the evidence supports it only weakly, or the output never produced it.
+
+## Calibration (M3-T9)
+
+`runCalibration({ engine, questions, policy, cases, primary, fallbackRoute })` runs a labeled set
+one case at a time and reports the five metrics the build plan names:
+
+| Metric | Definition |
+| --- | --- |
+| confusion matrix | one cell per `(expected route, actual route)` pair that occurred, with a count |
+| accuracy | the fraction of cases routed as labeled |
+| uncertain-band rate | the fraction whose **primary** answer did not land in `auto` |
+| false-auto rate | the fraction whose primary answer landed in `auto`, whose route was **not** the fallback, and whose route was wrong |
+| fallback rate | the fraction routed to `fallbackRoute` |
+
+The false-auto rate excludes fallbacks deliberately, so raising a threshold can cost accuracy but
+can never raise the one number that measures being confidently wrong. The report does not combine
+accuracy and fallback rate into a single score, because falling back is the safe outcome and being
+confidently wrong is not, and a reader comparing two threshold sets needs to watch the two move
+against each other.
+
+`renderCalibrationReport()` renders it as plain text, for a terminal. The vendor-triage
+implementation lives in `apps/example-agent/src/decisions/` and runs as
+`pnpm --filter @internal/example-agent run calibrate`; see
+[`../examples/README.md`](../examples/README.md).

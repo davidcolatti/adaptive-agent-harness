@@ -117,25 +117,46 @@ export interface WorkflowDefinition {
  * carrying its weight, and M6/M7 compare them across replays. A free-form string
  * would make "the same reason" a text-matching problem.
  *
- * | Reason | Meaning |
- * | --- | --- |
- * | `escalate-node` | The graph reached an `escalate` node. The designed exit. |
- * | `node-failed` | A node exhausted its retries. |
- * | `budget-exceeded` | A budget dimension ran out mid-run. |
- * | `validation-failed` | A node's input or output failed its schema. |
- * | `decision-failed` | A `jev` node could not produce a usable answer. |
- * | `timeout` | A node or the workflow exceeded its wall-clock limit. |
+ * **These are the build plan's eight M5-T4 reasons, not M4's six** (ADR-0044).
+ * M4 named the six *mechanical* ways the interpreter stops — `escalate-node`,
+ * `node-failed`, `budget-exceeded`, `validation-failed`, `decision-failed`,
+ * `timeout`. Those answer "what did the runtime hit?", which is a question the
+ * trace already answers through `detail` and `nodeId`. What a fallback is *for*
+ * is telling the full agent, and later a human reading aggregates, **why the
+ * compiled path could not be trusted with this job**, and that is the question
+ * these eight answer. The mapping is explicit and lives in
+ * `@internal/workflow`'s `escalationReasonFor()`.
+ *
+ * | Reason | Meaning | Raised by |
+ * | --- | --- | --- |
+ * | `low_confidence` | A judgment was made but is not confident enough to act on. | M3's policy layer. Never by the interpreter. |
+ * | `unsupported_case` | The graph has no route it can justify for this job. | An `escalate` node, which is the designed exit. |
+ * | `missing_evidence` | The evidence a route needs was not established. | A domain policy or an `escalate` node that says so. |
+ * | `budget` | A budget dimension ran out, or a wall-clock limit expired. | `BudgetExceededError`, a node timeout. |
+ * | `tool_failure` | A `call` node's tool kept failing. | A `call` node that exhausted its retries. |
+ * | `schema_mismatch` | An input or output did not satisfy its schema. | `ValidationError`, at a node or at the workflow's own contract. |
+ * | `policy` | Permission or policy refused the work. | `PermissionDeniedError`. |
+ * | `workflow_error` | The compiled path broke in a way none of the above names. | An exhausted non-`call` node, an unusable decision. |
+ *
+ * A **closed** union, because `FallbackContext.reason` is stored, aggregated and
+ * compared: M5 counts fallbacks per reason to decide whether a workflow is
+ * carrying its weight, and M6/M7 compare them across replays. A free-form string
+ * would make "the same reason" a text-matching problem. The free text that a
+ * particular stop deserves lives in {@link FallbackContext.detail}, which is
+ * never compared.
  */
 export const FALLBACK_REASONS = [
-  "escalate-node",
-  "node-failed",
-  "budget-exceeded",
-  "validation-failed",
-  "decision-failed",
-  "timeout",
+  "low_confidence",
+  "unsupported_case",
+  "missing_evidence",
+  "budget",
+  "tool_failure",
+  "schema_mismatch",
+  "policy",
+  "workflow_error",
 ] as const;
 
-/** One of the six reasons a workflow falls back to the full agent. */
+/** One of the eight reasons a workflow falls back to the full agent. */
 export type FallbackReason = (typeof FALLBACK_REASONS)[number];
 
 /**
@@ -159,6 +180,24 @@ export type FallbackReason = (typeof FALLBACK_REASONS)[number];
 export interface FallbackContext {
   /** Why the compiled path stopped. */
   readonly reason: FallbackReason;
+  /**
+   * One line of free text saying what actually happened, for the agent and for
+   * a human reading a trace.
+   *
+   * It carries what the closed {@link FallbackReason} deliberately cannot: an
+   * `escalate` node's authored prose, the message of the error that exhausted a
+   * node, the budget dimension that ran out. **Nothing compares it** — every
+   * aggregate is over `reason` — so it is free to be specific (ADR-0044).
+   */
+  readonly detail: string;
+  /**
+   * The node that gave up, or `null` when the workflow itself did.
+   *
+   * `null` is the honest answer for a stop that belongs to no node: the
+   * workflow's own input or output contract failing, or a budget that ran out
+   * between nodes.
+   */
+  readonly nodeId: NodeId | null;
   /** Which workflow stopped, by id, version and IR fingerprint. */
   readonly workflow: {
     readonly id: string;
@@ -168,8 +207,44 @@ export interface FallbackContext {
   /** What the compiled path already completed, and whether each result is trusted. */
   readonly completedNodes: readonly {
     readonly nodeId: NodeId;
+    /**
+     * The durable pointer to this node's result, `node:<id>`.
+     *
+     * Build plan section 5's field, kept unchanged. It is what a reader with
+     * access to the run's trace or storage resolves; {@link output} is what a
+     * reader with neither can use.
+     */
     readonly outputRef: string;
     readonly trusted: boolean;
+    /**
+     * The node's **validated output**, inline, or `null` when it could not be
+     * carried (ADR-0044).
+     *
+     * A deviation from build plan section 5, which names only `outputRef`. That
+     * shape assumes the agent can dereference a pointer, and across the only
+     * channel a fallback actually has — the runtime adapter's context surface,
+     * a turn's `clientContext` for eve — it cannot: an agent is a model, not a
+     * process with a `Storage` handle. An envelope of pointers nothing can
+     * follow would make M5-T5's "the full agent should not blindly repeat
+     * completed research" unachievable, so the evidence travels with the
+     * reference rather than instead of it.
+     *
+     * **Every entry in `completedNodes` validated**, or it would not be listed,
+     * so M5-T6's "failed/partial node output is not automatically reusable" is
+     * satisfied by the list's membership rather than by this field: a failed or
+     * partial node is absent, not present with a `null` output.
+     *
+     * `trusted` still decides how the value may be *used*, and carrying an
+     * untrusted output is deliberate: an `agent` or `jev` result is exactly
+     * what a full agent most needs to see and least should take on faith, and
+     * telling it "this exists, here it is, weigh it" is stronger than telling
+     * it "this exists somewhere".
+     *
+     * `null` means the value was dropped to keep the envelope inside its size
+     * budget, never that the node failed. `outputRef` still points at it, and
+     * `detail` says so.
+     */
+    readonly output: JsonValue | null;
   }[];
   /** References to the evidence gathered so far, so the agent need not re-research. */
   readonly evidenceRefs: readonly string[];

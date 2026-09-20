@@ -11,7 +11,10 @@ export { createBudgetLedger, narrowBudget } from "./budget.js";
 // The bridge from `WorkflowDecisionPort` to M3's `DecisionEngine` (M3-T2).
 export type {
   CreateDecisionPortOptions,
+  DecisionNodeAnswer,
   DecisionNodeOutput,
+  DecisionQuestionEntry,
+  QuestionBundle,
   QuestionRegistry,
 } from "./decision-port.js";
 export { createDecisionPort } from "./decision-port.js";

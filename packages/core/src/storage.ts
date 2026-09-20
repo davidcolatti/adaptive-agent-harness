@@ -1,4 +1,5 @@
 import type { DomainRef, RuntimeInfo } from "./context.js";
+import type { DecisionRecord } from "./decision-record.js";
 import { type SerializedHarnessError, ValidationError, type ValidationIssue } from "./errors.js";
 import { deepFreeze } from "./freeze.js";
 import { collectRefIssues, throwIfIssues } from "./identifiers.js";
@@ -228,8 +229,19 @@ export interface RunFinish {
   readonly toolCalls: number;
   /** Jev decisions made. 0 until M3. */
   readonly jevCalls: number;
-  /** Fallbacks taken. 0 until M5. */
+  /** Fallbacks taken: `0` for a run that never escalated, `1` for one that did. */
   readonly fallbackCount: number;
+  /**
+   * The compiled workflow version that ran, now that the run is over (M5-T3).
+   *
+   * **Optional, and an absent field leaves the column alone.** `startRun` writes
+   * `null`, because the harness does not know which way a run will go before the
+   * runtime speaks; a router reports the version it chose, and only then. An
+   * explicit `null` clears it. A value is set for a run that escalated too — the
+   * column answers "which version was this given to?", and `fallbackCount`
+   * answers "did it hand the job back?".
+   */
+  readonly workflowVersionId?: WorkflowVersionId | null;
   /** Which runtime adapter actually ran it. */
   readonly runtime: RuntimeInfo;
   /** When it reached a terminal state, as an ISO 8601 string. */
@@ -257,6 +269,15 @@ export interface RunFilter {
   readonly status?: RunStatus;
   /** Only runs of this job, which is how attempts of one job are listed. */
   readonly jobId?: JobId;
+  /**
+   * Only runs that executed this compiled workflow version.
+   *
+   * The circuit breaker's window (M5-T7): "the last N runs of this version" is
+   * the only question it asks, and answering it by paging the whole ledger and
+   * filtering in memory would make the window depend on how busy the rest of
+   * the domain has been.
+   */
+  readonly workflowVersionId?: WorkflowVersionId;
 }
 
 /**
@@ -547,6 +568,39 @@ export interface Storage {
    * before reaching a terminal state.
    */
   listWorkflowPromotions(versionId: WorkflowVersionId): Promise<readonly WorkflowPromotionRecord[]>;
+
+  // Decision evidence (M3-T3). `decisions` existed as a minimal keyed
+  // placeholder from M2-T5 — a `DecisionId`, the run it was made in and one
+  // `payload jsonb` — and these two methods are what fills it. They are on the
+  // same port for the same reason the registry methods are: a decision belongs
+  // to a run whose ledger row is already here, and a second port would be a
+  // second thing to configure for the same database. ADR-0045 records the
+  // model; `docs/contracts/decision-engine.md` documents it.
+
+  /**
+   * Store one decision's complete evidence.
+   *
+   * **A plain insert, and a duplicate id rejects loudly.** A `DecisionId` is
+   * minted by the engine when it answers, so the same id arriving twice means
+   * either a retry that should not have re-recorded or two decisions that
+   * collided, and both are facts a caller has to see. Nothing here upserts: a
+   * decision is what an engine produced at a moment, and overwriting one would
+   * destroy the evidence a replay depends on.
+   *
+   * Returns the record as it now exists, read back through
+   * {@link parseDecisionRecord}.
+   */
+  saveDecision(record: DecisionRecord): Promise<DecisionRecord>;
+  /**
+   * Read one run's decisions, in `id` order.
+   *
+   * Oldest first, like {@link Storage.listWorkflowPromotions} and unlike the
+   * ledger's newest-first lists: the decisions of one run are the order in
+   * which its judgments were made, and a `DecisionId` is a sortable UUIDv7, so
+   * `id` order is that order. Unpaged, because the list is bounded by the
+   * number of `jev` nodes a workflow contains.
+   */
+  listDecisions(runId: RunId): Promise<readonly DecisionRecord[]>;
 }
 
 /**

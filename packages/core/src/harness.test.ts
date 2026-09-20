@@ -912,6 +912,17 @@ function createRecordingStorage(options: RecordingStorageOptions = {}): Recordin
     listWorkflowPromotions(): Promise<never> {
       return unsupported("listWorkflowPromotions");
     },
+
+    // The decision half of the port (M3-T3). Refused for the same reason:
+    // `harness.run()` never persists a decision itself — the decision port
+    // inside a workflow does — so a test that reached one through the harness
+    // is a test whose expectations changed.
+    saveDecision(): Promise<never> {
+      return unsupported("saveDecision");
+    },
+    listDecisions(): Promise<never> {
+      return unsupported("listDecisions");
+    },
   };
 }
 

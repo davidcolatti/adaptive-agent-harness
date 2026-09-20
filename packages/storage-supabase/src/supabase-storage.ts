@@ -3,10 +3,12 @@ import {
   DEFAULT_RUN_PAGE_SIZE,
   DEFAULT_TRACE_PAGE_SIZE,
   DEFAULT_WORKFLOW_VERSION_PAGE_SIZE,
+  type DecisionRecord,
   type Job,
   type JobId,
   type JsonObject,
   type JsonValue,
+  parseDecisionRecord,
   parseEntityId,
   parseJob,
   parseRunRecord,
@@ -118,6 +120,7 @@ type TraceEventInsert = Database["public"]["Tables"]["trace_events"]["Insert"];
 type WorkflowRow = Database["public"]["Tables"]["workflow_definitions"]["Row"];
 type WorkflowVersionRow = Database["public"]["Tables"]["workflow_versions"]["Row"];
 type WorkflowPromotionRow = Database["public"]["Tables"]["workflow_promotions"]["Row"];
+type DecisionRow = Database["public"]["Tables"]["decisions"]["Row"];
 
 /**
  * Turn a `PostgrestError` into a {@link StorageError}.
@@ -250,6 +253,48 @@ function readWorkflowVersionRecord(row: WorkflowVersionRow): WorkflowVersionReco
     createdAt: isoTimestamp(row.created_at),
     statusChangedAt: isoTimestamp(row.status_changed_at),
     metadata: readJsonObject(row.metadata) ?? {},
+  });
+}
+
+/**
+ * Every `id@version` a decision answered, as the `question_ids` column stores
+ * them.
+ *
+ * Derived from the record's own answers rather than passed in, so the column
+ * and the document cannot disagree about which questions were asked. Sorted and
+ * de-duplicated, because a set in an array column with a stable order is what
+ * makes two rows comparable; one call may legitimately ask one question twice
+ * about two parts of a state, and the column is about *which* questions, not
+ * how many times.
+ */
+function questionRefsOf(record: DecisionRecord): string[] {
+  return [
+    ...new Set(
+      Object.values(record.result.answers).map(
+        (answer) => `${answer.questionId}@${answer.questionVersion}`,
+      ),
+    ),
+  ].sort();
+}
+
+/**
+ * Turn a `decisions` row into a {@link DecisionRecord}, or throw.
+ *
+ * The six denormalized columns — `state_fingerprint`, `question_ids`,
+ * `model_provider`, `model_id`, `cost_usd`, `latency_ms` — are deliberately
+ * **not** read, for the same reason `workflow_versions`' `domain_id` is not:
+ * they exist so a query can `group by` without opening a JSON document, and the
+ * authoritative copies are inside `result`. Reading the columns instead would
+ * make a row that had drifted look consistent.
+ */
+function readDecisionRecord(row: DecisionRow): DecisionRecord {
+  return parseDecisionRecord({
+    id: row.id,
+    runId: row.run_id,
+    nodeId: row.node_id,
+    result: row.result,
+    policy: row.policy,
+    createdAt: isoTimestamp(row.created_at),
   });
 }
 
@@ -471,6 +516,11 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
           tool_calls: input.toolCalls,
           jev_calls: input.jevCalls,
           fallback_count: input.fallbackCount,
+          // Absent leaves the column as `startRun` wrote it; present overwrites
+          // it, including with an explicit `null` (M5-T3).
+          ...(input.workflowVersionId === undefined
+            ? {}
+            : { workflow_version_id: input.workflowVersionId }),
           runtime_name: input.runtime.name,
           runtime_version: input.runtime.version,
           runtime_metadata: asJson(redactField(input.runtime.metadata, "payload") ?? {}),
@@ -536,6 +586,9 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
       }
       if (filter.jobId !== undefined) {
         query = query.eq("job_id", filter.jobId);
+      }
+      if (filter.workflowVersionId !== undefined) {
+        query = query.eq("workflow_version_id", filter.workflowVersionId);
       }
       // Keyset, not offset: a run id is sortable, so "older than this run" is
       // an index range. `limit + 1` is fetched so that "is there another page?"
@@ -892,6 +945,65 @@ export function createSupabaseStorage(options: CreateSupabaseStorageOptions): Su
       }
 
       return data.map(readWorkflowPromotionRecord);
+    },
+
+    // Decision evidence (M3-T3).
+
+    async saveDecision(record: DecisionRecord): Promise<DecisionRecord> {
+      const parsed = parseDecisionRecord(record);
+      // A plain insert, not an upsert: a `DecisionId` is minted by the engine
+      // when it answers, so the same id twice is either a retry that should not
+      // have re-recorded or a collision, and both are facts the caller has to
+      // see. Overwriting would destroy the evidence a replay depends on.
+      //
+      // The six denormalized columns are written from the parsed record rather
+      // than from the raw argument, so a row cannot carry a `model_id` the
+      // document does not.
+      const { data, error } = await client
+        .from("decisions")
+        .insert({
+          id: parsed.id,
+          run_id: parsed.runId,
+          node_id: parsed.nodeId,
+          state_fingerprint: parsed.result.stateFingerprint,
+          question_ids: questionRefsOf(parsed),
+          result: asJson(parsed.result as unknown as JsonValue),
+          policy: parsed.policy === null ? null : asJson(parsed.policy as unknown as JsonValue),
+          model_provider: parsed.result.model.provider,
+          model_id: parsed.result.model.modelId,
+          cost_usd: parsed.result.usage.costUsd,
+          latency_ms: parsed.result.latencyMs,
+          created_at: parsed.createdAt,
+        })
+        .select("*")
+        .single();
+
+      if (error !== null) {
+        throw failed("saveDecision", error, {
+          table: "decisions",
+          decisionId: parsed.id,
+          runId: parsed.runId,
+        });
+      }
+
+      return readDecisionRecord(data);
+    },
+
+    async listDecisions(runId: RunId): Promise<readonly DecisionRecord[]> {
+      // Ascending, like the promotion ledger: these are one run's judgments in
+      // the order they were made, and a `DecisionId` is a sortable UUIDv7, so
+      // `id` order is that order.
+      const { data, error } = await client
+        .from("decisions")
+        .select("*")
+        .eq("run_id", runId)
+        .order("id", { ascending: true });
+
+      if (error !== null) {
+        throw failed("listDecisions", error, { table: "decisions", runId });
+      }
+
+      return data.map(readDecisionRecord);
     },
   };
 }

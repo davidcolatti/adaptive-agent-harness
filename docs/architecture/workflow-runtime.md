@@ -286,10 +286,20 @@ exists for. `failed` is reserved for defects — a binding that reads a node whi
 `item` binding outside a `map`, a node id no node answers to — because reporting one of those as a
 fallback would hide a bug behind a working system.
 
-The reason is one of the closed six: `escalate-node`, `budget-exceeded`, `timeout`,
-`validation-failed`, `decision-failed`, `node-failed`. An escalation raised inside a container node
-passes through it unchanged, so the reason the node that actually gave up chose is the one that
-reaches the envelope.
+The reason is one of the closed **eight** the build plan names (M5-T4, ADR-0044). The interpreter
+maps its own causes onto them: an `escalate` node is `unsupported_case`; a budget or a node timeout
+is `budget`; a schema failure, at a node or at the workflow's own contract, is `schema_mismatch`; a
+denied permission is `policy`; an exhausted `call` node is `tool_failure`; anything else that
+exhausted its retries, including a `jev` node whose engine produced no usable answer, is
+`workflow_error`. `low_confidence` and `missing_evidence` are **never** raised here: they are policy
+outcomes, and a decision that could not be obtained is not a low-confidence one, because no judgment
+was made. An escalation raised inside a container node passes through it unchanged, so the reason the
+node that actually gave up chose is the one that reaches the envelope.
+
+Beside the reason the envelope carries `detail`, one line of free text saying what actually happened
+— an `escalate` node's authored prose, or the message of the error that exhausted a node — and
+`nodeId`, the node that gave up or `null` when the workflow itself did. Nothing compares `detail`,
+so it is free to be specific.
 
 `completedNodes[].trusted` is decided by **who produced the value**, not by whether it validated —
 everything listed validated, or it would not be there:
@@ -305,36 +315,83 @@ or a protected replay all mean the world and the recorded value may disagree. `a
 not trusted because they are probabilistic: a schema says an answer is well shaped, not that it is
 right.
 
-`evidenceRefs` is empty until M5 persists node outputs and evidence as artifacts. An invented
-reference would be worse than none, because the agent would follow it.
+An `escalate` node is **not** listed in `completedNodes` at all. It completes — it ran, and its span
+closed — but it produces a `FallbackContext` rather than a value, so there is no output for
+`outputRef` to point at, and a reference that resolved to nothing would be worse than an omission.
+
+`evidenceRefs` holds `artifact:<id>` for every `artifact` node the run completed, read off the node's
+own validated output. A workflow with no `artifact` node produces an empty list, which is the honest
+answer: an invented reference would be worse than none, because the agent would follow it.
+
+## What happens after an escalation
+
+The interpreter's job ends with the envelope. Who receives it is the **router**'s
+(`createRouter()` in `@internal/registry`, M5-T3), and the two halves meet through one trace span.
+
+```text
+                    interpreter                      router
+                        │                              │
+  node gives up ────────▶ build FallbackContext        │
+                        │ record `fallback.started` ───▶ fallbackSpanId
+                        │ return `escalated` ──────────▶ recalculate remaining budget
+                        │                              │ build the agent's context:
+                        │                              │   fallback = envelope
+                        │                              │   budget   = what is left
+                        │                              │   trace    = same recorder, rootId = span
+                        │                              ▼
+                        │                        fullAgent.run(job, context)
+                        │                              │  agent.* / model.* / tool.*
+                        │                              │  parented on `fallback.started`
+                        │                              ▼
+                        │                        record `fallback.completed`
+```
+
+The interpreter records `fallback.started` because only it knows **why** the path stopped, and
+returns that event's id on `EscalatedWorkflowRun.fallbackSpanId`. The router records
+`fallback.completed` because only it knows **what happened next**. Neither emits the other's event,
+and there is still exactly one recorder and one sequence for the run (ADR-0031).
+
+The original `Job` is handed to the agent unchanged. Everything the fallback adds lives in the
+context, which is why `ExecutionContext` — and not `Job` — is where `fallback` sits. See
+[`../contracts/workflow-registry.md`](../contracts/workflow-registry.md) for the router and
+[ADR-0044](../decisions/0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md).
 
 ## Running a workflow through the harness
 
-`harness.run()` drives exactly one `AgentRuntime`, and M5 is what adds a router. Until then:
+`harness.run()` drives exactly one `AgentRuntime`, and the one to give it is the **router**:
 
 ```ts
 const harness = createHarness({
-  agentRuntime: runtime.asAgentRuntime(compiled),
+  agentRuntime: createRouter({ registry, capabilities, workflowRuntime: runtime, fullAgent }),
   trace,
   storage,
 });
 ```
 
 Trace, storage and `pnpm harness run show` work unchanged, because from the harness's point of view a
-workflow is just another thing that runs a job. The execution reports
-`runtime: { name: "@internal/workflow", version, metadata: { workflowId, workflowVersion, workflowFingerprint } }`.
+router is just another thing that runs a job — and so is a workflow.
 
-`completed`, `failed` and `aborted` map across directly. **An escalation maps to a failed execution**
-carrying a `WorkflowError` whose `details.fallback` is the envelope as JSON. That is a stopgap and it
-is wrong in one way: an escalation is not a failure. `AgentRuntime` has no such status because in M4
-there is nothing to hand the envelope to. M5's router calls `WorkflowRuntime.run()` directly, reads
-`result.fallback`, and invokes the full agent with it.
+`asAgentRuntime()` presents **one** compiled workflow the same way:
+
+```ts
+const harness = createHarness({ agentRuntime: runtime.asAgentRuntime(compiled), trace, storage });
+```
+
+The execution reports
+`runtime: { name: "@internal/workflow", version, metadata: { workflowId, workflowVersion, workflowFingerprint } }`.
+`completed`, `failed` and `aborted` map across directly. **An escalation maps to a failed
+execution** carrying a `WorkflowError` whose `details.fallback` is the envelope as JSON, because
+this method has no full agent to hand the job to — it presents one workflow and nothing else. That
+is the honest record of a fallback with nowhere to go, and such a run shows `fallback.started` with
+no `fallback.completed`. Anything that should actually fall back uses the router.
 
 ## What it deliberately does not do
 
 - **No durability.** M4-T6 says not to build it. A node result lives in run state, in the returned
   result and in the trace; a crashed process loses it.
-- **No routing.** Which workflow handles a job, and what happens after an escalation, are M5's.
+- **No routing.** Which workflow handles a job, and who receives the envelope after an escalation,
+  belong to the router (`@internal/registry`). The interpreter builds the envelope and records
+  `fallback.started`; it never chooses a workflow and never invokes a full agent.
 - **No `run.*` events, and no recorder of its own.** Those belong to the harness.
 - **No re-validation of the graph.** That is the validator's, and `CompiledWorkflow` is the proof it
   ran.

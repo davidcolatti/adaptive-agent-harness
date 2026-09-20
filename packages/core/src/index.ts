@@ -136,6 +136,17 @@ export {
   scoreRange,
 } from "./decision.js";
 
+// Persisted decision evidence and pure policy replay (M3-T3; ADR-0045). The
+// record's `result` is exactly what the engine produced and its `policy` is
+// exactly what the organization decided, which is what makes
+// `replayDecisions()` a function of stored bytes rather than a second Jev bill.
+export type {
+  DecisionRecord,
+  DecisionReplayReport,
+  ReplayedDecision,
+  RouteChange,
+} from "./decision-record.js";
+export { parseDecisionRecord, replayDecisions } from "./decision-record.js";
 // Domain definition (M1-T3).
 export type {
   CreateJobInput,
@@ -176,11 +187,9 @@ export {
 // Canonical JSON and behavior fingerprints (M1-T9; ADR-0029). M2-T8 extends
 // what is fingerprinted, not how.
 export { canonicalJson, FINGERPRINT_ALGORITHM_PREFIX, fingerprint } from "./fingerprint.js";
-
 // Deep immutability for contract values (M2-T2; ADR-0032). What makes "jobs
 // are immutable after execution begins" reach a nested budget or grant.
 export { deepFreeze } from "./freeze.js";
-
 // The public entry point (M1-T4).
 export type {
   AbortedHarnessRunResult,
@@ -193,11 +202,9 @@ export type {
   HarnessRunResult,
 } from "./harness.js";
 export { createHarness } from "./harness.js";
-
 // The identifier and version rules shared by `defineDomain()` and the
 // capability registry.
 export { isCapabilityIdentifier, isExactVersion } from "./identifiers.js";
-
 // Entity identifiers: the sortable UUIDv7 scheme and its twelve brands
 // (M2-T1; ADR-0030).
 export type {
@@ -238,15 +245,12 @@ export {
   newWorkflowVersionId,
   parseEntityId,
 } from "./ids.js";
-
 // The immutable unit of work (M1-T3; finalized by M2-T2, ADR-0032).
 export type { Job, JobContracts } from "./job.js";
 export { isJob, parseJob } from "./job.js";
-
 // JSON value model, and the runtime guards M2-T2's boundary validator needs.
 export type { JsonArray, JsonObject, JsonPrimitive, JsonValue } from "./json.js";
 export { isJsonObject, isJsonValue, isPlainObject } from "./json.js";
-
 // The schema boundary: a harness-owned copy of Standard Schema v1, so that a
 // domain can author schemas in any conforming library while this package keeps
 // zero dependencies (ADR-0027).
@@ -264,7 +268,6 @@ export type {
   ValidateWithOptions,
 } from "./schema.js";
 export { assertIsSchema, isSchema, validateWith } from "./schema.js";
-
 // The `Storage` port (M2-T5) and the outcome ledger row (M2-T7; ADR-0036).
 // Declared here, implemented by `@internal/storage-supabase` and by
 // `createInMemoryStorage()` in `@internal/testing`, because "core cannot import
@@ -295,7 +298,6 @@ export {
   RUN_STATUSES,
   resolvePageLimit,
 } from "./storage.js";
-
 // The trace contract (M2-T3) and the run-scoped recorder that owns a run's
 // event order (M2-T3/M2-T4; ADR-0031). `TraceWriter` is the interface M2-T4
 // states verbatim; the buffered implementation lives in `@internal/trace`.
@@ -323,6 +325,24 @@ export {
   TRACE_EVENT_TYPES,
   TRACE_EVENT_VERSION,
 } from "./trace.js";
+// The `verify` primitive (M3-T7; ADR-0045). Engine-agnostic by construction: it
+// compiles an output's configured fields into boolean questions and reads the
+// answers back as repair instructions, and knows nothing about what answers
+// them.
+export type {
+  CompiledVerification,
+  CompileVerificationConfig,
+  ResolvedVerificationField,
+  UnsupportedVerificationField,
+  VerificationFieldConfig,
+  VerificationReading,
+} from "./verify.js";
+export {
+  compileVerification,
+  DEFAULT_VERIFICATION_QUESTION_ID,
+  DEFAULT_VERIFICATION_QUESTION_VERSION,
+  readVerification,
+} from "./verify.js";
 
 // The serializable workflow IR (M4-T1) and the fallback envelope (ADR-0038).
 // Core declares the contract and its parse boundary; `@internal/workflow`

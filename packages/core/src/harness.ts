@@ -532,6 +532,22 @@ export function createHarness(options: CreateHarnessOptions): Harness {
      * visibly incomplete rather than quietly wrong. A `finishRun` failure also
      * propagates, so the run is never reported as completed.
      */
+
+    /**
+     * What the runtime said about routing, once it has spoken (M5-T3).
+     *
+     * A mutable local rather than a field on `HarnessRunResult`, because these
+     * two values are ledger columns: they are what `finishRun` writes, and no
+     * caller of `harness.run()` has asked for them. The defaults are the honest
+     * answer for every runtime that does not route — no workflow version, no
+     * fallback — and are what a run that never reaches the runtime keeps.
+     */
+    let routing: {
+      readonly workflowVersionId?: WorkflowVersionId;
+      readonly fallbackCount: number;
+      readonly jevCalls: number;
+    } = { fallbackCount: 0, jevCalls: 0 };
+
     const finish = async <TResult extends HarnessRunResult<TOutput>>(
       type: TraceEventType,
       payload: JsonObject,
@@ -558,10 +574,18 @@ export function createHarness(options: CreateHarnessOptions): Harness {
             latencyMs: Math.max(0, finishedAt.getTime() - startedAt),
             modelCalls: result.usage.modelCalls,
             toolCalls: result.usage.toolCalls,
-            // Real zeros, not placeholders: a run today makes no Jev calls
-            // (M3) and takes no fallback (M5).
-            jevCalls: 0,
-            fallbackCount: 0,
+            // Whatever the runtime reported (M3, M5). A runtime that makes no
+            // decisions reports none and this is `0`, which is a measurement
+            // rather than the placeholder it was before M3 landed.
+            jevCalls: routing.jevCalls,
+            // M5-T3: the router reports both of these on its `AgentExecution`,
+            // and a runtime that does not route reports neither. The harness
+            // copies rather than infers, because only the thing that routed
+            // knows which version it chose and whether it handed the job back.
+            fallbackCount: routing.fallbackCount,
+            ...(routing.workflowVersionId === undefined
+              ? {}
+              : { workflowVersionId: routing.workflowVersionId }),
             // Now the adapter has spoken, so the row gets the runtime that
             // actually ran rather than the harness placeholder `startRun` wrote.
             runtime: result.runtime,
@@ -613,6 +637,16 @@ export function createHarness(options: CreateHarnessOptions): Harness {
         },
       );
     }
+
+    // What the runtime routed to, for the ledger row (M5-T3, ADR-0044). Read
+    // once, here, so every terminal path below writes the same values.
+    routing = {
+      fallbackCount: execution.fallbackCount ?? 0,
+      jevCalls: execution.jevCalls ?? 0,
+      ...(execution.workflowVersionId === undefined
+        ? {}
+        : { workflowVersionId: execution.workflowVersionId }),
+    };
 
     const outcome = { usage: execution.usage, runtime: execution.runtime } as const;
 

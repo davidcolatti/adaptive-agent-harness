@@ -89,12 +89,34 @@ Harness-owned, because eve documents no context slot for either half of a job.
 | --- | --- |
 | `job.objective` | the turn's `message`: the instruction the model acts on |
 | `job.id`, `job.domain`, `job.jobType`, `job.input` | `clientContext`: the data it acts on |
+| `context.fallback`, when the run is an escalation | `clientContext.harness.fallback` (M5-T6) |
 
 `clientContext` is the right home for the data because eve documents it as ephemeral: "available
 to every model call in the turn, then disappears before the next turn", and "never persisted to
 durable session history". That is exactly the lifetime of a one-shot job.
 
 **Both reach the model. Neither may carry a secret.**
+
+### The fallback envelope (M5-T6)
+
+When a compiled workflow escalates, the router runs this adapter with
+`ExecutionContext.fallback` set, and the adapter adds the envelope to the same `clientContext`
+object under a `harness.fallback` key. M5-T6 requires the full-agent adapter to receive the
+envelope "through its documented runtime boundary", and this is eve's: an object `clientContext`
+is JSON-serialized into one user-role context message that every model call of the turn sees and
+that is discarded before the next one, which is exactly an escalation's lifetime. **The transport
+is eve's; the key name and the shape under it are the harness's**, because eve imposes no schema
+on what a `clientContext` object contains. The envelope carries references and flags only — node
+ids, `node:<id>` output references, trust bits, artifact ids and the remaining budget — in a
+prompt — and it carries each completed node's **validated output** inline, because a model cannot
+follow a `node:<id>` reference. Those outputs already passed a domain-authored schema and are the
+same values the workflow's own `agent` node was handed, so the turn sees no new class of content;
+the envelope's 64 KiB budget, not redaction, is what bounds them. An agent is told what to do with
+it by its own instructions; see
+`apps/example-agent/agent/instructions.md`. Grounded in
+[`../research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`](../research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md)
+and recorded in
+[ADR-0044](../decisions/0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md).
 
 ## Structured output
 

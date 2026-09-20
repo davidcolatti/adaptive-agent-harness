@@ -60,13 +60,20 @@ import { type CompiledWorkflow, compileWorkflow, workflow } from "@internal/work
  * that reaches it — which is the rule ADR-0039 checks and the one an author is
  * most likely to get wrong.
  *
- * ## What is still a placeholder
+ * ## The two `jev` nodes, since M3
  *
- * The two `jev` nodes name questions that no `DecisionEngine` answers yet: M3
- * owns questions, and a question is not a capability kind, so the validator
- * deliberately does not resolve them. Until M3 lands,
- * `createFixtureDecisionPort()` in `./fixture-decision-port.js` answers both
- * deterministically. It is not Jev and does not pretend to be.
+ * They name references that `createVendorDecisionRegistry()` in
+ * `../decisions/registry.js` resolves: `classify` names a **bundle** of three
+ * bounded questions plus the policy that routes them, and `verify` names one
+ * boolean question with no policy. A question is still not a capability kind,
+ * so the validator deliberately does not resolve them; the decision port does,
+ * at execution, and refuses a reference it does not hold.
+ *
+ * The engine behind that port is live Jev when an AI Gateway credential is
+ * present and a deterministic fixture engine otherwise
+ * (`../decisions/engine.js`). The M4-T10 placeholder `WorkflowDecisionPort` is
+ * gone: the policy layer, the confidence derivation, the banding and the
+ * persistence are all the real ones now, and only the model is scripted.
  */
 
 /** The workflow's own identifier, and the `workflowId` every idempotency key carries. */
@@ -78,11 +85,13 @@ export const VENDOR_TRIAGE_WORKFLOW_VERSION = "1.0.0";
 /**
  * The first `jev` node's question reference.
  *
- * Exported because {@link createFixtureDecisionPort} branches on it and a
- * string written twice is a string that drifts. When M3 lands, this is the
- * reference a registered question has to match.
+ * It resolves to the **bundle** `createVendorDecisionRegistry()` registers:
+ * three bounded questions about one vendor, answered in one Jev call, plus the
+ * policy that turns them into a route (M3-T6, M3-T8). Before M3 it was
+ * `vendor-triage.classify-route`, and the rename is the point: the node asks
+ * about the vendor and the policy decides the route, which is ADR-0009's split.
  */
-export const CLASSIFY_QUESTION_REF = "vendor-triage.classify-route@1.0.0";
+export const CLASSIFY_QUESTION_REF = "vendor-triage.classify@1.0.0";
 
 /** The second `jev` node's question reference. */
 export const VERIFY_QUESTION_REF = "vendor-triage.evidence-supports@1.0.0";
@@ -121,7 +130,11 @@ export const vendorTriageWorkflowDefinition: WorkflowDefinition = workflow({
     outputSchema: "vendor-triage.classification@1.0.0",
   })
   .branch("route", {
-    on: { kind: "field", path: ["category"] },
+    // The **policy's** route, not the model's answer. The `classify` node's
+    // `answers.category` is the vendor's SOP category and its `route` is what
+    // the organization decided to do about it; branching on the second is what
+    // keeps judgment and policy separate (ADR-0009, ADR-0045).
+    on: { kind: "field", path: ["route"] },
     cases: {
       clear: (b) =>
         b

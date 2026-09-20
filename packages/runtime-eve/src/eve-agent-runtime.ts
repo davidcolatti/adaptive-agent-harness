@@ -6,6 +6,7 @@ import {
   type AgentRuntime,
   BudgetExceededError,
   type ExecutionContext,
+  type FallbackContext,
   type Job,
   type JsonObject,
   type JsonValue,
@@ -402,7 +403,7 @@ export class EveAgentRuntime implements AgentRuntime {
     try {
       const created = await this.#client.sessions.create<unknown>({
         message: job.objective,
-        clientContext: jobClientContext(job),
+        clientContext: jobClientContext(job, context),
         outputSchema,
         signal: context.signal,
       });
@@ -1044,19 +1045,46 @@ function readTurnId(data: unknown): string | undefined {
 }
 
 /**
- * How a job is presented to the agent.
+ * How a job, and a fallback envelope when there is one, are presented to the
+ * agent.
  *
  * Harness-owned, because eve documents no context slot for either half of a
  * job. `message` is the objective, the instruction the model must act on;
  * `clientContext` is the data it acts on. `clientContext` is the right home for
- * the data because it is "never persisted to durable session history" and
- * "disappears before the next turn" (`eve/docs/guides/client/messages.mdx`),
- * which is exactly the lifetime of a one-shot job.
+ * the data because eve's shipped docs state exactly what it does: an object is
+ * "JSON-serialized into one context message", "remains available to every model
+ * call in the turn, then disappears before the next turn", and "isn't persisted
+ * to durable session history" (`eve/docs/guides/client/messages.mdx`,
+ * `eve/dist/src/protocol/message.d.ts`). That is precisely the lifetime of a
+ * one-shot job, and of a one-shot escalation.
  *
- * **Both reach the model.** Neither may carry a secret.
+ * ## The fallback envelope (M5-T6, ADR-0044)
+ *
+ * When `context.fallback` is set, this run is an escalation from a compiled
+ * workflow and the envelope travels under the `harness.fallback` key of the
+ * same object. M5-T6 requires the full-agent adapter to receive it "through its
+ * documented runtime boundary", and this is eve's: the model sees it as an
+ * ordinary context message on every model call of the turn, so an agent whose
+ * instructions tell it to look can use what the workflow already established
+ * instead of re-researching it (north-star invariant 9).
+ *
+ * **The key name and the envelope's shape are the harness's, not eve's.** eve
+ * documents the transport and imposes no schema on what a `clientContext`
+ * object contains, so `harness.fallback` is a harness contract, recorded in
+ * `docs/architecture/runtime.md` and in
+ * `docs/research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`.
+ *
+ * **Everything here reaches the model.** Neither half may carry a secret. The
+ * envelope is references and flags — node ids, output references, trust bits,
+ * an artifact id, the remaining budget — and carries no node output, which is
+ * what keeps an escalation from smuggling unredacted tool results into a
+ * prompt.
  */
-function jobClientContext<TInput, TOutput>(job: Job<TInput, TOutput>): EveClientContext {
-  const context: Record<string, unknown> = {
+function jobClientContext<TInput, TOutput>(
+  job: Job<TInput, TOutput>,
+  context: ExecutionContext,
+): EveClientContext {
+  const clientContext: Record<string, unknown> = {
     jobId: job.id,
     domain: { id: job.domain.id, version: job.domain.version },
     jobType: job.jobType,
@@ -1068,7 +1096,49 @@ function jobClientContext<TInput, TOutput>(job: Job<TInput, TOutput>): EveClient
     input: job.input,
   };
 
-  return context as EveClientContext;
+  if (context.fallback !== undefined) {
+    // Namespaced under `harness` so a domain that puts its own data in
+    // `clientContext` one day cannot collide with it, and so an agent's
+    // instructions can name one stable path.
+    clientContext.harness = { fallback: fallbackClientContext(context.fallback) };
+  }
+
+  return clientContext as EveClientContext;
+}
+
+/**
+ * The fallback envelope as the plain JSON eve will serialize.
+ *
+ * Written out field by field rather than spread, for the reason
+ * `fallbackContextPayload()` in `@internal/workflow` is: `FallbackContext` is
+ * an interface with no index signature, so building the object explicitly makes
+ * this a conversion rather than an assertion. It also means a field added to
+ * the envelope does not silently start reaching a model.
+ */
+function fallbackClientContext(fallback: FallbackContext): Record<string, unknown> {
+  return {
+    reason: fallback.reason,
+    detail: fallback.detail,
+    nodeId: fallback.nodeId,
+    workflow: {
+      id: fallback.workflow.id,
+      version: fallback.workflow.version,
+      fingerprint: fallback.workflow.fingerprint,
+    },
+    completedNodes: fallback.completedNodes.map((node) => ({
+      nodeId: node.nodeId,
+      outputRef: node.outputRef,
+      trusted: node.trusted,
+      // The evidence itself, not only a pointer to it (M5-T6, ADR-0044). A
+      // model cannot dereference `node:research`, so an envelope of references
+      // alone would tell the agent that work had been done and leave it no way
+      // to use it. `null` means the value was dropped to fit the envelope's
+      // size budget, and `detail` says which.
+      output: node.output,
+    })),
+    evidenceRefs: [...fallback.evidenceRefs],
+    remainingBudget: { ...fallback.remainingBudget },
+  };
 }
 
 function clientOptions(options: EveAgentRuntimeOptions): ConstructorParameters<typeof Client>[0] {

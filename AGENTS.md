@@ -99,7 +99,9 @@ adaptive-agent-harness/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; context, errors, schema,
 │   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
+│   ├── decision-jev/            # `DecisionEngine` over the AI SDK's experimental_evaluate (M3 Phase A)
 │   ├── observability/           # run inspector + harness CLI (M2-T10)
+│   ├── registry/                # createWorkflowRegistry(): register/promote/retire/findActive/resolve (M5 Phase A)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
 │   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
 │   ├── storage-supabase/        # Supabase adapter (declared adapter); generated database.types.ts (M2-T11)
@@ -150,8 +152,7 @@ yet built (**planned**):
 
 ```
 apps/playground/                                              (planned, unscheduled)
-packages/decision-jev/                                        (planned, M3)
-packages/registry/, replay/, evals/                           (planned, M4-M6)
+packages/replay/, evals/                                      (planned, M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)
 ```
 
@@ -608,7 +609,18 @@ than fails, with `asAgentRuntime()` mapping that escalation to a
 is a wiring front end that parses its own IR through
 `parseWorkflowDefinition()`, never resolves capabilities or validates the
 graph itself, and offers grants only on `agent`/`call`, matching ADR-0039.
-The next free number is 0042.
+ADR-0042 records M3-T1/T2/T4/T5/T6: the decision contract (questions,
+`DecisionEngine`, `DecisionResult`, `Policy`) is a dependency-free core
+contract, and the AI SDK's experimental evaluation API is isolated entirely
+inside the `@internal/decision-jev` adapter, the only place
+`experimental_evaluate` is imported. ADR-0043 records M5-T1/T2: the workflow
+registry is a pure status model in core (seven statuses, a transition
+table, `selectCompatibleWorkflow()` with nine ordered rejection reasons),
+with the one impure step, the `Storage` lookup, kept in `@internal/registry`,
+and compatibility checked by exact reference equality, never by name.
+ADR-0044 (the router and fallback contract, M5-T3..T7) and ADR-0045
+(decision persistence and `verify`, M3-T3/T7/T8/T9) are in progress.
+The next free number is 0046.
 
 ## Scope discipline
 

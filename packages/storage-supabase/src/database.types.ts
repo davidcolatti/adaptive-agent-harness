@@ -97,22 +97,46 @@ export type Database = {
       }
       decisions: {
         Row: {
+          cost_usd: number | null
           created_at: string
           id: string
-          payload: Json
+          latency_ms: number
+          model_id: string
+          model_provider: string
+          node_id: string | null
+          policy: Json | null
+          question_ids: string[]
+          result: Json
           run_id: string
+          state_fingerprint: string
         }
         Insert: {
+          cost_usd?: number | null
           created_at?: string
           id: string
-          payload?: Json
+          latency_ms: number
+          model_id: string
+          model_provider: string
+          node_id?: string | null
+          policy?: Json | null
+          question_ids: string[]
+          result: Json
           run_id: string
+          state_fingerprint: string
         }
         Update: {
+          cost_usd?: number | null
           created_at?: string
           id?: string
-          payload?: Json
+          latency_ms?: number
+          model_id?: string
+          model_provider?: string
+          node_id?: string | null
+          policy?: Json | null
+          question_ids?: string[]
+          result?: Json
           run_id?: string
+          state_fingerprint?: string
         }
         Relationships: [
           {

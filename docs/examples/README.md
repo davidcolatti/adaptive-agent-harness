@@ -225,15 +225,35 @@ agent's triage as well as the verification of it.
 ```sh
 pnpm example:run:mock -- --workflow                                    # the `clear` route
 pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"    # the `research` route
-pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"         # escalation, exit 1
+pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"         # escalation, exit 0
+pnpm example:run:mock -- --workflow --no-register-workflow             # no active version: the full agent
 ```
 
-`--workflow` (or `EXAMPLE_RUN_MODE=workflow`) swaps the harness's `AgentRuntime` for
-`WorkflowRuntime.asAgentRuntime(compiled)`. The workflow's one `agent` node is handed the **same**
-`EveAgentRuntime` the agent path would have used, under that node's own grants and budget, so
-`--mock --workflow` still needs no credential. `--vendor <name>` (or `EXAMPLE_RUN_VENDOR`) exists
-only because the routing is evidence-driven; without it only one route could be demonstrated.
-Without either flag nothing about `pnpm example:run` has changed.
+`--workflow` (or `EXAMPLE_RUN_MODE=workflow`) puts the **router** (M5-T3) in front of the job
+instead of the eve adapter. It registers the compiled workflow, promotes it to `active` as
+`example-agent`, and hands `createHarness()` a `createRouter({ registry, capabilities,
+workflowRuntime, fullAgent })`. The workflow's one `agent` node and the router's full agent are
+the **same** `EveAgentRuntime` the agent path would have used, under that node's own grants and
+budget, so `--mock --workflow` still needs no credential. `--vendor <name>` (or
+`EXAMPLE_RUN_VENDOR`) exists only because the routing is evidence-driven; without it only one
+route could be demonstrated. Without either flag nothing about `pnpm example:run` has changed.
+
+The registry lives on the run's own `Storage` when Supabase is configured, so a registered
+version outlives the command; with no database it lives in memory for the command, because the
+credential-free path has to keep working with none. Registration is idempotent on the IR
+fingerprint, so running any of these twice re-uses the version rather than failing.
+
+**`Aurelia Freight` now exits 0**, where under M4 it exited 1 (M5-T5). Nothing about the workflow
+changed: it still escalates on the `default` branch. `asAgentRuntime()` simply had nowhere to
+escalate *to*, so it reported the escalation as a failure; the router has a full agent, which
+finishes the job. The run's ledger row records `fallback_count = 1` beside the
+`workflow_version_id` that gave up, and the trace shows `fallback.started` → the agent's own
+`agent.*`/`model.*` events, parented on it → `fallback.completed`.
+
+`--no-register-workflow` is the other half of the same demonstration: the **same** command and the
+same router, with a registry holding no active version, so the job goes straight to the full agent
+and the ledger row's `workflow_version_id` is `null`. That is what "unsupported jobs never
+force-fit into a workflow" looks like from the outside.
 
 The ledger row records `target = <agent>+workflow`, and the behavior fingerprint's `workflowIr`
 component is the compiled workflow's canonical IR rather than `null`, so a compiled run and a
@@ -241,14 +261,59 @@ full-agent run of the same domain are different behaviors and fingerprint differ
 [`docs/runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md) says what
 `pnpm harness run show` prints for one.
 
-#### What the Jev nodes really are
+#### The decision layer (M3-T8)
 
-Nothing answers a Jev question yet: M3 owns questions, the engine and the answer shape, and a
-question is deliberately not a capability kind, which is what lets M3 and M4 be built in parallel.
-`createFixtureDecisionPort()` answers both of this workflow's questions from the input with a
-handful of string matches. It is deterministic, pure, and refuses any question it does not
-recognize rather than answering by default. When M3 lands it is replaced by an adapter over the
-real `DecisionEngine` and deleted; nothing in the workflow definition changes.
+The two `jev` nodes go through the real decision port now; `createFixtureDecisionPort()`, M4-T10's
+placeholder, is gone. `src/decisions/` holds four small modules:
+
+| Module | What it is |
+| --- | --- |
+| `questions.ts` | the three questions the build plan names — `vendor-triage.low-risk` (boolean), `vendor-triage.category` (a choice over the SOP's own five categories) and `vendor-triage.evidence-sufficient` (boolean) — plus `vendor-triage.evidence-supports` for the `verify` node, each with its own confidence bands |
+| `triage-policy.ts` | `createTriagePolicy()`: the versioned, threshold-exposing rule from the three answers to `clear`, `research` or `uncertain` |
+| `engine.ts` | `resolveDecisionEngine()`: live Jev with an AI Gateway credential, and a deterministic fixture engine without |
+| `registry.ts` | what the node references resolve to, and `createVendorDecisionPort()` |
+
+The `classify` node names a **bundle**, so all three questions are answered in **one** Jev call:
+batching is by shared state, and one vendor is one state. Its output carries the policy's `route`
+beside every question's `answer`, and the branch selects on `["route"]`. That is the whole point of
+the change from M4-T10, where the node answered `clear | research | uncertain` directly: a category
+is a judgment about the **vendor** and a route is a decision about what the organization **does**,
+and ADR-0009 exists to keep them apart. `finalize` now puts the decided category in the triage
+output's `category` field, which the schema already describes as "what the vendor sells, in the
+SOP's own vocabulary".
+
+The `verify` node names a bare question with **no** policy, because nothing branches on its answer —
+`decide-verified-triage` consumes it — so its stored record carries `policy: null`. That is the
+clearest thing in the fixture: two decisions in one run, one routed and one not, and the table says
+which.
+
+With Supabase configured, every decision's complete evidence lands in `decisions`, with the raw
+result and the policy outcome in separate columns. A `clear` run writes one row, a `research` run
+writes two, and the escalation writes one, which is the number of `jev` nodes each route executes.
+
+The fixture engine is **not Jev and does not pretend to be**: it derives a script per call from the
+frozen vendor evidence using the same rules M4-T10's placeholder used, so the three demo routes
+still hold with no credential. What changed is that the policy layer, the confidence derivation,
+the banding and the persistence are all the real ones; only the model is scripted. The command says
+which engine answered on stderr.
+
+#### Calibration (M3-T9)
+
+```sh
+pnpm --filter @internal/example-agent run calibrate
+```
+
+Runs sixteen labeled cases — the three frozen vendors, two with no evidence on file, and eleven
+synthetic vendors each missing exactly one SOP requirement — through the questions and the policy,
+and prints a confusion matrix, accuracy, the uncertain-band rate, the false-auto rate, the fallback
+rate and a per-question breakdown. With no credential it calibrates the fixture engine, which
+proves the metrics and the labeled set are coherent; with `AI_GATEWAY_API_KEY` or
+`VERCEL_OIDC_TOKEN` it calibrates **live Jev**, which is the run whose numbers would actually
+decide a threshold. It exits non-zero when any case is routed differently from its label.
+
+The labeled set is what earns each question its bands. A question with no bands can never be
+auto-routed, by design (M3-T5), so a number in `questions.ts` that this report does not support is
+a number nobody should trust.
 
 ### `apps/eve-fixture-agent` — the credential-free fixture
 

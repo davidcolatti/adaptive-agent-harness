@@ -410,29 +410,105 @@ rather than merely possible: the agent receives the original immutable `Job`
 **plus** what the compiled path already established, so it does not redo research
 the workflow already paid for (invariant 9).
 
-`trusted` is the load-bearing field. A node whose output passed its schema and
-whose capability resolved is trusted; one that failed, timed out or produced
-something unvalidated is not, and the agent is told which is which rather than
-being handed a flat list it has to take on faith.
+Three fields beyond build plan section 5's shape, added by M5 (ADR-0044):
+`detail`, one line of free text saying what actually happened; `nodeId`, the node
+that gave up or `null` when the workflow itself did; and, on every completed
+node, an inline `output: JsonValue | null`.
 
-`FallbackReason` is a **closed** union of six, because the reason is stored,
+**`output` is a deliberate deviation from section 5**, which names only
+`outputRef`. That shape assumes the recipient can dereference a pointer, and
+across the only channel a fallback has — the runtime adapter's documented context
+surface — it cannot: what receives the envelope is a model, not a process holding
+a `Storage` handle. `node:research` resolves to nothing there, so an envelope of
+references alone would make M5-T5's "the full agent should not blindly repeat
+completed research" unachievable in principle. The evidence travels **with** the
+reference, never instead of it: `outputRef` remains the durable pointer for a
+reader that does have the trace or the store.
+
+It is carried for **every** listed node, untrusted ones included. Everything in
+`completedNodes` validated or it would not be listed, so M5-T6's "failed/partial
+node output is not automatically reusable" is enforced by membership — a failed
+node is absent, not present with a null output. `trusted` governs how a value may
+be *used*, not whether it is shown.
+
+`null` means the value was dropped to keep the envelope inside its 64 KiB budget
+(`FALLBACK_ENVELOPE_MAX_BYTES`), never that the node failed; the router drops the
+largest outputs first and names them in `detail`.
+
+`trusted` is the load-bearing field, and the rule is about **who produced the
+value**, not merely whether it validated — everything in `completedNodes`
+validated, or it would not be there (ADR-0040, unchanged by M5):
+
+| Node | `trusted` | Why |
+| --- | --- | --- |
+| `code`, `artifact`, `chain`, `branch`, `map`, `reduce`, `loop` | yes | Deterministic harness-side computation over already-validated input. |
+| `call` with `effect: "read-only"` | yes | It observed the world and changed nothing. |
+| `call` with any write effect | no | A retry, a partial write or a protected replay all mean the world and the recorded value may disagree. |
+| `agent`, `jev` | no | Probabilistic. A schema says an answer is well shaped, not that it is right. |
+| `escalate` | not listed at all | It produces a `FallbackContext` rather than a value, so it has no output for `outputRef` to point at. |
+
+A failed or partial node is not listed either. M5-T6 states the necessary
+condition — "only successfully validated node outputs may be marked `trusted`" —
+and the table is the sufficient one.
+
+### The eight reasons
+
+`FallbackReason` is a **closed** union of eight, because the reason is stored,
 aggregated and compared: M5 counts fallbacks per reason to decide whether a
 workflow is carrying its weight, and M6/M7 compare them across replays. A
-free-form string would make "the same reason" a text-matching problem.
+free-form string would make "the same reason" a text-matching problem, which is
+why the *specific* case lives in `detail`, which nothing compares.
 
-| Reason | Meaning |
-| --- | --- |
-| `escalate-node` | The graph reached an `escalate` node. The designed exit. |
-| `node-failed` | A node exhausted its retries. |
-| `budget-exceeded` | A budget dimension ran out mid-run. |
-| `validation-failed` | A node's input or output failed its schema. |
-| `decision-failed` | A `jev` node could not produce a usable answer. |
-| `timeout` | A node or the workflow exceeded its wall-clock limit. |
+These are the build plan's M5-T4 reasons, not M4's six. M4 named the mechanical
+ways the interpreter stops; these name **why the compiled path could not be
+trusted with this job**, which is the question a fallback exists to answer
+(ADR-0044).
+
+| Reason | Meaning | Raised by |
+| --- | --- | --- |
+| `low_confidence` | A judgment was made and is not confident enough to act on. | M3's policy layer. **Never** the interpreter. |
+| `unsupported_case` | The graph has no route it can justify for this job. | An `escalate` node — the designed exit. |
+| `missing_evidence` | Evidence a route needed was not established. | A domain policy, or an `escalate` node that says so. |
+| `budget` | A budget dimension ran out, or a wall-clock limit expired. | `BudgetExceededError`; a node timeout. |
+| `tool_failure` | A `call` node's tool kept failing. | A `call` node that exhausted its retries. |
+| `schema_mismatch` | An input or output did not satisfy its schema. | `ValidationError`, at a node or at the workflow's own contract. |
+| `policy` | Permission or policy refused the work. | `PermissionDeniedError`. |
+| `workflow_error` | The compiled path broke in a way none of the above names. | Any other exhausted node; a `jev` node whose engine produced no usable answer. |
+
+A decision that could not be obtained at all is a `workflow_error` and **not**
+`low_confidence`: no judgment was made, and `low_confidence` would claim one was.
 
 Note that an `escalate` node's own `reason` field is **not** a `FallbackReason`:
 it is the workflow author's static prose explaining why that branch gives up
-(`"classification was uncertain"`), and it ends up in a trace and in a review.
-The `FallbackReason` is chosen at runtime.
+(`"classification was uncertain"`). It becomes the envelope's `detail`, which is
+why the IR needed no change when the reasons did. The `FallbackReason` for an
+`escalate` node is always `unsupported_case`.
+
+### The three outcomes
+
+M5-T4 states that every compiled execution returns `success`, `fallback(reason)`
+or `failure`. Those are `WorkflowRunResult`'s cases, one for one:
+
+| M5-T4 | `WorkflowRunResult` | What the router does with it |
+| --- | --- | --- |
+| `success` | `completed` | Returns the output. |
+| `fallback(reason)` | `escalated`, carrying this envelope | Invokes the full agent with it. |
+| `failure` | `failed` | Reports a failed run. **Never** a completed one, and never a fallback. |
+
+(`aborted` is the fourth case and belongs to none of the three: a cancelled run
+is neither an outcome nor a defect.)
+
+### Where the envelope goes
+
+The router hands it to the full agent through `ExecutionContext.fallback`, not
+through the `Job`, which stays immutable. `remainingBudget` is recalculated at
+the moment of handoff — the job's budget minus what the workflow spent, floored
+at zero per dimension, with an absent dimension left absent — and the context the
+agent runs under carries that same budget. An adapter presents the envelope on
+its framework's own documented surface; `EveAgentRuntime` puts it in the turn's
+`clientContext` under `harness.fallback`. See
+[`workflow-registry.md`](workflow-registry.md) for the router and
+[ADR-0044](../decisions/0044-the-router-is-an-agentruntime-and-a-fallback-travels-in-the-execution-context.md).
 
 ## Where the types live
 

@@ -177,25 +177,67 @@ timeline, which now carries a `node.started`/`node.completed` pair per executed 
 adapter's own `agent.*`, `model.*` and `decision.*` events nested between the pair of the node that
 produced them. The `Route` section's `runtime` line reads `@internal/workflow@0.0.0` and `target`
 reads `<agent>+workflow`, which is how a workflow run is told from a full-agent run today. An
-escalated run ends `node.completed <escalate node>`, `fallback.started`, `run.failed`, and its
-`Errors` section prints the whole `FallbackContext` from the `WorkflowError`'s `details` — the
-reason, the workflow's id, version and fingerprint, the nodes that completed with whether each is
-trusted, and the remaining budget.
+escalated run driven by `asAgentRuntime()` — a workflow with no router in front of it — ends
+`node.completed <escalate node>`, `fallback.started`, `run.failed`, and its `Errors` section prints
+the whole `FallbackContext` from the `WorkflowError`'s `details`.
 
-**Four things the inspector does not yet show for a workflow run**, all of them M2 code that
-predates workflows and none of them wrong in a way that misleads about what ran:
+## A run that fell back to the full agent (M5-T5)
 
-- **`route:` always prints `full-agent`.** It is `runs.workflow_version_id`, a placeholder column
-  that M5's workflow registry fills; the run's actual workflow is in the `runtime` line's metadata
-  and in the behavior fingerprint's `workflowIr` component.
-- **`fallbacks:` reads `0 (from the ledger)` even for a run that escalated**, because
-  `runs.fallback_count` is a placeholder too. The trace count is right and is used only when there
-  is no ledger row.
+With the router in front of the job, an escalation is not the end of the run. `pnpm
+example:run:mock -- --workflow --vendor "Aurelia Freight"` escalates and then **completes**, and
+three parts of the inspection say so.
+
+The `Route` section names the compiled version that was tried and how many times the run fell back:
+
+```text
+Route
+─────
+  route:     01a0c0a5-7677-7000-a57f-89a7824a1b9d
+  target:    @internal/eve-fixture-agent+workflow
+  runtime:   eve@0.63.0
+  fallbacks: 1 (from the ledger)
+```
+
+`route:` is `runs.workflow_version_id`, which the router now fills, so a workflow run prints a
+version id where a full-agent run prints `full-agent`. `runtime:` is the adapter that produced the
+**final** result, which after a fallback is the full agent rather than the workflow — the workflow
+is identified by the `route:` line and by the behavior fingerprint's `workflowIr` component.
+
+The timeline shows the handoff, with the agent's own events nested inside the fallback span:
+
+```text
+     8         5  node.completed              0  attempt=1 escalateReason=the classification was not `cl…
+     9         5  fallback.started            -  completedNodes=2 detail=the classification was not `cle…
+    10       114  agent.started               -  eveEventId=evt_… runtime=eve s…
+    11       114  model.started               -  eveEventId=evt_… modelId=adapt…
+    12       120  model.completed             6  eveEventId=evt_… finishReason=…
+    13       125  agent.completed            11  eveEventId=evt_… turnId=turn_0
+    14       129  fallback.completed        124  agentRuntime=eve outcome=completed reason=unsupported_c…
+    15       130  run.completed             140  jobId=…
+```
+
+`fallback.started` carries the reason, the `detail`, the node that gave up, the workflow's id,
+version and fingerprint, and how many completed nodes the agent was offered and how many of those
+were trusted. `fallback.completed` carries the agent's outcome, its usage and its runtime name.
+Everything between them is the fallback agent's own work, parented on the `fallback.started` span.
+
+The `Calls` section counts the **whole** attempt — the workflow's calls plus the agent's — because
+the run cost both.
+
+**`runs.jev_calls` is wired as of M5** and agrees with the timeline. The Calls section lists each
+decision by `questionId` from the trace, and the ledger column is now a measurement of the same
+thing: the workflow interpreter counts every decision it asks a `jev` node's engine for, the router
+sums the compiled path's with any the full agent made after taking over, and `createHarness()`
+writes the total. A run of the research route reports `jev: 2 calls` and carries `jev_calls = 2`;
+one that escalated at `classify` reports one of each. See
+[`../contracts/storage.md`](../contracts/storage.md) for what is and is not counted — the SQL
+comment on the column still calls it a placeholder, because migrations are append-only.
+
+**One thing the inspector still does not show for a workflow run**, M2 code that predates workflows
+and not wrong in a way that misleads about what ran:
+
 - **`TraceEvent.node` has no column of its own.** The node id is visible only because the runtime
   repeats it in the payload as `nodeId`, and a long detail line truncates.
-- **The note "jev: 0 is a real measurement … until M3 adds the Jev decision engine" prints even
-  when the run made Jev calls.** M4's fixture decision port is not Jev, so the note is still true
-  in spirit, but it should become conditional when M3 lands.
 
 ## Exit codes
 
@@ -266,3 +308,37 @@ pnpm supabase:stop
 - [`../contracts/trace-event.md`](../contracts/trace-event.md) for the event taxonomy the timeline
   prints.
 - [`../development/commands.md`](../development/commands.md) for every root script.
+
+## Decisions (M3-T3)
+
+Since M3-T3 a `jev` node's judgment is persisted as well as traced, and the two are joinable. The
+inspector reads the **trace**, so a `decision.started`/`decision.completed` pair appears in the
+timeline and the Calls section lists each decision by its `questionId`:
+
+```text
+Calls
+─────
+  jev:     2 calls, 11 ms total
+    seq   2  vendor-triage.classify           completed       6 ms
+    seq  14  vendor-triage.evidence-supports  completed       5 ms
+```
+
+The **evidence behind each of those spans** is a row in `decisions`, which the inspector does not
+print. Read it directly when you want the distribution, the confidence, the model, or the policy
+that consumed the answer:
+
+```sh
+psql "$DATABASE_URL" -c "
+  select node_id, question_ids, model_provider || '/' || model_id as model,
+         cost_usd, latency_ms, policy->>'route' as route
+  from decisions where run_id = '<run-id>' order by id;
+"
+```
+
+A `policy` of `null` is not a gap: it means no policy consumed that answer. In the vendor fixture
+the `classify` node is routed and the `verify` node is not, so a `research` run's two rows show one
+route and one `null`, which is what "raw Jev result is stored separately from policy outcome" looks
+like from the outside.
+
+`cost_usd` is `null` on every row, and that is a measurement: the installed evaluation API exposes
+no cost anywhere.

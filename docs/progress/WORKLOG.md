@@ -7769,7 +7769,7 @@ registry, router and fallback), with M3 still available to run beside it.
 
 **Status:** completed
 **Actor/session:** coding agent (documentation subagent)
-**Commit:** not committed
+**Commit:** `c109d0a`
 
 ### Goal
 

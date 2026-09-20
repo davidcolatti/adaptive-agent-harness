@@ -17,7 +17,7 @@ M5 or M3 starts next, from `docs/milestones/build-plan.md`, in the M4 status
 file's shape (`docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`).
 **Last commit SHA:** `c1572f1` (fix: inspector zero-Jev note only when no Jev call); before it `e461297` (M4-T10: hand-authored vendor-triage workflow,
 fixture decision port, `--workflow` demo, and the M4 acceptance evidence).
-This handoff's own docs commit follows it. Earlier M4: `0562ac8` (docs:
+This handoff's docs commit is `c109d0a`. Earlier M4: `0562ac8` (docs:
 M4-T1..T9 in the handoff/AGENTS.md/milestone status), `0d12b43` (M4-T3
 through M4-T9: validation, DSL, local runtime; ADRs 0039-0041), `4c03e2e`
 (M4-T1/M4-T2: serializable workflow IR and node contracts). Earlier M2:

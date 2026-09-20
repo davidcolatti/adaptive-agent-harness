@@ -99,6 +99,7 @@ adaptive-agent-harness/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; context, errors, schema,
 │   │                            #   Job, defineDomain(), AgentRuntime (M1-T3/T5/T7/T8)
+│   ├── observability/           # run inspector + harness CLI (M2-T10)
 │   ├── runtime-ai-sdk/          # AI SDK (`ai`) adapter; no adapter code yet
 │   ├── runtime-eve/             # `eve` adapter: EveAgentRuntime (M1-T6), ./testing
 │   ├── storage-supabase/        # Supabase adapter (declared adapter); generated database.types.ts (M2-T11)
@@ -114,7 +115,7 @@ adaptive-agent-harness/
 │   ├── architecture/            # system-map.md, runtime.md
 │   ├── contracts/README.md
 │   ├── concepts/README.md
-│   ├── decisions/               # 0000-template.md plus ADRs 0001-0029
+│   ├── decisions/               # 0000-template.md plus ADRs 0001-0037
 │   ├── development/
 │   │   ├── local-setup.md
 │   │   ├── commands.md
@@ -124,7 +125,7 @@ adaptive-agent-harness/
 │   │   ├── build-plan.md
 │   │   ├── m0-repository-foundation.md
 │   │   └── m1-local-agent-and-public-harness-boundary.md
-│   ├── runbooks/README.md
+│   ├── runbooks/                # README.md, inspecting-a-run.md, supabase-local.md
 │   ├── research/
 │   │   ├── README.md
 │   │   ├── tooling/
@@ -151,7 +152,6 @@ apps/playground/                                              (planned, unschedu
 packages/decision-jev/                                        (planned, M3)
 packages/workflow/, registry/, replay/, evals/                (planned, M4-M6)
 packages/learner/, compiler/, codegen/                        (planned, M7-M8)
-packages/observability/                                       (planned)
 ```
 
 Per-topic architecture docs (`runtime.md`, `workflow-ir.md`, ...) and the
@@ -260,6 +260,7 @@ Every root script (`package.json`):
 | `pnpm supabase:stop` | `supabase stop`; stops the containers, keeping the data volume. |
 | `pnpm supabase:reset` | `supabase db reset`; the reproducibility gate: applies committed migrations, then `supabase/seed.sql`, from an empty database. |
 | `pnpm supabase:types` | Regenerates `packages/storage-supabase/src/database.types.ts` from the running local database (shell redirection; a failed generation truncates the file). |
+| `pnpm harness` | The harness CLI (M2-T10). Today one command: `pnpm harness run show <run-id> [--json] [--jsonl <path>]`, the local run inspector, reading from Supabase or from a JSONL trace file with no database. |
 
 Per-package scripts run the same way everywhere else in the workspace:
 `pnpm --filter <package-name> <script>`, e.g.
@@ -583,9 +584,11 @@ and keyset paging, implemented by `@internal/storage-supabase` over a pinned
 with `uuid` ids (bytewise ordering verified to equal textual UUIDv7 order),
 RLS enabled with no policies, `runs` as the outcome ledger with no attempts
 table, and trace inserts idempotent on `(run_id, sequence)`; a configured
-store that fails makes `harness.run()` throw `StorageError`.
-ADR number 0037 is reserved for the in-flight M2-T10 inspector task; the next
-free number after it is 0038.
+store that fails makes `harness.run()` throw `StorageError`. ADR-0037 records
+M2-T10: the harness CLI is built on Node's `util.parseArgs` with no
+dependency, lives in `packages/observability` beside the inspector for now,
+and reads only through the `Storage` port or a trace-only JSONL source.
+The next free number is 0038.
 
 ## Scope discipline
 

@@ -1,6 +1,7 @@
 # Milestone 2, Job, Trace, Supabase, and Run Ledger
 
-**Status:** M2-T1 through M2-T9 and M2-T11 are `completed`; M2-T10 is `in_progress`.
+**Status:** every task is `completed` (M2-T1 through M2-T11); all ten acceptance criteria verified.
+Snapshot: `../progress/milestones/m2.md`.
 
 **Goal (from the build plan):** make every execution reproducible enough to inspect and later
 replay.
@@ -57,6 +58,8 @@ before opening any M2 task.
   package it does not know about.
 
 ## Tasks
+
+M2-T1 through M2-T11 are `completed`.
 
 ### M2-T1, Stable identifiers
 

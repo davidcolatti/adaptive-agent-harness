@@ -5771,7 +5771,7 @@ Unchanged: **M2-T10, the local run inspector**.
 
 **Status:** started
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `5eaba18`
 
 ### Goal
 
@@ -5827,7 +5827,7 @@ local Supabase run.
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `5eaba18`
 
 ### Goal
 
@@ -6158,3 +6158,105 @@ Ordered as run.
 **Milestone 2 is feature-complete**: M2-T1 through M2-T11 are all `completed`. Next is the M2
 acceptance-criteria sweep and the milestone snapshot under `docs/progress/milestones/m2.md`, then
 Milestone 3.
+
+## 2026-09-20 00:35 — M2 — Milestone 2 complete: snapshot and handoff
+
+**Status:** completed
+**Actor/session:** coding agent (documentation subagent)
+**Commit:** not committed
+
+### Goal
+
+Close out Milestone 2, now that M2-T10 (the last task) is complete, reviewed, and committed as
+`5eaba18`, and all ten acceptance criteria in the status file carry dated evidence: write the
+milestone snapshot, update the status file and README, extend AGENTS.md, and rewrite the handoff
+to point at M3/M4.
+
+### Implementation references
+
+Not applicable. This task touches no framework-facing code; it archives the already-completed and
+already-reviewed Milestone 2 work into a snapshot and rewrites the handoff files.
+
+### Work completed
+
+- Confirmed the newest commit (`git log --oneline -8`) is `5eaba18`, subject
+  `feat(M2-T10): local run inspector and the first harness CLI command`.
+- Read `docs/progress/milestones/m1.md` (the snapshot shape), `docs/progress/README.md`, the whole
+  M2 status file, ADR-0037, `docs/runbooks/inspecting-a-run.md`, the two WORKLOG entries titled
+  `M2-T10 — Local run inspector`, and the Milestone 3 and Milestone 4 sections of
+  `docs/milestones/build-plan.md` (Goal, Blocked By, Parallel Work).
+- Wrote `docs/progress/milestones/m2.md`: title, completion date, status, the eight-commit list in
+  order (with `<pending>` for this closing docs commit), status-file path, WORKLOG range
+  (2026-09-19 21:35 through 2026-09-20 00:20), Goal, a Tasks table (one line per M2-T1..T11 with
+  its ADR), Verification at completion (876 passed / 43 skipped across 53 files; all three
+  `example:run:mock` storage modes; the inspector against Supabase and JSONL; `supabase:reset`
+  from zero; `uuid` ordering; RLS on 13 tables; CI has not seen any M2 commit), Deviations from the
+  plan (nine items pulled from ADR-0030 through ADR-0037), and an Environment note.
+- Updated `docs/milestones/m2-job-trace-supabase-and-run-ledger.md`: header status line now reads
+  "every task is `completed` (M2-T1 through M2-T11); all ten acceptance criteria verified.
+  Snapshot: `../progress/milestones/m2.md`."; added the missing `## Tasks` intro line
+  ("M2-T1 through M2-T11 are `completed`.") to mirror M1's shape. The M2-T10 subsection's status
+  line was already `completed (2026-09-20).`, so no change was needed there.
+- Updated `docs/milestones/README.md`: the M2 row now reads
+  "complete (snapshot: [../progress/milestones/m2.md](../progress/milestones/m2.md))", matching
+  M1's row form. The "Later milestones (M3 onward)" sentence below the table already said "M3
+  onward" from an earlier reconciliation pass, so it needed no further change.
+- Checked `docs/progress/README.md` for an explicit list of milestone snapshots to extend: it only
+  describes the general `docs/progress/milestones/mX.md` pattern and names no specific file, so
+  nothing there needed a change.
+- `AGENTS.md`: added a `pnpm harness` row to the commands table after `pnpm supabase:types`; added
+  `packages/observability/` to the repository-layout tree (removing it from the "planned" block,
+  since it now exists), expanded `docs/runbooks/` to list its three files, and changed the
+  `decisions/` comment from "ADRs 0001-0029" to "ADRs 0001-0037"; extended the ADR paragraph with
+  the ADR-0037 sentence and changed the closing sentence to "The next free number is 0038." (no
+  more tasks reserved); confirmed the "Current status" line in the project summary already points
+  at `docs/context/current-state.md` and needed no change.
+- Rewrote `docs/context/current-state.md` in full: Milestone 2 marked complete; current milestone
+  set to "M2 complete; next is M4 (critical path), M3 can proceed beside it"; current task "not
+  started, create the next milestone's status file"; last commit SHA `5eaba18`; completed-milestones
+  list now just names M0, M1, M2 with their snapshot/status-file paths (collapsing the
+  per-task M2 entries from the previous handoff); "what works now" consolidated to ten packages
+  (adding `@internal/observability`) plus the two apps, the three `example:run:mock` storage modes,
+  the new `pnpm harness` CLI, and the 876-passed/43-skipped test count; "partially working" keeps
+  the unpersisted-output, ledger-placeholder, ADR-0028 and `domains`-option items and drops the
+  now-closed "which target ran" caveat's open status; "does not exist yet" narrowed to Jev, workflow
+  IR, replay, evals, learner, compiler and the rest of the CLI; blockers updated for the eight
+  unpushed M2 commits and the local `.env.local`/Supabase-stopped situation; active decisions
+  extended through ADR-0037 with next free ADR 0038; findings extended with the CLI mechanics
+  (positional-argument forwarding, stderr-redirected turbo output, `parseTraceEvent` as the read
+  boundary, the JSONL reader's home in `@internal/trace`); "exact next task" points at creating the
+  M4 status file first (critical path) with M3 able to start beside it, and the first command now
+  chains `supabase:start`, `example:run:mock` and `harness run show`.
+
+### Files changed
+
+- `docs/progress/milestones/m2.md` — new file, the Milestone 2 snapshot.
+- `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` — header status line and `## Tasks`
+  intro line.
+- `docs/milestones/README.md` — M2 row now "complete (snapshot: ...)".
+- `AGENTS.md` — commands table row, repository-layout tree, decisions-directory comment, ADR
+  paragraph.
+- `docs/context/current-state.md` — rewritten in full for the Milestone 2 -> Milestone 3/4
+  handoff.
+
+### Verification
+
+- `pnpm format:check` — PASS
+- `pnpm check:handoff` — PASS
+
+### Decisions / deviations
+
+- None beyond what M2-T1 through M2-T10's own entries already recorded; this entry only archives
+  and reconciles documentation for already-completed, already-reviewed work.
+
+### Known issues / blockers
+
+- Eight M2 commits (`02b1261` through `5eaba18`, plus the docs commits between them) are unpushed
+  to `origin/main`; CI, including the `supabase-types` job, has not run against any of Milestone 2.
+- `pnpm example:run` against a live Gateway model remains unverified without a credential.
+
+### Next exact step
+
+Start Milestone 4 (Workflow IR, DSL, and Local Deterministic Runtime), the critical path, by
+creating its status file from the build plan in the M2 file's shape. Milestone 3 (Jev) is blocked
+only by M2 and may start beside M4 at any point.

@@ -8328,7 +8328,7 @@ calls
 
 **Status:** started
 **Actor/session:** coding agent (`m5-router`)
-**Commit:** not committed
+**Commit:** `17c88cd`
 
 ### Goal
 
@@ -8403,7 +8403,7 @@ then `createRouter()` and `createCircuitBreaker()` in `@internal/registry`.
 
 **Status:** completed
 **Actor/session:** coding agent (`m3-persist`, Claude Opus 5)
-**Commit:** not committed
+**Commit:** `17c88cd`
 
 ### Goal
 
@@ -8566,7 +8566,7 @@ ledger column agrees with the `decisions` table.
 
 **Status:** completed
 **Actor/session:** coding agent (`m5-router`)
-**Commit:** not committed
+**Commit:** `17c88cd`
 
 ### Goal
 
@@ -8732,7 +8732,7 @@ the same band. A policy that routes on the difference has to check `question.ban
 
 **Status:** completed
 **Actor/session:** coding agent (`m5-router`)
-**Commit:** not committed
+**Commit:** `17c88cd`
 
 ### Goal
 
@@ -8823,7 +8823,7 @@ Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end.
 
 **Status:** completed
 **Actor/session:** coding agent (`m5-router`)
-**Commit:** not committed
+**Commit:** `17c88cd`
 
 ### Goal
 
@@ -8896,3 +8896,175 @@ M3 persistence session, which correctly did not fix it because the wiring runs t
 ### Next exact step
 
 Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end.
+
+---
+
+## 2026-09-21 00:40 — M3 — Milestone 3 complete: snapshot and handoff
+
+**Status:** completed
+**Actor/session:** coding agent (documentation subagent)
+**Commit:** not committed
+
+### Goal
+
+Close out Milestone 3, now that M3-T3/T7/T8/T9 (the last tasks) are complete, reviewed, and
+committed as `17c88cd`, and all seven acceptance criteria in the status file carry dated evidence:
+write the milestone snapshot, update the status file and README, and rewrite the handoff alongside
+the M5 close-out landing in the same session.
+
+### Implementation references
+
+Not applicable. This task touches no framework-facing code; it archives the already-completed and
+already-reviewed Milestone 3 work into a snapshot and rewrites the handoff files.
+
+### Work completed
+
+- Confirmed the newest commits (`git log --oneline -3`) are `17c88cd` (Phase B: M5-T3..T7,
+  M3-T3/T7/T8/T9) and `df0de79` (Phase A: M3-T1/T2/T4/T5/T6, M5-T1/T2).
+- Read the whole M3 status file (all nine task sections and the seven dated acceptance criteria),
+  ADR-0042 and ADR-0045, the research note `docs/research/vercel/2026-09-20-m3-ai-sdk-evaluate.md`,
+  and the four Phase A/B WORKLOG entries covering M3-T1/T2/T4/T5/T6 and M3-T3/T7/T8/T9.
+- Wrote `docs/progress/milestones/m3.md`: title, completion date, status, the two-commit list
+  (shared with Milestone 5), status-file path, WORKLOG range (2026-09-20 12:00 through 2026-09-21
+  00:20), Goal, a Tasks table (one line per M3-T1..T9 with its ADR), Verification at completion
+  (the final `pnpm check` counts, the calibration run, the three demo routes with run ids and
+  `decisions`-row counts), Deviations from the plan (nine items pulled from ADR-0042, ADR-0045 and
+  the task Result paragraphs: harness-derived confidence, null cost, no engine trace events,
+  double-closed banding, `levels` over `min`/`max`, policy-per-bundle not per-port, the
+  category/route split, `verify` left unwired, live Jev never run), and an Environment note.
+- Updated `docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`: header status line now
+  reads "every task is completed (M3-T1 through M3-T9); all seven acceptance criteria verified.
+  Snapshot: `../progress/milestones/m3.md`." No task subsection was touched.
+- Updated `docs/milestones/README.md`: the M3 row now reads "complete (snapshot:
+  [../progress/milestones/m3.md](../progress/milestones/m3.md))", matching M2/M4's row form. The
+  "M6 onward" footnote sentence remained accurate and needed no further change.
+- `docs/context/current-state.md` and `AGENTS.md` were rewritten together with the M5 close-out, in
+  the same pass, since the two milestones share both commits; see the M5 close-out entry below for
+  the full list of what changed in each.
+
+### Files changed
+
+- `docs/progress/milestones/m3.md` — new file, the Milestone 3 snapshot.
+- `docs/milestones/m3-jev-as-a-first-class-decision-primitive.md` — header status line only.
+- `docs/milestones/README.md` — M3 row now "complete (snapshot: ...)".
+
+### Verification
+
+- `pnpm format:check` — PASS
+- `pnpm check:handoff` — PASS
+
+### Decisions / deviations
+
+- None beyond what M3-T1 through M3-T9's own entries already recorded; this entry only archives
+  and reconciles documentation for already-completed, already-reviewed work.
+
+### Known issues / blockers
+
+- The two M3 commits (`df0de79`, `17c88cd`) are unpushed to `origin/main`, shared with Milestone 5;
+  CI has not run against either.
+- No AI Gateway credential exists on this development host; live Jev has never been run.
+
+### Next exact step
+
+Start Milestone 6 (Replay and Evaluation), the critical path, by creating its status file from the
+build plan in the M5 file's shape. See the M5 close-out entry below for the full handoff.
+
+## 2026-09-21 00:45 — M5 — Milestone 5 complete: snapshot and handoff
+
+**Status:** completed
+**Actor/session:** coding agent (documentation subagent)
+**Commit:** not committed
+
+### Goal
+
+Close out Milestone 5, now that M5-T3..T7 (the last tasks) are complete, reviewed, and committed
+as `17c88cd`, and all six acceptance criteria in the status file carry dated evidence: write the
+milestone snapshot, update the status file and README, extend AGENTS.md, and rewrite the handoff
+to point at M6.
+
+### Implementation references
+
+Not applicable. This task touches no framework-facing code; it archives the already-completed and
+already-reviewed Milestone 5 work into a snapshot and rewrites the handoff files.
+
+### Work completed
+
+- Read the whole M5 status file (all seven task sections and the six dated acceptance criteria),
+  ADR-0043, ADR-0044 and its dated amendment to ADR-0040, the research note
+  `docs/research/vercel/2026-09-20-m5-eve-client-context-for-fallback.md`, and the Phase A/B
+  WORKLOG entries covering M5-T1/T2, M5-T3..T7, and the two review-follow-up entries (the node
+  outputs in the fallback envelope, and the `runs.jev_calls` measurement fix).
+- Wrote `docs/progress/milestones/m5.md`: title, completion date, status, the two-commit list
+  (shared with Milestone 3), status-file path, WORKLOG range (2026-09-20 12:00 through 2026-09-21
+  00:20), Goal, a Tasks table (one line per M5-T1..T7 with its ADR), Verification at completion
+  (the final `pnpm check` counts, three same-command runs taking the workflow/fallback/direct-agent
+  paths with run ids, the `jev_calls` measurement check), Deviations from the plan (eleven items
+  pulled from ADR-0043, ADR-0044 and the task Result paragraphs: the eight reasons replacing M4's
+  six, the two policy-only reasons unreachable from the interpreter, node outputs added to the
+  fallback envelope beside references, escalate nodes excluded from `completedNodes`, the router as
+  an `AgentRuntime` composition, the envelope's transport, two-statement promotions,
+  shadow/canary never routing, `pnpm harness workflow list` not built, `asAgentRuntime()`'s
+  unchanged standalone mapping, and the `jev_calls` fix), and an Environment note.
+- Updated `docs/milestones/m5-workflow-registry-router-and-fallback.md`: header status line now
+  reads "every task is completed (M5-T1 through M5-T7); all six acceptance criteria verified.
+  Snapshot: `../progress/milestones/m5.md`." No task subsection was touched.
+- Updated `docs/milestones/README.md`: the M5 row now reads "complete (snapshot:
+  [../progress/milestones/m5.md](../progress/milestones/m5.md))". The "M6 onward" footnote sentence
+  remained accurate.
+- `AGENTS.md`: the ADR paragraph's placeholder "ADR-0044 ... and ADR-0045 ... are in progress"
+  sentence was replaced with one sentence recording what each actually decided; the next free
+  number stays 0046. The `apps/example-agent/src/` layout-tree comment gained `decisions/`
+  (M3-T8/T9) beside the existing `workflow/` (M4-T10) entry.
+- Rewrote `docs/context/current-state.md` in full for the Milestone 3/4/5 -> Milestone 6 handoff:
+  current milestone marked M3/M4/M5 all complete, next M6 (blocked only by M5, per the build plan's
+  exact "Blocked By" text); current task set to creating the M6 status file; last commit SHA
+  `17c88cd` with the full commit chain back through M2; completed-milestones list now names M0
+  through M5 with their snapshot/status-file paths; "what works now" rewritten for fourteen
+  workspace projects, `@internal/decision-jev`/`@internal/registry`'s full surfaces, core's four new
+  modules, `Storage`'s sixteen methods, seven migrations, the router-backed `--workflow` demo with
+  all three paths exiting 0, the calibration command, and the 1491/68/82 (1570/3 with `.env.local`)
+  test counts; "what is partially working" rewritten for live Jev, `verify` unwired, the missing
+  CLI command, two-statement promotions, shadow/canary, the inspector's remaining Route gap,
+  in-memory artifacts and no durability, with `workflow_version_id`/`fallback_count`/`jev_calls`
+  moved out of the placeholder list since all three are now real; "what does not exist yet"
+  narrowed to replay, evals, learner, compiler, codegen and promotion policy; active decisions
+  extended through ADR-0045 with next free ADR 0046; findings extended with the six requested
+  bullets (fallback envelope outputs and trust, the eight reasons and which two are
+  interpreter-unreachable, banding's two indistinguishable failure cases, `jev_calls` counted at
+  the call site, the router's per-run re-resolution, Supabase running); "exact next task" and
+  "exact first command" point at the M6 status file and the escalation demo command respectively;
+  "last successful verification" carries today's final numbers and run ids.
+
+### Files changed
+
+- `docs/progress/milestones/m5.md` — new file, the Milestone 5 snapshot.
+- `docs/milestones/m5-workflow-registry-router-and-fallback.md` — header status line only.
+- `docs/milestones/README.md` — M5 row now "complete (snapshot: ...)".
+- `AGENTS.md` — ADR paragraph (ADR-0044/ADR-0045 sentences, next free number unchanged at 0046),
+  repository-layout tree (`apps/example-agent/src/` comment).
+- `docs/context/current-state.md` — rewritten in full for the Milestone 3/4/5 -> Milestone 6
+  handoff.
+
+### Verification
+
+- `pnpm format:check` — PASS
+- `pnpm check:handoff` — PASS
+
+### Decisions / deviations
+
+- None beyond what M5-T1 through M5-T7's own entries already recorded; this entry only archives
+  and reconciles documentation for already-completed, already-reviewed work.
+
+### Known issues / blockers
+
+- The two M5 commits (`df0de79`, `17c88cd`) are unpushed to `origin/main`, shared with Milestone 3;
+  CI has not run against either.
+- `pnpm example:run` and its `--workflow` variants against a live Gateway model remain unverified
+  without a credential.
+
+### Next exact step
+
+Start Milestone 6 (Replay and Evaluation), the critical path, by creating its status file from the
+build plan in the M5 status file's shape. Its "Blocked By" names only M5, now complete; its
+"Parallel Work" note says the replay runner, evaluators and report generator can proceed in
+parallel.

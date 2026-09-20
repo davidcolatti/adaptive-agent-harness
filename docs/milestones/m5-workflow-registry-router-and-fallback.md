@@ -1,7 +1,7 @@
 # Milestone 5, Workflow Registry, Router, and Fallback
 
-**Status:** in progress. M5-T1 and M5-T2 are `completed` (Phase A commit `df0de79`). M5-T3
-through M5-T7 are in progress.
+**Status:** every task is completed (M5-T1 through M5-T7); all six acceptance criteria verified.
+Snapshot: `../progress/milestones/m5.md`.
 
 **Goal (from the build plan):** choose between a proven compiled workflow and the full agent.
 

@@ -1,7 +1,7 @@
 # Milestone 3, Jev as a First-Class Decision Primitive
 
-**Status:** in progress. M3-T1, M3-T2, M3-T4, M3-T5 and M3-T6 are `completed` (Phase A commit
-`df0de79`). M3-T3, M3-T7, M3-T8 and M3-T9 are in progress.
+**Status:** every task is completed (M3-T1 through M3-T9); all seven acceptance criteria verified.
+Snapshot: `../progress/milestones/m3.md`.
 
 **Goal (from the build plan):** introduce cheap bounded judgment without mixing it with policy.
 Vercel currently exposes Jev through AI Gateway as `typesafe-ai/jev`, and AI SDK 7 exposes

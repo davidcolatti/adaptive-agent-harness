@@ -94,7 +94,8 @@ adaptive-agent-harness/
 │   │   └── agent/               # agent.ts, instructions.md, tools/, lib/
 │   └── example-agent/           # neutral vendor-triage eve project (M1-T2)
 │       ├── agent/               # agent.ts, instructions.md, skills/, tools/, lib/
-│       └── src/                 # domain/, capabilities, handlers, policies, run.ts, workflow/ (M4-T10)
+│       └── src/                 # domain/, capabilities, handlers, policies, run.ts, workflow/ (M4-T10),
+│                                 #   decisions/ (M3-T8/T9)
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; context, errors, schema,
@@ -618,9 +619,15 @@ registry is a pure status model in core (seven statuses, a transition
 table, `selectCompatibleWorkflow()` with nine ordered rejection reasons),
 with the one impure step, the `Storage` lookup, kept in `@internal/registry`,
 and compatibility checked by exact reference equality, never by name.
-ADR-0044 (the router and fallback contract, M5-T3..T7) and ADR-0045
-(decision persistence and `verify`, M3-T3/T7/T8/T9) are in progress.
-The next free number is 0046.
+ADR-0044 records M5-T3..T7: the router is an `AgentRuntime` (so
+`createHarness()` needs no new option), a fallback envelope travels through
+`ExecutionContext.fallback` and eve's documented turn-scoped `clientContext`,
+and the build plan's eight `FallbackReason`s replace M4's six rather than
+sitting beside them. ADR-0045 records M3-T3/T7/T8/T9: decision evidence is
+one `DecisionRecord` per decision, with the raw engine result and the
+policy outcome as separate fields of the same row, and `replayDecisions()`
+takes no engine parameter, which is what makes a policy change replayable
+without rerunning Jev. The next free number is 0046.
 
 ## Scope discipline
 

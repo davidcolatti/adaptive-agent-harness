@@ -7498,7 +7498,7 @@ reachable `escalate` node.
 
 **Status:** started
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `e461297`
 
 ### Goal
 
@@ -7553,7 +7553,7 @@ tests.
 
 **Status:** completed
 **Actor/session:** Claude Opus 5 (1M context) implementer subagent
-**Commit:** not committed
+**Commit:** `e461297`
 
 ### Goal
 
@@ -7724,6 +7724,13 @@ edited.
   tries `questionId` first, because a `jev` node names a **question** (M4-T2) and
   every Jev call row printed `(none)` without it. Nothing else in the inspector
   was touched; the other gaps are reported, not fixed.
+- **Addendum (after commit `e461297`): the stale Jev note was fixed too.**
+  `CallsInspection.jevNote` is now `string | null`, set only when the run made no
+  Jev call, and reworded to say that M4's workflow runtime emits a `decision.*`
+  pair per `jev` node through a decision port while M3 is when Jev itself answers
+  them. The renderer omits the line when it is `null`. The other three inspector
+  gaps still need `runs.workflow_version_id` and `runs.fallback_count`, which M5
+  fills, so they stay reported rather than fixed.
 - **`registerVendorTriageCapabilities` grew rather than being split.** The
   registry `compileWorkflow()` resolves against must be the domain's one
   registry; a second would be a second answer to "what can this domain do?".
@@ -7755,3 +7762,98 @@ Milestone 4 close-out, which is the orchestrator's: commit M4-T10, write the
 `docs/progress/milestones/m4.md` snapshot, and rewrite
 `docs/context/current-state.md` for the end of M4 and the start of M5 (workflow
 registry, router and fallback), with M3 still available to run beside it.
+
+---
+
+## 2026-09-20 18:15 — M4 — Milestone 4 complete: snapshot and handoff
+
+**Status:** completed
+**Actor/session:** coding agent (documentation subagent)
+**Commit:** not committed
+
+### Goal
+
+Close out Milestone 4, now that M4-T10 (the last task) is complete, reviewed, and committed as
+`e461297`, and all eight acceptance criteria in the status file carry dated evidence: write the
+milestone snapshot, update the status file and README, extend AGENTS.md, and rewrite the handoff
+to point at M5/M3.
+
+### Implementation references
+
+Not applicable. This task touches no framework-facing code; it archives the already-completed and
+already-reviewed Milestone 4 work into a snapshot and rewrites the handoff files.
+
+### Work completed
+
+- Confirmed the newest commits (`git log --oneline -5`) are `e461297` (M4-T10), `0562ac8` (M4-T1..T9
+  docs), `0d12b43` (M4-T3..T9), `4c03e2e` (M4-T1/M4-T2).
+- Read `docs/progress/milestones/m2.md` (the snapshot shape), the whole M4 status file, ADR-0038
+  through ADR-0041, and the M4-T10 WORKLOG entries (started at 16:30, completed at 17:40).
+- Wrote `docs/progress/milestones/m4.md`: title, completion date, status, the four-commit list in
+  order, status-file path, WORKLOG range (2026-09-20 01:00 through 17:40), Goal, a Tasks table (one
+  line per M4-T1..T10 with its ADR), Verification at completion (1197 passed / 43 skipped across 67
+  files; all three demo routes with run ids and trace summaries, plus the orchestrator's own
+  re-verification run `01a0bfaf-ffd5-7001-b493-9662ef3e9035`; the unchanged full-agent path; the
+  inspector against both), Deviations from the plan (twelve items pulled from ADR-0038 through
+  ADR-0041 and the task Result paragraphs), and an Environment note.
+- Updated `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`: header status
+  line now reads "every task is completed (M4-T1 through M4-T10); all eight acceptance criteria
+  verified. Snapshot: `../progress/milestones/m4.md`."; no task subsection was touched, per the
+  fixture agent's file-ownership split during Phase 3.
+- Updated `docs/milestones/README.md`: the M4 row now reads "complete (snapshot:
+  [../progress/milestones/m4.md](../progress/milestones/m4.md))", matching M2's row form. The "M3
+  and M5 onward" footnote sentence remained accurate (M3 and M5 are the only milestones still
+  without status files) and needed no further change.
+- `AGENTS.md`: added `src/workflow/ (M4-T10)` to the `apps/example-agent/src/` layout-tree comment.
+  The ADR paragraph and "next free number is 0042" line had already been reconciled to their final
+  form during Phase 2 close-out and needed no further edit for this pass. No sentence claiming the
+  workflow IR or runtime does not exist yet was found remaining in the file.
+- Rewrote `docs/context/current-state.md` in full: Milestone 4 marked complete with its snapshot
+  path added to "Completed milestones / tasks"; current milestone set to "M4 complete; next is M5
+  (critical path, blocked only by M4 per the build plan), M3 still available to start now and
+  needed before M5's Jev-dependent parts"; current task "not started, create the M5 or M3 status
+  file"; last commit SHA `e461297` with the full M4 commit chain; "what works now" updated to the
+  twelve-workspace-project count, `@internal/workflow`'s full surface, `apps/example-agent`'s
+  `--workflow`/`--vendor` flags and twelve registered capabilities, the 1197-passed/43-skipped/67-file
+  test count, and the inspector's new workflow-run rendering; "partially working" rewritten for
+  escalation-as-failure until M5, the fixture decision port standing in for Jev until M3, the
+  inspector's four still-outstanding gaps, in-memory-only artifacts, and no durability; "does not
+  exist yet" narrowed to the router, workflow registry rows, a real Jev engine, replay, evals,
+  learner and compiler; active decisions extended through ADR-0041 with next free ADR 0042; findings
+  extended with the Phase 2 bullets already present plus four new ones (`asAgentRuntime()` as the
+  harness presentation mechanism, the `research` node's `{ kind: "input" }` binding and why,
+  `--workflow`'s shared `EveAgentRuntime`, and Supabase currently running on this host); "exact next
+  task" and "exact first command" updated to point at M5/M3 status-file creation and the
+  `--workflow` demo command respectively.
+
+### Files changed
+
+- `docs/progress/milestones/m4.md` — new file, the Milestone 4 snapshot.
+- `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md` — header status line only.
+- `docs/milestones/README.md` — M4 row now "complete (snapshot: ...)".
+- `AGENTS.md` — repository-layout tree (`apps/example-agent/src/` comment).
+- `docs/context/current-state.md` — rewritten in full for the Milestone 4 -> Milestone 5/3 handoff.
+
+### Verification
+
+- `pnpm format:check` — PASS
+- `pnpm check:handoff` — PASS
+
+### Decisions / deviations
+
+- None beyond what M4-T1 through M4-T10's own entries already recorded; this entry only archives
+  and reconciles documentation for already-completed, already-reviewed work.
+
+### Known issues / blockers
+
+- The four M4 commits (`4c03e2e`, `0d12b43`, `0562ac8`, `e461297`) are unpushed to `origin/main`;
+  CI has not run against any of Milestone 4.
+- `pnpm example:run` and `pnpm example:run -- --workflow` against a live Gateway model remain
+  unverified without a credential.
+
+### Next exact step
+
+Start Milestone 5 (Workflow Registry, Router, and Fallback), the critical path, by creating its
+status file from the build plan in the M4 file's shape. Milestone 3 (Jev) is blocked only by M2
+(already complete) and may start beside M5 at any point; M5's Jev-dependent parts need M3 to have
+landed by the time they are reached.

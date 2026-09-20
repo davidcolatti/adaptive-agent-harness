@@ -94,7 +94,7 @@ adaptive-agent-harness/
 │   │   └── agent/               # agent.ts, instructions.md, tools/, lib/
 │   └── example-agent/           # neutral vendor-triage eve project (M1-T2)
 │       ├── agent/               # agent.ts, instructions.md, skills/, tools/, lib/
-│       └── src/                 # domain/, capabilities, handlers, policies, run.ts
+│       └── src/                 # domain/, capabilities, handlers, policies, run.ts, workflow/ (M4-T10)
 ├── packages/
 │   ├── config/                  # shared tsconfig bases, no runtime code
 │   ├── core/                    # harness core contracts; context, errors, schema,

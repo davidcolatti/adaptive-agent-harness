@@ -4,19 +4,25 @@
 > session. History lives in `docs/progress/WORKLOG.md`; frozen milestone
 > records live in `docs/progress/milestones/`.
 
-**Last updated:** 2026-09-20 (Milestone 4 started)
-**Current milestone:** M4, Workflow IR + Local Runtime, is in progress (the
-critical path). M3, Jev, remains unblocked and can start beside it at any
-point; both were blocked only by M2, which is complete.
-**Current task:** M4-T1 through M4-T9 are `completed`. M4-T10 (the
-hand-authored vendor workflow in `apps/example-agent`) and acceptance
-verification are in progress; it is the last M4 task.
-**Last commit SHA:** `0d12b43` (M4-T3, T4, T5, T6, T7, T8, T9: `compileWorkflow`/
-`validateWorkflow`, the typed DSL, the local runtime; ADRs 0039-0041). Earlier:
-`4c03e2e` (M4-T1/M4-T2: serializable workflow IR and node contracts),
-`8361a42` (M2 close-out docs), M2-T10 code: `5eaba18` (M2-T10: local run
-inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
-`62548d6`, `1f629bf`, `5721f7d`, `02b1261`. Run `git log --oneline`.
+**Last updated:** 2026-09-20 (Milestone 4 complete)
+**Current milestone:** M4 is complete. Next is **M5, Workflow Registry,
+Router, and Fallback** (the critical path), whose build-plan "Blocked By"
+section names exactly one dependency: M4, which is now done. **M3, Jev**, is
+still unblocked and can start now, on its own or beside M5; M5's own `jev`
+node registration boundary and Jev-dependent routing need M3 to have landed
+by the time that part of M5 is reached, even though M5 does not formally
+block on it.
+**Current task:** Not started. First create the status file for whichever of
+M5 or M3 starts next, from `docs/milestones/build-plan.md`, in the M4 status
+file's shape (`docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`).
+**Last commit SHA:** `c1572f1` (fix: inspector zero-Jev note only when no Jev call); before it `e461297` (M4-T10: hand-authored vendor-triage workflow,
+fixture decision port, `--workflow` demo, and the M4 acceptance evidence).
+This handoff's own docs commit follows it. Earlier M4: `0562ac8` (docs:
+M4-T1..T9 in the handoff/AGENTS.md/milestone status), `0d12b43` (M4-T3
+through M4-T9: validation, DSL, local runtime; ADRs 0039-0041), `4c03e2e`
+(M4-T1/M4-T2: serializable workflow IR and node contracts). Earlier M2:
+`8361a42`, `5eaba18`, `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`,
+`5721f7d`, `02b1261`. Run `git log --oneline`.
 
 ## Completed milestones / tasks
 
@@ -27,31 +33,48 @@ inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
   tasks done, all ten acceptance criteria verified with dated evidence.
   Snapshot: `docs/progress/milestones/m2.md`. Status file:
   `docs/milestones/m2-job-trace-supabase-and-run-ledger.md`.
+- **Milestone 4, Workflow IR, DSL, and Local Deterministic Runtime:
+  complete.** All ten tasks done, all eight acceptance criteria verified
+  with dated evidence, including three real runs of the hand-authored
+  vendor-triage workflow through `createHarness()`. Snapshot:
+  `docs/progress/milestones/m4.md`. Status file:
+  `docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`.
 
 ## What works now
 
 - `pnpm install --frozen-lockfile` and `pnpm check` pass (2026-09-20, after
-  Phase 2). Tests: 1146 passed, 43 skipped across 62 files (`unit` +
-  `contract` projects); the skipped tests are the Supabase legs of the
-  storage and inspector contract suites, which skip without
+  M4-T10, commit `e461297`). Tests: 1197 passed, 43 skipped across 67 files
+  (`unit` + `contract` projects); the skipped tests are the Supabase legs of
+  the storage and inspector contract suites, which skip without
   `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` set.
 - **`pnpm example:run:mock`** has three verified behaviors depending on
   environment: persisted (local Supabase up, `.env.local` present — writes
-  the job row, a `runs` ledger row, and six `trace_events` rows, plus the
-  JSONL file, through a fan-out sink), JSONL-only (no Supabase env
-  configured), and configured-but-unreachable (env set, Supabase stopped:
-  exits 1 with a one-line message, no silent fallback). Every path writes a
-  non-null `sha256:` behavior fingerprint on each trace event and the eight
-  component digests in `run.started`. **`pnpm example:run`** is the same path
+  the job row, a `runs` ledger row, and the trace, through a fan-out sink),
+  JSONL-only (no Supabase env configured), and configured-but-unreachable
+  (env set, Supabase stopped: exits 1 with a one-line message, no silent
+  fallback). Every path writes a non-null `sha256:` behavior fingerprint on
+  each trace event and the component digests in `run.started`.
+  **`--workflow`** (or `EXAMPLE_RUN_MODE=workflow`), with an optional
+  **`--vendor <name>`** (or `EXAMPLE_RUN_VENDOR`), swaps the harness's
+  `AgentRuntime` for the hand-authored vendor-triage `WorkflowRuntime`
+  presented via `.asAgentRuntime()`; without `--vendor` it takes the default
+  vendor's `clear` route, and needs no credential in mock mode.
+  **`pnpm example:run`** is the same path (with or without `--workflow`)
   against the real example agent and needs `AI_GATEWAY_API_KEY` or
   `VERCEL_OIDC_TOKEN`; it is unverified against a live model.
-- **`pnpm harness run show <run-id>`** (`[--json] [--jsonl <path>]`) is the
-  first harness CLI command: reads a run through the `Storage` port or a
-  JSONL trace file, with no database, key or Docker required for the JSONL
-  path. Displays job, route, timeline, tool/model/Jev calls, errors, result,
-  cost and fingerprints from durable evidence alone — no application log is
-  consulted. Verified against real Supabase and against a JSONL-only trace.
-- Eleven workspace packages, plus two apps:
+- **`pnpm harness run show <run-id>`** (`[--json] [--jsonl <path>]`) reads a
+  run through the `Storage` port or a JSONL trace file, with no database,
+  key or Docker required for the JSONL path. Displays job, route, timeline,
+  tool/model/Jev calls, errors, result, cost and fingerprints from durable
+  evidence alone. Now also renders a workflow run's `node.*` spans (with
+  `TraceEvent.node` filled), nested agent/model/tool/decision events under
+  each node span, and a `branch` node's chosen label and target — verified
+  against a real persisted workflow run and against its JSONL trace; the
+  inspector's remaining gaps for a workflow run are listed under "What is
+  partially working" and in `docs/runbooks/inspecting-a-run.md`.
+- Nine workspace packages under `packages/`, plus two apps under `apps/`
+  (twelve workspace projects in total, root included, matching what
+  `pnpm install` reports):
   - `@internal/core` (zero third-party deps; `node:crypto` only): JSON model,
     `deepFreeze`, ids (twelve branded types, generators, `parseEntityId`,
     `entityIdTimestampMs`/`entityIdTimestamp`), `ExecutionContext` (`trace` is
@@ -62,22 +85,26 @@ inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
     `behavior` descriptor/loader), `AgentRuntime` + `AgentExecution`,
     `createHarness` + `HarnessRunResult` (carries `behaviorFingerprint`),
     capability registry + manifest, `canonicalJson` + `fingerprint`,
-    `createBehaviorFingerprint`, `BehaviorDescriptor`, and `Storage`,
+    `createBehaviorFingerprint`, `BehaviorDescriptor`, `Storage`,
     `RunRecord`, `RunStart`, `RunFinish`, `RunFilter`, `RunPage`, `TracePage`,
-    `parseRunRecord`, `CreateHarnessOptions.storage`/`.target`. New in
-    M4-T1/M4-T2: `WorkflowDefinition`, `WORKFLOW_SCHEMA_VERSION`,
+    `parseRunRecord`, `CreateHarnessOptions.storage`/`.target`, and
+    (M4-T1/M4-T2) `WorkflowDefinition`, `WORKFLOW_SCHEMA_VERSION`,
     `FallbackReason`/`FALLBACK_REASONS`/`FallbackContext`,
     `parseWorkflowDefinition`/`isWorkflowDefinition`, `canonicalWorkflowIr`,
     `workflowFingerprint`, `WorkflowNode` (eleven node types), `Binding`
     (five-case data-flow model), `NodeId`, `RetryPolicy`, `NodeProtection`.
-  - `@internal/workflow` (M4-T1, filled out in Phase 2): `CompiledWorkflow`,
-    `compileWorkflow`/`validateWorkflow` (M4-T4/M4-T9), the `workflow()` typed
-    DSL builder (M4-T5), `createWorkflowRuntime()` with `.asAgentRuntime()`
-    (M4-T6/M4-T7/M4-T8), and three ports — `WorkflowDecisionPort` (for M3's
-    `jev` nodes), `ArtifactStorePort` (for M5's `artifact` nodes) and
-    `ProtectedEffectStore` (M4-T7's non-idempotent-write protection) — each
-    with an in-memory default implementation. Still depends on
-    `@internal/core` only; zero third-party dependencies.
+  - `@internal/workflow` (M4, complete): `CompiledWorkflow`,
+    `compileWorkflow`/`validateWorkflow` (M4-T4/M4-T9), the `workflow()`
+    typed DSL builder (M4-T5), `createWorkflowRuntime()` with
+    `.asAgentRuntime()` (M4-T6/M4-T7/M4-T8), and three ports —
+    `WorkflowDecisionPort` (for `jev` nodes, answered by M3's
+    `DecisionEngine` once it exists), `ArtifactStorePort` (for `artifact`
+    nodes, M5 decides durable storage) and `ProtectedEffectStore` (M4-T7's
+    non-idempotent-write protection) — each with an in-memory default. Still
+    depends on `@internal/core` only; zero third-party dependencies. Not an
+    adapter; carries core's bans in `tests/architecture/boundaries.ts`,
+    including the ban on the npm package named `workflow` (Vercel's durable
+    primitive, a different thing).
   - `@internal/trace`: `TraceSink`, `createBufferedTraceWriter`, JSONL sinks
     and `readJsonlTraceEvents`, `createRedactor`/`createRedactingTraceWriter`,
     `DEFAULT_REDACTION_POLICY`, `createStorageTraceSink`,
@@ -86,88 +113,129 @@ inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
   - `@internal/storage-supabase`: `createSupabaseStorage()` over a pinned
     `@supabase/supabase-js@2.116.0`; depends on `@internal/core` and
     `@internal/trace`; generated `database.types.ts` (never hand-edited).
-  - `@internal/observability` (new, M2-T10): `inspectRun()`,
-    `renderRunInspection()`, `createJsonlTraceSource()`, the `pnpm harness`
-    CLI entry point (`src/bin/harness.ts`) on Node's built-in
-    `util.parseArgs`. Depends on `@internal/core`, `@internal/trace` and
-    (through the CLI module only, not the library surface)
-    `@internal/storage-supabase`.
+  - `@internal/observability`: `inspectRun()`, `renderRunInspection()`,
+    `createJsonlTraceSource()`, the `pnpm harness` CLI entry point
+    (`src/bin/harness.ts`) on Node's built-in `util.parseArgs`. Depends on
+    `@internal/core`, `@internal/trace` and (through the CLI module only,
+    not the library surface) `@internal/storage-supabase`. M4-T10 fixed its
+    decision-identity key lookup to try `questionId` first, since a `jev`
+    node names a question (M4-T2).
   - `@internal/testing`: `createFakeClock`, `createFakeAgentRuntime`,
     `createRecordingTraceWriter`, `createInMemoryStorage`, and the shared
     storage contract test suite every `Storage` implementation runs.
   - `@internal/runtime-eve`: `EveAgentRuntime` (maps eve stream events onto
     the trace taxonomy), `eveVersion`, `LOAD_SKILL_TOOL_ID`; `./testing`
-    subpath with `startEveDevServer`.
+    subpath with `startEveDevServer`. `--workflow`'s `agent` node runs
+    through this same adapter, unchanged.
   - `@internal/runtime-ai-sdk`: dependency boundary only. Not scheduled by
-    M1/M2; ADR-0003 keeps eve as the default adapter.
+    M1/M2/M4; ADR-0003 keeps eve as the default adapter.
   - `@internal/config`.
   - `apps/example-agent` (`@internal/example-agent`): eve project, domain,
-    capabilities, behavior descriptor (`src/behavior.ts`), `src/run.ts`. Eve
-    config lives in one place, `agent/lib/agent-config.ts`. `start` loads
-    `.env.local` via `--env-file-if-exists=../../.env.local`.
+    capabilities, behavior descriptor (`src/behavior.ts`), `src/run.ts`
+    (`--workflow`, `--vendor`), and (M4-T10) `src/workflow/` — the
+    hand-authored vendor-triage workflow, the fixture `WorkflowDecisionPort`,
+    and two new deterministic handlers (`finalize-clear-triage`,
+    `decide-verified-triage`). `src/capabilities.ts` registers twelve
+    capabilities in total: Milestone 1's original six plus M4-T10's six
+    (four schemas, two handlers). `createVendorTriageDomain({ workflowIr })`
+    takes the compiled workflow's canonical IR so a `--workflow` run's
+    behavior fingerprint differs from a full-agent run's in exactly its
+    `workflowIr` component. Eve config lives in one place,
+    `agent/lib/agent-config.ts`. `start` loads `.env.local` via
+    `--env-file-if-exists=../../.env.local`.
   - `apps/eve-fixture-agent` (`@internal/eve-fixture-agent`): `mockModel`
     fixture agent for tests and the mock demo.
 - Local Supabase schema: five migrations under `supabase/migrations/`,
   thirteen tables, RLS enabled on all with no policies (harness connects as
   `service_role`, which bypasses RLS). `pnpm supabase:reset` applies all five
   from an empty database; `database.types.ts` regenerated and committed,
-  byte-identical across regenerations.
+  byte-identical across regenerations. `workflow_versions` exists only in
+  its M2-T5 minimal keyed shape and stays empty until M5's registry fills it.
 - Local Supabase CLI: pinned exactly at `supabase@2.117.0` in root
   `devDependencies`, driven only through `pnpm supabase:start`/`stop`/`reset`/
   `types`, never a global install. Credential capture:
-  `pnpm exec supabase status -o env ... > .env.local` (git-ignored; present on
-  this development host).
-- Architecture boundary test: adapter-only rule for `packages/*`; `apps/*` may
-  depend on `eve`, `ai`, `@ai-sdk/*` (ADR-0025); `@supabase/*`, `@vercel/*`,
-  `workflow` adapter-only for everyone. `@internal/trace` and
-  `@internal/observability` are non-adapters with core's bans;
-  `@internal/storage-supabase` is the one declared adapter allowed to depend
-  on `@supabase/*`.
+  `pnpm exec supabase status -o env ... > .env.local` (git-ignored; present
+  on this development host). Supabase is currently **running** on this host,
+  started for the M4-T10 demo.
+- Architecture boundary test: adapter-only rule for `packages/*`; `apps/*`
+  may depend on `eve`, `ai`, `@ai-sdk/*` (ADR-0025); `@supabase/*`,
+  `@vercel/*`, `workflow` (the npm package) adapter-only for everyone.
+  `@internal/trace`, `@internal/observability` and `@internal/workflow` are
+  non-adapters with core's bans; `@internal/storage-supabase` is the one
+  declared adapter allowed to depend on `@supabase/*`.
 - Husky hooks (with a `~/.config/husky/init.sh` PATH fix so hooks see Node 24
   rather than the host's broken Node 23); CI workflow file, including a
   `supabase-types` job (starts Supabase, resets, regenerates, diffs the
-  generated file). A GitHub remote (`origin/main`) exists and CI ran green
-  once, on `0029f36`, before any M2 commit existed.
+  generated file). A GitHub remote (`origin/main`) exists; CI last observed
+  green on the final M2 push (`fcc4176`). The M4 commits have not yet been
+  pushed.
 
 ## What is partially working
 
+- **Escalation is not yet its own outcome.** `WorkflowRuntime.asAgentRuntime()`
+  maps an `escalated` workflow result to a `FailedAgentExecution` carrying a
+  `WorkflowError` whose `details.fallback` holds the whole `FallbackContext`
+  as JSON — a deliberate M4 stopgap (ADR-0040). Nothing is lost, but the run
+  ledger and the exit code report it as a failure: `pnpm example:run:mock --
+  --workflow --vendor "Aurelia Freight"` exits 1 by design, until M5's
+  router gives `escalated` its own status and actually invokes the full
+  agent with the fallback envelope.
+- **`jev` nodes run through a `WorkflowDecisionPort`, not Jev.** The example
+  domain's `src/workflow/fixture-decision-port.ts` is a documented,
+  deterministic placeholder answering the workflow's two questions from
+  frozen fixture evidence; it is not Jev and does not approximate it. It is
+  deleted once M3 lands a real `DecisionEngine`-backed port; nothing in the
+  workflow definition changes when that happens.
+- **The inspector predates workflows in four ways**, all recorded in
+  `docs/runbooks/inspecting-a-run.md`: the Route section always prints the
+  M2 placeholder `route: full-agent`, even for a workflow run (it reads
+  `runs.workflow_version_id`, still an M5 placeholder); `fallbacks:` reads
+  `0` from the ledger even for a run that escalated (`runs.fallback_count`
+  is also a placeholder); a node id is visible only via the payload's
+  `nodeId`, not a dedicated column; and the "jev: 0 is a real measurement…
+  until M3" note prints even on a run that made Jev calls.
+- **`ArtifactStorePort` is in-memory only**, and an `artifact` node's output
+  id is a plain string with no durable meaning yet; where an artifact is
+  actually stored is M5's decision.
+- **The local workflow runtime builds no durability**, deliberately (M4-T6):
+  a node result lives in run state, the returned `WorkflowRunResult`, and
+  the trace, and nowhere else.
 - **Run output is not persisted.** The `runs` ledger records status, success,
   cost, latency, call counts and error, but a job's actual output value lives
   nowhere durable. M6 (replay) and M7 (evals) will need it; the `artifacts`
-  table exists only in its minimal keyed shape, and M5 is what fills it.
-- `quality_score`, `human_review`, `workflow_version_id`, `jev_calls` and
-  `fallback_count` on `runs` are placeholders, filled by M3 through M6.
-- **Closed:** which target ran is no longer ambiguous. `runs.target` (from
-  `CreateHarnessOptions.target`) records which application or agent executed,
-  closing ADR-0034's open question that a mock run's fingerprint describes
-  `apps/example-agent`'s authored behavior even though the fixture agent ran
-  the events.
+  table exists only in its minimal keyed shape.
+- `quality_score`, `human_review`, `workflow_version_id` and `fallback_count`
+  on `runs` are still placeholders. `jev_calls` is a real, non-placeholder
+  count as of M4 (a workflow run's Jev calls are counted), even though the
+  engine behind them is the fixture port, not Jev itself.
 - `contracts.sop` remains a bare, unversioned identifier by deliberate
   decision (ADR-0034): the `sop` component fingerprint already captures
   content changes, so a hand-maintained version would be a second, driftable
   source of truth.
-- `TraceEvent.node` is typed and always `null` until M4 has workflow nodes.
 - `attempt` is a plain integer everywhere (`runs`, `TraceEvent`,
   `ExecutionContext`), not an entity: `runs` has `unique (job_id, attempt)`
   and there is no `attempts` table. `AttemptId` and the other entity-id brands
   beyond `JobId`/`RunId` have no field carrying them yet.
 - Tool permission enforcement in `EveAgentRuntime` is detection-and-cancel on
   the event stream, not prevention (ADR-0028). Fine for the read-only fixture
-  tool; the auth-plus-approval composition is the M2/M5 upgrade.
+  tool; the auth-plus-approval composition is a later upgrade.
 - `EveAgentRuntime` still needs each domain's output schema at construction
   (`domains` option) because a `Job` carries only a string reference. The
   capability registry can resolve it once M5 wires that.
 
 ## What does not exist yet
 
-- The workflow validator, typed DSL and local runtime now exist
-  (`@internal/workflow`, Phase 2), but no human-authored workflow runs inside
-  an application yet — that is M4-T10, in progress. A `jev` node cannot
-  execute until M3 lands a real `DecisionEngine` (the runtime uses a fake
-  `WorkflowDecisionPort` today). The local runtime deliberately builds no
-  durability, and there is no router (M5) to match a job to a workflow or to
-  consume a `FallbackContext` yet.
-- Jev, replay, evals, learner, compiler, and the rest of the CLI beyond
+- **The router.** `harness.run()` still drives exactly one `AgentRuntime`; a
+  workflow is exercised in M4 only by explicitly presenting it as one via
+  `asAgentRuntime()`. There is no code that decides, given a job, whether to
+  run the workflow or the full agent — that is all of M5.
+- **Workflow registry rows.** `workflow_versions` exists as a table but has
+  no rows and no writer; nothing registers a compiled workflow's statuses
+  (`draft`/`candidate`/`shadow`/`canary`/`active`/`retired`/`rejected`) yet.
+- **A real Jev decision engine.** M3 owns the question contract, the
+  `DecisionEngine` interface, confidence bands, and the `verify` primitive;
+  none of it exists. Every `jev` node in M4 runs through a fixture.
+- Replay, evals, learner, compiler, and the rest of the CLI beyond
   `pnpm harness run show`.
 
 ## Known failures
@@ -176,16 +244,18 @@ inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
 
 ## Current blockers
 
-- None for starting M3 or M4; both are blocked only by M2, which is complete.
-- None from CI: all M2 commits are pushed, and the run on `fcc4176`
-  (2026-09-20, `35516370487`) passed both jobs, `check` and `supabase-types`,
-  the latter on its first ever execution.
-- `pnpm example:run` against a live Gateway model remains unverified without a
-  credential.
+- None for starting M3 or M5; M3 was blocked only by M2 (complete), and M5's
+  build-plan "Blocked By" names only M4 (also complete).
+- None from CI on pushed history: the last push (M2's `fcc4176`) was green on
+  both jobs. The M4 commits (`4c03e2e`, `0d12b43`, `0562ac8`, `e461297`) have
+  not been pushed, so CI has not yet observed them.
+- `pnpm example:run` and `pnpm example:run -- --workflow` against a live
+  Gateway model remain unverified without a credential.
 - `.env.local` is present on this development host, so `pnpm example:run:mock`
-  and `pnpm harness` need `pnpm supabase:start` first here (Docker must be
-  running), or the example run exits 1 by design rather than silently falling
-  back to JSONL-only.
+  and `pnpm harness` need `pnpm supabase:start` first (Docker must be
+  running) — already done and left running as of this handoff — or the
+  example run exits 1 by design rather than silently falling back to
+  JSONL-only.
 
 ## Important active decisions
 
@@ -209,32 +279,33 @@ inspector and the first harness CLI command), `ab9a374`, `1b16a1a`, `219ccbd`,
   the local runtime live in `@internal/workflow`, with node input flowing
   through a closed five-case `Binding` model rather than an expression
   language; **ADR-0039** workflow validation is a graph model with exactly
-  one owner per node (successor edges vs. containment), schema compatibility
-  is reference equality on `id@version` rather than structural comparison,
-  and only `agent` and `call` nodes may carry tool grants; **ADR-0040** the
-  local runtime interprets a `CompiledWorkflow` and nothing else, records
-  node input/output into the run's existing trace (amending ADR-0031's
-  identity-only payload rule for `node.*` events only), derives two
-  idempotency keys (one the other's prefix) rather than the plan's one, and a
-  node that exhausts its retries or hits another fallback condition
-  escalates rather than fails, with `asAgentRuntime()` mapping that
-  escalation to a `WorkflowError` as a stopgap until M5 gives `escalated` its
-  own status; **ADR-0041** the typed DSL is a wiring front end that parses
-  its own IR through `parseWorkflowDefinition()` and never resolves
-  capabilities or validates the graph itself, offering grants only on
-  `agent`/`call`, matching ADR-0039. Next free ADR number: **0042**, unless
-  the M4-T10 hand-authored-workflow task claims it.
+  one owner per node (successor edges vs. containment), any cycle is
+  invalid, schema compatibility is reference equality on `id@version`
+  rather than structural comparison, and only `agent` and `call` nodes may
+  carry tool grants; **ADR-0040** the local runtime interprets a
+  `CompiledWorkflow` and nothing else, records node input/output into the
+  run's existing trace (amending ADR-0031's identity-only payload rule for
+  `node.*` events only), derives two idempotency keys (one the other's
+  prefix) rather than the plan's one, and a node that exhausts its retries
+  or hits another fallback condition escalates rather than fails, with
+  `asAgentRuntime()` mapping that escalation to a `WorkflowError` as a
+  stopgap until M5 gives `escalated` its own status; **ADR-0041** the typed
+  DSL is a wiring front end that parses its own IR through
+  `parseWorkflowDefinition()` and never resolves capabilities or validates
+  the graph itself, offering grants only on `agent`/`call`, matching
+  ADR-0039. Next free ADR number: **0042**.
 - TypeScript 6.0.x until 7.1 (ADR-0019). Framework work follows
   `docs/development/source-of-truth-protocol.md`.
 
 ## Findings the next agent needs
 
 Research: `docs/research/vercel/2026-09-19-m1-*.md` (three notes).
-Architecture: `docs/architecture/runtime.md`. Contracts: `docs/contracts/`
+Architecture: `docs/architecture/runtime.md`,
+`docs/architecture/workflow-runtime.md`. Contracts: `docs/contracts/`
 (`identifiers.md`, `job.md`, `trace-event.md`, `harness.md`,
-`behavior-fingerprint.md`, `redaction.md`, `storage.md` cover Milestone 2 in
-full). Runbooks: `docs/runbooks/supabase-local.md`,
-`docs/runbooks/inspecting-a-run.md`.
+`behavior-fingerprint.md`, `redaction.md`, `storage.md` cover Milestone 2;
+`workflow-ir.md`, `workflow-dsl.md` cover Milestone 4). Runbooks:
+`docs/runbooks/supabase-local.md`, `docs/runbooks/inspecting-a-run.md`.
 
 - **CLI mechanics**: `pnpm harness` forwards its positional arguments to the
   underlying command with no `--` separator needed (verified empirically);
@@ -327,6 +398,27 @@ full). Runbooks: `docs/runbooks/supabase-local.md`,
   applies because it is a `TraceWriter` decorator placed above the buffer
   (ADR-0035) — a secret in a node's input or output is stripped before
   anything is written, exactly as for a job.
+- **The workflow runtime is exposed to the harness through
+  `WorkflowRuntime.asAgentRuntime()`**, not a new harness API: `createHarness()`
+  runs one `AgentRuntime` either way, so trace, storage and
+  `pnpm harness run show` all work unchanged whether the runtime underneath
+  is `EveAgentRuntime` or a compiled workflow. M5's router replaces the
+  escalated-to-failed mapping that stopgap carries; it does not replace this
+  presentation mechanism.
+- **The `research` agent node binds `{ kind: "input" }`, not its
+  predecessor's output**, because it runs the registered
+  `vendor-triage-agent@1.0.0` capability, whose manifest entry declares both
+  its own `inputSchema`/`outputSchema`, and ADR-0039's schema-compatibility
+  rule requires a node's declared schemas to equal what its resolved
+  capability declares. Binding anything else would fail compilation, not
+  just be a stylistic choice.
+- **`--workflow` uses the same `EveAgentRuntime` the plain agent path uses**,
+  unchanged since M1-T6: the workflow's one `agent` node is handed that
+  adapter directly, so `--mock --workflow` needs no credential for the same
+  reason `--mock` alone doesn't.
+- **Supabase is currently running on this host**, started for the M4-T10
+  demo and left running; `pnpm supabase:stop` if a clean slate is wanted
+  before continuing.
 
 ## Uncommitted / generated artifacts
 
@@ -338,43 +430,57 @@ full). Runbooks: `docs/runbooks/supabase-local.md`,
 
 ## Exact next task
 
-Phase 1 (M4-T1, M4-T2) and Phase 2 (M4-T3 through M4-T9: the validator, the
-local runtime and the typed DSL) have both landed. The M4 status file
-(`docs/milestones/m4-workflow-ir-dsl-and-local-deterministic-runtime.md`)
-now marks Phase 3 `in progress`: M4-T10, the hand-authored vendor workflow in
-`apps/example-agent`, plus the milestone's acceptance-criteria verification —
-the last M4 task. **M3, Jev**, is blocked only by M2 and can start beside M4
-at any point (its own status file would be
-`docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`); the two
-teams should coordinate on shared files if run concurrently.
+Milestone 4 is complete and closed out. The next task is creating the status
+file for whichever of **M5** or **M3** starts next
+(`docs/milestones/m5-workflow-registry-router-and-fallback.md` or
+`docs/milestones/m3-jev-as-a-first-class-decision-primitive.md`), from
+`docs/milestones/build-plan.md`, in the M4 status file's shape. M5 is the
+critical path and is unblocked (its build-plan "Blocked By" names only M4);
+M3 is also unblocked and can run beside it, and is needed before M5 reaches
+its `jev`-node registration and routing. If both run concurrently, coordinate
+on shared files (`AGENTS.md`, `docs/context/current-state.md`,
+`docs/milestones/README.md`) the way M3 and M4 were meant to.
 
 ## Exact first command for the next agent
 
 ```bash
-pnpm install --frozen-lockfile && pnpm check && pnpm supabase:start && pnpm example:run:mock && pnpm harness run show <printed runId>
+pnpm install --frozen-lockfile && pnpm check && pnpm supabase:start && pnpm example:run:mock -- --workflow && pnpm harness run show <printed runId>
 ```
 
 (Node 24.21.0 and pnpm 12.4.2 on PATH; see `docs/development/local-setup.md`.
-Docker must be running for `pnpm supabase:start`.) Then read, in order:
-`AGENTS.md`, this file, `docs/README.md`, `docs/progress/milestones/m2.md`,
-`docs/contracts/README.md`, and the Milestone 4 (then Milestone 3) sections of
+Docker must be running for `pnpm supabase:start`; Supabase may already be up
+on this host, see "Current blockers".) Then read, in order: `AGENTS.md`, this
+file, `docs/README.md`, `docs/progress/milestones/m4.md`,
+`docs/contracts/README.md`, and the Milestone 5 (then Milestone 3) sections of
 `docs/milestones/build-plan.md`.
 
 ## Last successful verification
 
-- `pnpm check`: PASS, 2026-09-20, after Phase 2 (M4-T3 through M4-T9; 1146
-  passed, 43 skipped, 62 files). Prior: PASS after M4-T1/M4-T2 (935 passed,
-  43 skipped, 54 files); PASS after M2-T10 (876 passed, 43 skipped, 53
-  files).
-- `pnpm example:run:mock`: PASS in all three storage modes (persisted,
-  JSONL-only, configured-but-unreachable).
-- `pnpm harness run show <run-id>`: PASS against Supabase and against a
-  JSONL-only trace, 2026-09-20 (orchestrator-verified).
+- `pnpm check`: PASS, 2026-09-20, on commit `e461297` after M4-T10 (1197
+  passed, 43 skipped, 67 files). Prior: PASS after M4-T3..T9 (1146 passed,
+  43 skipped, 62 files); PASS after M4-T1/M4-T2 (935 passed, 43 skipped, 54
+  files); PASS after M2-T10 (876 passed, 43 skipped, 53 files).
+- `pnpm example:run:mock -- --workflow` (no vendor, `clear` route): PASS,
+  exit 0, run `01a0bfa7-4484-7000-9060-dcba9756a378`.
+- `pnpm example:run:mock -- --workflow --vendor "Tessellate Analytics"`
+  (`research` route): PASS, exit 0, run `01a0bfa7-71aa-7001-8d36-e62ee08c5bae`;
+  re-verified independently by the orchestrator as run
+  `01a0bfaf-ffd5-7001-b493-9662ef3e9035`, persisted to local Supabase, 20
+  trace events, rendered correctly by `pnpm harness run show` (node spans,
+  branch label/target, nested agent/model events, both Jev calls).
+- `pnpm example:run:mock -- --workflow --vendor "Aurelia Freight"`
+  (escalation): PASS as designed, exit 1, run
+  `01a0bfa7-9ce9-7001-8075-74110e84dce6`.
+- `pnpm example:run:mock` with no flags (full-agent path, unchanged): PASS,
+  exit 0, run `01a0bfad-b44f-7001-afd1-cfa5aafa72ac`.
+- `pnpm harness run show <run-id>` and `... --jsonl <path>`: PASS against
+  Supabase and against JSONL-only traces, for both agent and workflow runs.
 - `pnpm supabase:reset`: PASS, applied all five migrations from an empty
   database.
 - `uuid` vs. textual UUIDv7 ordering: PASS, true against the pinned local
   Postgres 17.6.
 - Row-level security: enabled on all 13 tables, verified.
-- `pnpm example:run` (live model): not run, no credential.
+- `pnpm example:run` and `pnpm example:run -- --workflow` (live model): not
+  run, no credential.
 - `eve info` (both app roots): unchanged from M1, `Compile ready`, 0 errors, 0
-  warnings.
+  warnings; not re-run for M4-T10 since nothing under `agent/` was touched.

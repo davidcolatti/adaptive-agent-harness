@@ -156,8 +156,9 @@ commits: `ab9a374`, `1b16a1a`, `219ccbd`, `62548d6`, `1f629bf`, `5721f7d`,
 ## Current blockers
 
 - None for starting M3 or M4; both are blocked only by M2, which is complete.
-- **Eight M2 commits are unpushed** to `origin/main`, so CI — including the
-  `supabase-types` job — has not run against any Milestone 2 change.
+- None from CI: all M2 commits are pushed, and the run on `fcc4176`
+  (2026-09-20, `35516370487`) passed both jobs, `check` and `supabase-types`,
+  the latter on its first ever execution.
 - `pnpm example:run` against a live Gateway model remains unverified without a
   credential.
 - `.env.local` is present on this development host, so `pnpm example:run:mock`

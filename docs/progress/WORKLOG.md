@@ -8903,7 +8903,7 @@ Commit M5-T3..M5-T7 with ADR-0044. `pnpm check` passes end to end.
 
 **Status:** completed
 **Actor/session:** coding agent (documentation subagent)
-**Commit:** not committed
+**Commit:** `be368e6`
 
 ### Goal
 
@@ -8973,7 +8973,7 @@ build plan in the M5 file's shape. See the M5 close-out entry below for the full
 
 **Status:** completed
 **Actor/session:** coding agent (documentation subagent)
-**Commit:** not committed
+**Commit:** `be368e6`
 
 ### Goal
 

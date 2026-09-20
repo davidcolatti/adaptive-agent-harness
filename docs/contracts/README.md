@@ -40,19 +40,23 @@ layout still plans, with their target milestone and a one-line summary.
 | `redaction.md` | active (M2-T9) | What is removed from a trace event before anything buffers or stores it: field paths, secret patterns, headers and per-tool sanitizer hooks, applied by a `TraceWriter` decorator that sits above the buffer. |
 | `behavior-fingerprint.md` | active (M2-T8) | The component-wise `sha256:` fingerprint over the behavior-affecting inputs — instructions, SOP, skills, tool definitions, model configuration, schemas, workflow IR and policy thresholds — supplied by the domain and stamped on every event of a run. |
 | `storage.md` | active (M2-T5, M2-T6, M2-T7) | The `Storage` port the harness persists through, the outcome ledger row it writes, the thirteen-table Supabase schema behind it, and the sink that drains a run's trace into it. |
-| `workflow-ir.md` | planned (M4) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics. |
+| `workflow-ir.md` | active (M4-T1, M4-T2) | The versioned, serializable intermediate representation that is the authoritative source of compiled workflow semantics: the definition, the eleven node types and five control shapes, the `Binding` data-flow model, `parseWorkflowDefinition()` and the workflow fingerprint. |
 | `decision-engine.md` | planned (M3) | The `DecisionEngine` interface for bounded probabilistic judgments, implemented first by Jev. |
 | `promotion-policy.md` | planned (M6) | The quality/regression/false-auto/fallback thresholds a candidate workflow must clear before promotion. |
 
-Twelve contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
+Thirteen contracts are implemented: the execution context (M1-T7), the error taxonomy (M1-T8), `Job`
 and `DomainDefinition` with `defineDomain()` (M1-T3), `AgentRuntime` with `AgentExecution`
 (M1-T5), `createHarness()` (M1-T4), the capability registry with its serializable manifest
 (M1-T9), the entity identifier scheme (M2-T1), the trace event with its recorder and writer
 (M2-T3, M2-T4), the behavior fingerprint (M2-T8), trace redaction (M2-T9), and the `Storage` port with its outcome ledger
-(M2-T5, M2-T6, M2-T7). All live in `packages/core` except the trace's
-persistence half, which is `packages/trace`: the buffered writer, the JSONL sinks and the
+(M2-T5, M2-T6, M2-T7), and the workflow IR with its node contracts (M4-T1, M4-T2). All live in
+`packages/core` except two behavior halves. The trace's is `packages/trace`: the buffered writer, the JSONL sinks and the
 redaction pass above them, kept out of core so that core owns no storage decision and touches no
-`node:fs`. Redaction is a `TraceWriter` decorator placed above the buffer, so "redact before
+`node:fs`. The workflow's is `packages/workflow`: graph validation, the typed DSL and the local
+deterministic runtime, kept out of core for the same reason, so core declares the IR contract and
+executes nothing
+([ADR-0038](../decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md)).
+Redaction is a `TraceWriter` decorator placed above the buffer, so "redact before
 persistence" is structural rather than a convention every sink has to remember
 ([ADR-0035](../decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md)). The schema contract that `DomainDefinition` depends on is a
 harness-owned copy of Standard Schema v1, recorded in
@@ -72,8 +76,8 @@ UUIDv7 with a monotonic counter, owned by the harness rather than taken from Nod
 documented in `identifiers.md`. `Job.id`, `ExecutionContext.runId`/`jobId` and `TraceEvent.runId`
 carry it today; the other nine brands exist as types with no field yet.
 
-Of build plan section 5, `DecisionEngine` (M3) is still to come and `FallbackContext` waits for
-M4. `job.md` is **finalized** as of M2-T2, recorded in
+Of build plan section 5, `DecisionEngine` (M3) is still to come; `WorkflowNode`, the control shapes
+and `FallbackContext` arrived with M4-T1/M4-T2 and are `workflow-ir.md`. `job.md` is **finalized** as of M2-T2, recorded in
 [ADR-0032](../decisions/0032-jobs-are-deeply-immutable-and-the-effective-job-is-the-job.md): the
 field list is unchanged, immutability is deep rather than one level, the job the runtime receives
 is the job, creation time is derived from the `JobId` rather than stored in a `createdAt` field, an

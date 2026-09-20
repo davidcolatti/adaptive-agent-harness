@@ -121,6 +121,16 @@ export const BOUNDARY_RULES: BoundaryRules = {
     // that is how the CLI reaches a real database without becoming the second
     // place in the repository that talks to one. ADR-0037 records it.
     "@internal/observability": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
+    // `@internal/workflow` (M4-T1) sits directly under `core` in the dependency
+    // diagram, beside `trace` and the runtime adapters. It is **not** an
+    // adapter: it owns IR validation, the typed DSL and the local deterministic
+    // interpreter, all of which are harness-owned logic over core's contracts,
+    // so the same bans core carries apply here. Note in particular the `workflow`
+    // ban: the npm package named `workflow` is Vercel's durable-workflow
+    // primitive and stays adapter-only (`@internal/workflow-vercel`, M11). This
+    // package's local runtime deliberately builds no durability (M4-T6), and
+    // confusing the two is exactly what the ban prevents. ADR-0038 records it.
+    "@internal/workflow": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
   },
 };
 

@@ -6260,3 +6260,292 @@ already-reviewed Milestone 2 work into a snapshot and rewrites the handoff files
 Start Milestone 4 (Workflow IR, DSL, and Local Deterministic Runtime), the critical path, by
 creating its status file from the build plan in the M2 file's shape. Milestone 3 (Jev) is blocked
 only by M2 and may start beside M4 at any point.
+
+---
+
+## 2026-09-20 01:00 — M4-T1, M4-T2 — Serializable workflow IR and node contracts
+
+**Status:** started
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Define the versioned, serializable workflow IR (M4-T1) and the contract every
+node in it obeys (M4-T2), so that the validator (M4-T4/M4-T9), the local
+deterministic runtime (M4-T6) and the typed DSL (M4-T5) can be built in
+parallel against a stable shape.
+
+Because the IR is one value, this task also fixes the *type half* of three
+later tasks: the node-type union (M4-T3), the five control shapes (M4-T4), the
+`call` node's effect and protection declarations (M4-T7) and the per-node tool
+grants (M4-T8). It does **not** implement graph validation, capability
+resolution, the runtime or the DSL.
+
+Concretely:
+
+- `@internal/core` gains the IR types, a strict `parseWorkflowDefinition()`
+  boundary in the shape of `parseJob()` (unknown fields rejected at every
+  level, `deepFreeze`d result, every failure a `ValidationError` with a path),
+  an `isWorkflowDefinition()` guard, `canonicalWorkflowIr()` and
+  `workflowFingerprint()` over the existing `canonicalJson`/`fingerprint`, and
+  the `FallbackContext` envelope from build plan section 5.
+- A new `packages/workflow` (`@internal/workflow`) is scaffolded with exactly
+  one export, the `CompiledWorkflow` interface the validator produces and the
+  runtime consumes.
+
+### Implementation references
+
+- package/version: Node **24.21.0** (`.node-version`, `.nvmrc`); pnpm
+  **12.4.2**; TypeScript 6.0.x (ADR-0019); Vitest 5.0.1. **No new third-party
+  dependency**, and `@internal/core` stays zero-dependency.
+- installed docs read: not applicable. This task is framework-facing in no
+  respect: nothing in `eve`, the AI SDK, AI Gateway, Jev, Workflow or Sandbox
+  prescribes a workflow IR, so the no-assumption stop condition's last branch
+  applies and the abstraction is harness-owned and recorded in an ADR.
+- official docs/repos/examples read: none required for the same reason.
+- public types/exports inspected: `packages/core/src/job.ts` (`parseJob`, the
+  `collectUnknownKeyIssues`/`collectThrownIssues` style this follows),
+  `capabilities.ts` (`CapabilityRef`, `parseCapabilityRefString`),
+  `context.ts` (`Budget`, `ToolGrant`, `DomainRef`), `identifiers.ts`
+  (`IDENTIFIER_PATTERN`, `EXACT_VERSION_PATTERN`, `collectRefIssues`,
+  `throwIfIssues`), `fingerprint.ts` (`canonicalJson`, `fingerprint`),
+  `freeze.ts` (`deepFreeze`), `json.ts` (`isJsonValue`, `isPlainObject`),
+  `errors.ts` (`ValidationError`, `ValidationIssue`), `trace.ts` (the
+  `node.*` event types and `TraceEvent.node`), `behavior.ts`
+  (`BehaviorDescriptor.workflowIr`), and `packages/trace`'s package scaffold.
+- selected documented pattern: the repository's own parse-boundary pattern,
+  `parseJob()`. One shared `readWorkflowDefinition()` that both
+  `isWorkflowDefinition()` and `parseWorkflowDefinition()` call, collecting
+  every issue with a path rather than throwing on the first, and rebuilding
+  the value from exactly the fields it validated so that "the result has no
+  unknown fields" is true by construction rather than by assertion.
+- harness-owned: the IR itself. The `Binding` data-flow model, the eleven node
+  shapes, the reserved-and-rejected types, and the idempotency-key formula are
+  this project's design, recorded in ADR-0038.
+
+### Next exact step
+
+Write `packages/core/src/workflow-nodes.ts` and `workflow-ir.ts` with their
+co-located tests, then scaffold `packages/workflow`, then the contract doc,
+ADR-0038, and the system-map and contracts-README updates.
+
+---
+
+## 2026-09-20 02:10 — M4-T1, M4-T2 — Serializable workflow IR and node contracts
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Unchanged from the `started` entry above: define the versioned, serializable
+workflow IR (M4-T1) and the per-node contract (M4-T2), including the type half
+of M4-T3 (node types), M4-T4 (control shapes), M4-T7 (idempotency declarations)
+and M4-T8 (per-node tool grants), so the validator, runtime and DSL can be built
+in parallel against a stable shape. Graph validation, capability resolution, the
+runtime and the DSL are explicitly out of scope.
+
+### Implementation references
+
+As recorded in the `started` entry: no framework-facing surface, no new
+third-party dependency, `@internal/core` still declares zero dependencies. The
+pattern followed is the repository's own `parseJob()` boundary, and the
+placement follows the `@internal/trace` precedent.
+
+### Work completed
+
+- **`packages/core/src/workflow-nodes.ts`** (1473 lines): the node half.
+  `NodeId`/`isNodeId`; `NODE_TYPES` (eleven), `CONTROL_NODE_TYPES` (five),
+  `RESERVED_NODE_TYPES` (`human`, `subworkflow`), `CALL_EFFECTS`,
+  `JEV_QUESTION_KINDS`, `BINDING_KINDS`, `MAX_BINDING_DEPTH`; the five-case
+  `Binding` union; `RetryPolicy`, `NodeProtection`, `NodeCapabilityRef`;
+  `WorkflowNodeBase` with M4-T2's eight fields plus `input`; the eleven node
+  interfaces and the `WorkflowNode` discriminated union; `BranchSelector` and
+  `LoopCondition`; and `readWorkflowNode()`, the per-node validate-and-rebuild
+  pass (module-internal, not re-exported from the package barrel).
+- **`packages/core/src/workflow-ir.ts`** (511 lines): `WorkflowDefinition`,
+  `WORKFLOW_SCHEMA_VERSION`, `FALLBACK_REASONS` / `FallbackReason` /
+  `FallbackContext`, `parseWorkflowDefinition()`, `isWorkflowDefinition()`,
+  `canonicalWorkflowIr()` and `workflowFingerprint()`. Both halves share one
+  `readWorkflowDefinition()` pass, in the `readJob()` style: every issue
+  collected with a path, the value rebuilt from exactly the validated fields,
+  `deepFreeze`d on the way out.
+- **`packages/core/src/workflow-ir.test.ts`** (926 lines, **59 tests**): a
+  fixture covering all eleven node types, every binding kind and both selector
+  forms; the round trip and deep freeze; unknown fields at top level, on a node,
+  on a retry policy, on a binding and nested inside an object binding; a field
+  borrowed from another node type; `next` on the two types that have none; both
+  reserved types with their specific message; required fields per node type; key
+  ≠ `id`; `schemaVersion` ≠ 1; non-exact versions; malformed capability
+  references; non-JSON values (`Date`, non-finite, cycle); the binding-depth
+  guard; a group pinning what parse deliberately leaves to the validator;
+  `isWorkflowDefinition` agreeing with `parseWorkflowDefinition` case by case;
+  and key-order independence plus one-field sensitivity for
+  `canonicalWorkflowIr`/`workflowFingerprint`.
+- **`packages/core/src/index.ts`**: named re-exports for both modules, in
+  Biome's order, with a header note and per-block comments naming the tasks and
+  ADR-0038.
+- **`packages/workflow`** (`@internal/workflow`): scaffolded from
+  `packages/trace`'s shape. `package.json` (depends on `@internal/core`;
+  devDeps `@internal/config`, `@internal/testing`, `vitest@5.0.1`),
+  `tsconfig.json`, `tsconfig.build.json`, `src/compiled.ts` (the
+  `CompiledWorkflow` interface, documenting exactly what holding one guarantees)
+  and `src/index.ts` exporting only that.
+- **`tests/architecture/boundaries.ts`**: `@internal/workflow` added to
+  `forbiddenByPackage` with core's bans and a comment explaining that the npm
+  package named `workflow` is Vercel's durable primitive and a different thing.
+- **`tests/architecture/package-boundaries.test.ts`**: the new package added to
+  the "discovers every workspace package" list, which the test asserts
+  exhaustively.
+- **`pnpm install`** (not `--frozen-lockfile`, since a workspace package was
+  added): `pnpm-lock.yaml` gained 16 lines and is part of this change.
+- **`docs/contracts/workflow-ir.md`**: new, `status: active`. The definition,
+  the node contract, the data-flow model, all eleven node types, the five
+  control shapes, M4-T7's effects and the idempotency-key formula, the explicit
+  parse-versus-validate table, canonicalization and the fingerprint, and the
+  fallback envelope.
+- **`docs/decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md`**:
+  new, `accepted`. Placement, the two departures from the plan's example, the
+  `Binding` model, named-not-registered Jev questions, reserved-and-rejected
+  types, why no idempotency key is stored, and nine rejected alternatives.
+- **`docs/decisions/README.md`**: the ADR-0038 index row.
+- **`docs/contracts/README.md`**: the `workflow-ir.md` row changed from planned
+  to active, plus the sentence that said `FallbackContext` waits for M4, the
+  contract count (twelve to thirteen) and the "all live in `packages/core`
+  except" clause, which now names two behavior halves rather than one.
+- **`docs/architecture/system-map.md`**: the `packages/workflow` status row
+  changed from planned to exists; a prose paragraph for the package beside the
+  other package paragraphs; two source-file bullets for the new core modules and
+  the new package; frontmatter `implementation` and `related` extended;
+  `last_verified` moved to 2026-09-20.
+
+### Files changed
+
+Code:
+- `packages/core/src/workflow-nodes.ts` (new)
+- `packages/core/src/workflow-ir.ts` (new)
+- `packages/core/src/index.ts`
+- `packages/workflow/src/compiled.ts` (new)
+- `packages/workflow/src/index.ts` (new)
+
+Tests:
+- `packages/core/src/workflow-ir.test.ts` (new)
+- `tests/architecture/boundaries.ts`
+- `tests/architecture/package-boundaries.test.ts`
+
+Config:
+- `packages/workflow/package.json` (new)
+- `packages/workflow/tsconfig.json` (new)
+- `packages/workflow/tsconfig.build.json` (new)
+- `pnpm-lock.yaml`
+
+Docs:
+- `docs/contracts/workflow-ir.md` (new)
+- `docs/decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md` (new)
+- `docs/decisions/README.md`
+- `docs/contracts/README.md`
+- `docs/architecture/system-map.md`
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- `node --version` / `pnpm --version` — `v24.21.0` / `12.4.2` — PASS
+- `pnpm install` — PASS (12 workspace projects; `pnpm-lock.yaml` +16 lines)
+- `pnpm vitest run --project unit packages/core/src/workflow-ir.test.ts` — 59
+  passed, 1 file — PASS
+- `pnpm vitest run tests/architecture` — 16 passed, 1 file; the "discovers every
+  workspace package" assertion now lists `@internal/workflow`, so the new
+  package is covered by a rule rather than silently ignored — PASS
+- `pnpm --filter @internal/core typecheck` — PASS
+- `pnpm check` — **PASS**, all six stages. `format:check` clean over 168 files;
+  `lint` clean over 169; `typecheck` 10/10 tasks; `Test Files 52 passed | 2
+  skipped (54)`, `Tests 935 passed | 43 skipped (992)`; `build` 10/10 tasks;
+  `check:handoff — OK`. The 43 skipped are the unchanged Supabase legs of the
+  storage and inspector contract suites, which skip without
+  `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`.
+- Biome reformatted three files on first run (`workflow-ir.ts`,
+  `workflow-nodes.ts`, `workflow-ir.test.ts`); its formatting was accepted, and
+  `format:check` is clean.
+
+### Decisions / deviations
+
+All of the following are recorded in ADR-0038; listed here because they are
+departures from the task's own design direction or from the build plan.
+
+- **`workflowFingerprint()` hashes the parsed definition, not the string
+  `canonicalWorkflowIr()` returns.** The two differ by one layer of JSON string
+  escaping. `fingerprint()` canonicalizes with the same `canonicalJson()` before
+  hashing (ADR-0029), so the digest is over exactly the bytes
+  `canonicalWorkflowIr()` produces — which is what the formula meant — rather
+  than over a JSON-quoted copy of them.
+- **`escalate` and `branch` carry no `next` field at all**, rather than an
+  optional one that must be `null`. The direction said "`next` must be null /
+  absent". Allowing both would give one node two canonical forms and therefore
+  two fingerprints for the same workflow. The cost is that writing `next: null`
+  on an `escalate` node reports "unknown field" rather than something more
+  specific.
+- **Every other node type requires `next` to be present**, either a `NodeId` or
+  `null`. Same reason: terminality is stated, not inferred from absence.
+- **`JEV_QUESTION_KINDS` is exported as a named constant**, matching the other
+  closed vocabularies, rather than being an inline union only.
+- **`MAX_BINDING_DEPTH` (32) was added** and is not in the direction. A binding
+  is recursive and parse is a boundary that accepts untrusted input, including a
+  compiler proposal; without a bound, a deeply nested value would overflow the
+  stack inside the one function whose job is to survive bad input. It is a stack
+  guard, not a semantic limit.
+- **Node id, workflow id, domain, job type and an `artifact` node's `name` all
+  use `identifiers.ts`'s existing identifier rule.** No new naming rule was
+  invented; this also keeps `:` out of every component of the idempotency key,
+  so the key parses back unambiguously.
+- **Split into two modules** (`workflow-ir.ts`, `workflow-nodes.ts`) as the
+  direction permitted: one file would have been about 1980 lines. The dependency
+  is one-directional, so there is no import cycle.
+- **The budget and tool-grant collectors are duplicated from `job.ts`** (about
+  forty lines). Sharing them would mean exporting a validation surface from
+  `job.ts` whose only consumer is this module. Noted in ADR-0038's Negative
+  consequences so a future consolidation is deliberate.
+- **`docs/contracts/README.md` got three small edits beyond the status row**:
+  the contract count (twelve to thirteen), the enumeration, and the "all live in
+  `packages/core` except" clause. Leaving them would have left the paragraph
+  factually wrong, which rule 8 forbids.
+
+### Known issues / blockers
+
+- **None for this task.** The IR is stable and the three downstream tasks can
+  start.
+- `docs/context/current-state.md`, `docs/milestones/*` and `AGENTS.md` were
+  deliberately **not** touched: another agent owns them concurrently. AGENTS.md's
+  ADR paragraph still ends "The next free number is 0038", and its
+  repository-layout block still lists `packages/workflow/` as planned; both need
+  updating by whoever owns that file.
+- The `@internal/workflow` package has **no test file yet**, because it exports
+  only a type. Vitest reports no missing coverage; the first test arrives with
+  `compileWorkflow()`.
+
+### Next exact step
+
+Three tasks can now proceed in parallel against this IR:
+
+1. **M4-T4 + M4-T9** — `compileWorkflow()` in `packages/workflow`: graph
+   validation (unreachable nodes, missing nodes, incompatible schemas, cycles
+   not declared as bounded loops, a `branch` with no `default`, duplicate ids),
+   the node-level rules parse deliberately skips (a `code` node's `permissions`
+   must be empty; a `non-idempotent-write` `call` must declare `protection`),
+   and capability resolution against `CapabilityRegistry` — **excluding**
+   `jev` questions, which are not a capability kind. It returns
+   `CompiledWorkflow`.
+2. **M4-T5** — the typed DSL, compiling to `WorkflowDefinition` and fingerprinted
+   through `workflowFingerprint()`, never through builder identity.
+3. **M4-T6** — the local interpreter over `CompiledWorkflow`, which owns the
+   idempotency key documented in `docs/contracts/workflow-ir.md` and fills
+   `TraceEvent.node`, null since M2.
+
+First command for any of them:
+
+```bash
+export PATH="$HOME/.n/bin:$PATH" && pnpm install --frozen-lockfile && pnpm check
+```
+
+Then read `docs/contracts/workflow-ir.md` and ADR-0038.

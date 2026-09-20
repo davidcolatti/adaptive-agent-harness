@@ -8,7 +8,9 @@
 // registry with its canonical-JSON fingerprint scheme (M1-T9). Milestone 2 adds
 // the sortable entity-ID scheme and its twelve brands (M2-T1), the
 // finalized `Job` contract with `deepFreeze` and `parseJob` (M2-T2), and the
-// behavior fingerprint (M2-T8).
+// behavior fingerprint (M2-T8). Milestone 4 adds the serializable workflow IR
+// and its node contracts (M4-T1, M4-T2), with validation, the typed DSL and the
+// local runtime living in `@internal/workflow` (ADR-0038).
 //
 // Re-exports are listed by name rather than starred, so this file states the
 // package's public surface and a symbol becomes public deliberately. Their
@@ -268,3 +270,72 @@ export {
   TRACE_EVENT_TYPES,
   TRACE_EVENT_VERSION,
 } from "./trace.js";
+
+// The serializable workflow IR (M4-T1) and the fallback envelope (ADR-0038).
+// Core declares the contract and its parse boundary; `@internal/workflow`
+// implements validation, the DSL and the local runtime over it, the same split
+// `@internal/trace` follows.
+export type {
+  FallbackContext,
+  FallbackReason,
+  WorkflowDefinition,
+} from "./workflow-ir.js";
+export {
+  canonicalWorkflowIr,
+  FALLBACK_REASONS,
+  isWorkflowDefinition,
+  parseWorkflowDefinition,
+  WORKFLOW_SCHEMA_VERSION,
+  workflowFingerprint,
+} from "./workflow-ir.js";
+
+// The node contracts (M4-T2), the node types (M4-T3) and the control shapes
+// (M4-T4), including the `call` node's idempotency declarations (M4-T7) and the
+// per-node tool grants (M4-T8).
+export type {
+  AgentNode,
+  ArtifactNode,
+  Binding,
+  BindingFromInput,
+  BindingFromItem,
+  BindingFromNode,
+  BindingKind,
+  BindingLiteral,
+  BindingObject,
+  BranchNode,
+  BranchOnField,
+  BranchOnPolicy,
+  BranchSelector,
+  CallEffect,
+  CallNode,
+  ChainNode,
+  CodeNode,
+  ControlNodeType,
+  EscalateNode,
+  JevNode,
+  JevQuestionKind,
+  LoopCondition,
+  LoopNode,
+  LoopUntilField,
+  LoopUntilPolicy,
+  MapNode,
+  NodeCapabilityRef,
+  NodeId,
+  NodeProtection,
+  ReduceNode,
+  ReservedNodeType,
+  RetryPolicy,
+  WorkflowNode,
+  WorkflowNodeBase,
+  WorkflowNodeType,
+} from "./workflow-nodes.js";
+export {
+  BINDING_KINDS,
+  CALL_EFFECTS,
+  CONTROL_NODE_TYPES,
+  isNodeId,
+  JEV_QUESTION_KINDS,
+  MAX_BINDING_DEPTH,
+  NODE_TYPES,
+  RESERVED_NODE_TYPES,
+} from "./workflow-nodes.js";

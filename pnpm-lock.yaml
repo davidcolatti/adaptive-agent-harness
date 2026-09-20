@@ -381,6 +381,22 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
 
+  packages/workflow:
+    dependencies:
+      '@internal/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@internal/config':
+        specifier: workspace:*
+        version: link:../config
+      '@internal/testing':
+        specifier: workspace:*
+        version: link:../testing
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(yaml@2.9.1))
+
 packages:
 
   '@ai-sdk/gateway@4.0.87':

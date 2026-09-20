@@ -99,6 +99,12 @@ describe("workspace dependency boundaries", () => {
       // package, not an adapter: it carries the same bans `@internal/core`
       // does, and a storage medium reaches it through its own `TraceSink`.
       "@internal/trace",
+      // Workflow IR validation, the typed DSL and the local deterministic
+      // runtime (M4-T1 scaffold). A harness package, not an adapter: it carries
+      // the same bans `@internal/core` does, including the ban on the npm
+      // package named `workflow`, which is Vercel's durable primitive and a
+      // different thing entirely. ADR-0038.
+      "@internal/workflow",
     ]);
   });
 

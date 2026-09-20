@@ -88,6 +88,7 @@ and related ADRs that motivated it.
 | [0035](0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md) | Redaction is a `TraceWriter` decorator placed before buffering | accepted |
 | [0036](0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md) | `Storage` is a core port over a Supabase schema, and `runs` is the ledger | accepted |
 | [0037](0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md) | The run inspector is a library over the `Storage` port, with a `parseArgs` CLI | accepted |
+| [0038](0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md) | The workflow IR is a core contract; validation, the DSL and the runtime live in `@internal/workflow` | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19

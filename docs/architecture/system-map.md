@@ -1,7 +1,7 @@
 ---
 status: active
 owner: core
-last_verified: 2026-09-19
+last_verified: 2026-09-20
 related:
   - docs/milestones/build-plan.md
   - docs/decisions/README.md
@@ -18,6 +18,8 @@ related:
   - docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md
   - docs/decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md
   - docs/contracts/storage.md
+  - docs/contracts/workflow-ir.md
+  - docs/decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md
   - docs/runbooks/supabase-local.md
 implementation:
   - apps/eve-fixture-agent
@@ -29,6 +31,7 @@ implementation:
   - packages/runtime-ai-sdk
   - packages/storage-supabase
   - packages/trace
+  - packages/workflow
   - supabase
   - supabase/migrations
   - tests/architecture/boundaries.ts
@@ -357,6 +360,19 @@ Nine packages and two applications exist. Everything else in the repository layo
   database client in. Recorded in
   [ADR-0037](../decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md),
   operated per [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md).
+- `packages/workflow` (`@internal/workflow`) was created by M4-T1 and will hold everything that
+  *does* something with the workflow IR: `compileWorkflow()` (graph validation and capability
+  resolution, M4-T4/M4-T9), the typed DSL (M4-T5) and the local deterministic interpreter (M4-T6).
+  Today it exports one type, `CompiledWorkflow`, the handoff between those halves.
+
+  The IR itself is in `@internal/core`, because `BehaviorDescriptor.workflowIr` already refers to it
+  and the router (M5), replay (M6) and the compiler (M8) all need the type. That is the same split
+  `@internal/trace` follows: core declares the contract and its parse boundary, the sibling package
+  owns behavior over it. It is **not** an adapter, so `BOUNDARY_RULES.forbiddenByPackage` gives it
+  core's bans — including the ban on the npm package named `workflow`, which is Vercel's durable
+  primitive and stays adapter-only (`@internal/workflow-vercel`, M11); M4-T6's runtime deliberately
+  builds no durability. Recorded in
+  [ADR-0038](../decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md).
 - `supabase/` at the repository root is the committed local-database definition, added by M2-T11:
   `config.toml` (the CLI's 2.117.0 defaults, with `project_id = "adaptive-agent-harness"`),
   `migrations/` (five committed migrations from M2-T6, creating M2-T5's thirteen tables in
@@ -387,7 +403,7 @@ plan's milestone sections.
 | `packages/storage-supabase` | exists (M2-T11 generated types; M2-T5 `createSupabaseStorage()`) |
 | `packages/observability` | exists (M2-T10): `inspectRun()`, `renderRunInspection()`, the JSONL trace source, and the `harness` CLI |
 | `packages/decision-jev` | planned (M3) |
-| `packages/workflow` | planned (M4) |
+| `packages/workflow` | exists (M4-T1 scaffold): `CompiledWorkflow`, the result type `compileWorkflow()` (M4-T4/T9) produces and the local runtime (M4-T6) consumes. Validation, the typed DSL and the interpreter land here next |
 | `packages/replay` | planned (M6) |
 | `packages/evals` | planned (M6) |
 | `packages/learner` | planned (M7) |
@@ -428,6 +444,21 @@ still calls nothing. The source files in the workspace packages are:
   harness's freezing surface. It is what makes "jobs are immutable after execution begins" reach a
   nested budget or tool grant, and it recurses into arrays and plain objects only, so a job is
   deeply immutable exactly as far as it is JSON-representable (ADR-0032).
+- `packages/core/src/workflow-ir.ts`, `workflow-nodes.ts` and `workflow-ir.test.ts` (M4-T1, M4-T2):
+  the serializable workflow IR. `workflow-ir.ts` holds `WorkflowDefinition`, the strict
+  `parseWorkflowDefinition()` boundary (the sibling of `parseJob()` and `parseTraceEvent()`),
+  `isWorkflowDefinition()`, `canonicalWorkflowIr()`, `workflowFingerprint()` and the
+  `FallbackContext` envelope; `workflow-nodes.ts` holds the eleven node types, the five control
+  shapes, the `Binding` data-flow model and the per-node validation. The split is one-directional,
+  so there is no import cycle. Parse is a **shape** boundary: graph validation and capability
+  resolution are `packages/workflow`'s, which is what
+  [ADR-0038](../decisions/0038-workflow-ir-lives-in-core-behavior-lives-in-the-workflow-package.md)
+  records and [`../contracts/workflow-ir.md`](../contracts/workflow-ir.md) documents.
+- `packages/workflow/src/index.ts` and `compiled.ts` (M4-T1 scaffold): `CompiledWorkflow`, the one
+  export the package has so far. Holding one means the definition parsed, the graph validated and
+  every capability reference resolved, which is how "a workflow with a missing capability MUST fail
+  validation before any node executes" becomes a type-level fact. No third-party dependency; the
+  package is not an adapter and carries core's bans.
 - `packages/trace/src/index.ts`, `buffered-trace-writer.ts`, `sink.ts`, `jsonl-sink.ts` and their
   co-located `*.test.ts` files (M2-T4): the buffered, order-preserving `TraceWriter`, the
   `TraceSink` interface beneath it, and the in-memory and JSONL sinks. `node:fs/promises` and

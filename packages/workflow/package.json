@@ -1,0 +1,32 @@
+{
+  "name": "@internal/workflow",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Workflow IR validation, typed DSL, and the local deterministic runtime.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@internal/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@internal/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "@internal/testing": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

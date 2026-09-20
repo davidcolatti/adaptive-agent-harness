@@ -1,0 +1,37 @@
+{
+  "name": "@internal/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The local run inspector and the harness CLI that fronts it.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@internal/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "harness": "./dist/bin/harness.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@internal/core": "workspace:*",
+    "@internal/storage-supabase": "workspace:*",
+    "@internal/trace": "workspace:*"
+  },
+  "devDependencies": {
+    "@internal/config": "workspace:*",
+    "@internal/testing": "workspace:*",
+    "vitest": "5.0.1"
+  }
+}

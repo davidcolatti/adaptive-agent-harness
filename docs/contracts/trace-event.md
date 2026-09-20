@@ -13,10 +13,12 @@ related:
   - docs/decisions/0026-harness-errors-serialize-to-a-whitelisted-trace-safe-shape.md
   - docs/decisions/0030-sortable-uuidv7-entity-identifiers-owned-not-delegated.md
   - docs/decisions/0031-trace-event-taxonomy-recorder-owned-sequencing-and-the-buffered-writer.md
+  - docs/decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md
 implementation:
   - packages/core
   - packages/trace
   - packages/runtime-eve
+  - packages/observability
 ---
 
 # Trace event
@@ -40,6 +42,27 @@ Four pieces, in three packages:
 | `TraceRecorder` | `packages/core/src/trace.ts` | Per-run minter. Owns `sequence` and identity. |
 | `TraceWriter` | `packages/core/src/trace.ts` | The sink an execution appends to. Stated verbatim by the build plan. |
 | `TraceSink` + `createBufferedTraceWriter()` | `packages/trace` | Persistence, and the buffered order-preserving writer over it. |
+| `parseTraceEvent()` | `packages/core/src/trace.ts` | The read boundary. The only way an event comes back **in**. |
+
+## Reading an event back
+
+A `TraceRecorder` is the only thing that mints an event. `parseTraceEvent()` is
+the only thing that turns an untrusted value back into one, and it is the same
+boundary `parseJob()` is for jobs and `parseRunRecord()` is for ledger rows
+(added by M2-T10,
+[ADR-0037](../decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md)).
+A database row, a JSONL line and frozen replay evidence all come back through
+it, so a hand-edited row and a hand-edited file fail identically.
+
+It reports every failing field at once with the path to each, rejects an unknown
+field rather than dropping it, and deep-freezes what it returns. `version` is
+**read, not asserted**: any integer of at least 1 is accepted and returned as
+written, because a row produced by an older schema must read back saying which
+schema it was.
+
+Its readers today are `createSupabaseStorage()`, whose `readTraceEvent` is now
+only the column-name mapping, and `readJsonlTraceEvents()` in `@internal/trace`,
+which the run inspector's `createJsonlTraceSource()` wraps.
 
 ## The taxonomy
 

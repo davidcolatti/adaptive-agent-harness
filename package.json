@@ -16,6 +16,7 @@
     "example:run:mock": "turbo run build --filter=@internal/example-agent && pnpm --filter @internal/example-agent run start -- --mock",
     "format": "biome format --write .",
     "format:check": "biome format .",
+    "harness": "turbo run build --filter=@internal/observability --output-logs=none 1>&2 && node --env-file-if-exists=.env.local packages/observability/dist/bin/harness.js",
     "lint": "biome check --formatter-enabled=false .",
     "prepare": "husky",
     "supabase:reset": "supabase db reset",

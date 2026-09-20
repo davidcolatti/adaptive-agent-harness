@@ -13,6 +13,7 @@ hook. Per-topic runbooks are added by the milestone that introduces the thing be
 | Runbook | What it covers |
 | --- | --- |
 | [`supabase-local.md`](supabase-local.md) | The local Supabase lifecycle (start, stop, reset, regenerate types), port collisions, a wedged stack, a Docker daemon that is down, and how to wipe volumes. Added by M2-T11. |
+| [`inspecting-a-run.md`](inspecting-a-run.md) | `pnpm harness run show <run-id>`: reading a run's job, route, timeline, calls, errors, result, cost and fingerprints back from Supabase or from a local JSONL trace, with sample output, exit codes and the two failure messages. Added by M2-T10. |
 
 ## Runbook: verify the repository
 
@@ -47,6 +48,5 @@ emergency. If you do, log the justification in `docs/progress/WORKLOG.md` in the
 
 ## Runbooks later milestones must add
 
-- Run inspector (`pnpm harness run show <run-id>`), Milestone 2.
 - Promotion runbook (how a human reviews and approves a candidate workflow for production),
   Milestone 9.

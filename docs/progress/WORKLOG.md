@@ -5764,3 +5764,397 @@ that is the intended behaviour rather than a defect.
 ### Next exact step
 
 Unchanged: **M2-T10, the local run inspector**.
+
+---
+
+## 2026-09-19 22:05 — M2-T10 — Local run inspector
+
+**Status:** started
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+Build the local run inspector the build plan specifies as
+`pnpm harness run show <run-id>`, displaying a run's job, route, timeline,
+tool/model/Jev calls, errors, result, cost and fingerprints. It is the last
+Milestone 2 task and the first command of the CLI the build plan's section 10
+calls "the initial control plane".
+
+Concretely: a new `@internal/observability` package holding a pure
+`inspectRun()` over the `Storage` port plus a plain-text renderer, a
+`parseTraceEvent()` read boundary in `@internal/core`, a credential-free JSONL
+trace source so a run is inspectable with no database at all, and a
+`node:util` `parseArgs` entry point wired to a root `pnpm harness` script.
+
+### Implementation references
+
+- package/version: Node **24.21.0** (`.node-version`, `.nvmrc`); pnpm
+  **12.4.2**. No new third-party dependency is added by this task.
+- installed docs read: `node --help` on the installed 24.21.0 for the
+  `--env-file` family; it lists both `--env-file=...` and
+  `--env-file-if-exists=...`, the latter being what
+  `apps/example-agent`'s `start` script already uses.
+- public types/exports inspected: `node:util`'s `parseArgs` on the installed
+  runtime, probed directly rather than from memory —
+  `parseArgs({ args, options: { json: { type: "boolean" }, jsonl: { type: "string" } }, allowPositionals: true, strict: true })`
+  returns `{ values, positionals }`, with
+  `["run","show","<id>","--json","--jsonl","p.jsonl"]` yielding
+  `positionals: ["run","show","<id>"]` and
+  `values: { json: true, jsonl: "p.jsonl" }`. `@types/node` 24.13.6 supplies
+  its types.
+- pnpm argument forwarding verified empirically, not assumed: a throwaway
+  package with `"harness": "echo building && node --env-file-if-exists=.env.local echo.js"`
+  invoked as `pnpm harness run show ID --json` appends the four arguments to
+  the **last** command of the `&&` chain and delivers
+  `["run","show","ID","--json"]` to `process.argv.slice(2)`. No `--` separator
+  is needed, and `run` is not swallowed as a pnpm builtin.
+- selected documented pattern: Node's built-in `parseArgs` in strict mode with
+  `allowPositionals: true`, as the CLI framework. AD-016 requires the choice be
+  recorded; ADR-0037 does that.
+- harness-owned: the `RunInspection` shape, its renderer, and the trace-only
+  JSONL source. Nothing about them is prescribed by a framework.
+
+### Next exact step
+
+Implement `parseTraceEvent()` in `@internal/core`, then the
+`@internal/observability` package, then the CLI, then verify against a real
+local Supabase run.
+
+---
+
+## 2026-09-20 00:20 — M2-T10 — Local run inspector
+
+**Status:** completed
+**Actor/session:** Claude Opus 5 (1M context) implementer subagent
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. The last Milestone 2 task: `pnpm harness run show <run-id>`,
+displaying a run's job, route, timeline, tool/model/Jev calls, errors, result, cost and
+fingerprints from durable evidence alone.
+
+### Implementation references
+
+As the `started` entry above (Node 24.21.0's `node:util` `parseArgs` probed on the installed
+runtime; `--env-file-if-exists` read off `node --help`; pnpm argument forwarding verified
+empirically). No new third-party dependency was added by this task.
+
+### Work completed
+
+- **New package `@internal/observability`** (`packages/observability`), the build plan's planned
+  `packages/observability`, modelled on `packages/trace`.
+  - `inspectRun(source, runId)` returns a `RunInspection`: a plain, JSON-able value whose fields
+    are the build plan's display list in the build plan's order. It accepts either a `Storage`
+    (reads `getRun`, `getJob`, and pages `getTrace` to completion through the keyset cursor) or a
+    `TraceOnlySource`. It never throws for absence: `found`, an `availability` triple and
+    human-readable `notes` describe a partial record instead.
+  - `renderRunInspection(inspection, { color?, summaryWidth? })` is a pure function from that value
+    to text: eight sections, fixed-width timeline columns, **no ANSI by default**.
+  - `createJsonlTraceSource(path)` is the trace-only source over a `.harness/traces/<runId>.jsonl`
+    file.
+  - `src/cli.ts` holds `parseHarnessCommand()` and `runHarnessCli()`, which take argv, environment,
+    output sinks and a store factory as arguments so the whole command is unit-testable with no
+    subprocess. `src/bin/harness.ts` is the four-line shell that supplies `process`.
+- **`parseTraceEvent()` added to `@internal/core`** (`src/trace.ts`, re-exported from `index.ts`),
+  beside `parseJob()` and `parseRunRecord()`, in the same style: every failing field reported at
+  once with its path, an unknown field an error rather than a drop, the result deep-frozen.
+  `version` is read rather than asserted (any integer >= 1), because a row from an older schema
+  must read back saying so.
+- **`packages/storage-supabase`'s `readTraceEvent` now calls it**, and is reduced to the
+  column-name mapping. Its own comment had said that a second reader is what would move those
+  checks into core; the inspector is that reader. Four imports the local checks needed
+  (`isTraceEventType`, `SerializedHarnessError`, `TRACE_EVENT_VERSION`, `TraceEventUsage`) are gone.
+- **`readJsonlTraceEvents(path)` added to `@internal/trace`** (`src/jsonl-source.ts`), in the module
+  beside the sinks that define the format, so "one canonical-JSON event per line" keeps one owner.
+  It parses every line through `parseTraceEvent`, skips blanks, sorts by `sequence`, throws a
+  `StorageError` naming the file it cannot read and a `ValidationError` naming the line that is not
+  an event.
+- **Root `package.json`**: a `harness` script (alphabetically between `format:check` and `lint`).
+  Turbo's output is redirected to **stderr** (`1>&2`) with `--output-logs=none`, so stdout carries
+  the inspection alone and `--json` pipes cleanly — without that redirect, turbo's banner is the
+  first thing `jq` sees.
+- **Boundaries**: `@internal/observability` added to `BOUNDARY_RULES.forbiddenByPackage` with
+  core's six bans, and to the workspace-discovery assertion in `package-boundaries.test.ts`.
+- **Docs**: new `docs/runbooks/inspecting-a-run.md` (registered in `docs/runbooks/README.md`, whose
+  "runbooks later milestones must add" entry for the inspector is removed);
+  `docs/development/commands.md` (the `pnpm harness` row and the per-package script row);
+  `docs/architecture/system-map.md` (the planned row flipped, a prose entry, and the stale "Six
+  packages" count corrected to nine); `docs/contracts/trace-event.md` (a "Reading an event back"
+  section and a table row for `parseTraceEvent`); `docs/contracts/storage.md` (the inspector named
+  as the port's first read-only consumer); `docs/contracts/README.md` (the `trace-event.md`
+  summary); **ADR-0037** and its row plus closing paragraph in `docs/decisions/README.md`.
+- **Milestone status**: `### M2-T10`'s `**Status:**` and `**Result.**`, and the "A failed run
+  remains inspectable" acceptance bullet extended with the inspector's evidence.
+
+### Files changed
+
+Added:
+
+- `packages/observability/package.json`, `tsconfig.json`, `tsconfig.build.json`
+- `packages/observability/src/inspect-run.ts`, `render.ts`, `jsonl-trace-source.ts`, `cli.ts`,
+  `index.ts`, `bin/harness.ts`
+- `packages/observability/src/fixtures.ts` (test-only; excluded from `tsconfig.build.json`)
+- `packages/observability/src/inspect-run.test.ts`, `render.test.ts`, `jsonl-trace-source.test.ts`,
+  `cli.test.ts`, `run-inspector.integration.test.ts`
+- `packages/trace/src/jsonl-source.ts`, `jsonl-source.test.ts`
+- `docs/decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md`
+- `docs/runbooks/inspecting-a-run.md`
+
+Changed:
+
+- `packages/core/src/trace.ts` (`parseTraceEvent` and its helpers), `trace.test.ts`, `index.ts`
+- `packages/storage-supabase/src/supabase-storage.ts` (`readTraceEvent`, imports, module doc)
+- `packages/trace/src/index.ts`
+- `tests/architecture/boundaries.ts`, `tests/architecture/package-boundaries.test.ts`
+- `package.json` (the `harness` script), `pnpm-lock.yaml`
+- `docs/contracts/README.md`, `docs/contracts/storage.md`, `docs/contracts/trace-event.md`
+- `docs/architecture/system-map.md`, `docs/development/commands.md`, `docs/runbooks/README.md`
+- `docs/decisions/README.md`
+- `docs/milestones/m2-job-trace-supabase-and-run-ledger.md` (the `### M2-T10` body and one
+  acceptance bullet only)
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+Ordered as run.
+
+- `pnpm exec vitest run --project unit packages/observability` — **PASS**, 52 tests in 4 files.
+- `pnpm exec vitest run --project unit packages/core packages/storage-supabase packages/trace` —
+  **PASS**, including 15 new `parseTraceEvent` cases and 8 new `readJsonlTraceEvents` cases.
+- `pnpm supabase:start` — exit 0.
+- `set -a; . ./.env.local; set +a; pnpm example:run:mock` — exit 0, `"status": "completed"`, run
+  `01a0bd00-3903-7001-9ee5-c9d68f7ecb3b` written to Supabase and to
+  `apps/eve-fixture-agent/.harness/traces/01a0bd00-3903-7001-9ee5-c9d68f7ecb3b.jsonl`.
+- `pnpm harness run show 01a0bd00-3903-7001-9ee5-c9d68f7ecb3b` — **PASS**, exit 0. Full output
+  (turbo's banner, which goes to stderr, omitted):
+
+  ```text
+  run 01a0bd00-3903-7001-9ee5-c9d68f7ecb3b
+  read from the Storage port
+
+  Job
+  ───
+    id:            01a0bd00-3903-7000-88ed-59a63cab5fb3
+    domain:        vendor-triage@1.0.0
+    type:          vendor-triage
+    objective:     Triage Northwind Ledger against the supplied procurement SOP and recommend what should happen next.
+    input schema:  vendor-triage.input@1.0.0
+    output schema: vendor-triage.output@1.0.0
+    sop:           procurement-sop
+    budget:        {"maxDurationMs":120000,"maxModelCalls":8,"maxToolCalls":8}
+    permissions:   lookup_vendor_evidence:read, load_skill:read
+    input:
+      {
+        "vendorName": "Northwind Ledger",
+        "procurementSop": "# Procurement SOP v1.0\n\n## Categories\n\nClassify every vendor as one of: fi…
+      }
+
+  Route
+  ─────
+    route:     full-agent
+    domain:    vendor-triage@1.0.0
+    job type:  vendor-triage
+    target:    @internal/eve-fixture-agent
+    runtime:   eve@0.63.0
+    attempt:   1
+    fallbacks: 0 (from the ledger)
+
+  Timeline
+  ────────
+     seq       +ms  type                  latency  detail
+       0         0  run.started                 -  attempt=1 domain=vendor-triage domainVersion=1.0.0 jobI…
+       1        90  agent.started               -  eveEventId=evt_01M2YG0EBTCMBM3107CE7W1J72 runtime=eve s…
+       2        91  model.started               -  eveEventId=evt_01M2YG0EBVGMMNGDH4MPS51N6G modelId=adapt…
+       3        98  model.completed             7  eveEventId=evt_01M2YG0EC2NKRRRYG8DXWBYAKH finishReason=…
+       4       104  agent.completed            14  eveEventId=evt_01M2YG0EC8TZWPQCH4FHXPZFPN turnId=turn_0
+       5       110  run.completed             137  jobId=01a0bd00-3903-7000-88ed-59a63cab5fb3
+
+  Calls
+  ─────
+    model:   1 call, 7 ms total
+      seq   2  adaptive-agent-harness/harness-fixture  completed       7 ms
+    tool:    0
+    jev:     0
+    jev: 0 is a real measurement, not a gap: the `decision.*` taxonomy exists and nothing produces one until M3 adds the Jev decision engine.
+
+  Errors
+  ──────
+    none
+
+  Result
+  ──────
+    status:   completed (from the ledger)
+    success:  true
+    started:  2026-09-20T04:08:23.557Z
+    finished: 2026-09-20T04:08:23.694Z
+    latency:  137 ms
+    output:   (none) not persisted in Milestone 2: `HarnessRunResult.output` is returned in process, and a trace payload is identity-only by rule (ADR-0031), so no durable record of it exists. The `artifacts` table is where a durable output goes; M5 is what fills it.
+
+  Cost
+  ────
+    cost (ledger): (none)
+    cost (trace):  (none)
+    model calls:   1
+    tool calls:    0
+    jev calls:     0
+    input tokens:  612
+    output tokens: 61
+    cache read:    0
+    cache write:   0
+    total tokens:  673
+
+  Fingerprints
+  ────────────
+    run (ledger):   sha256:c0ab81341295c36655b5c4614d9352bd29deec74c7d75f65c82b8dd33f0f8c2d
+    agent version:  sha256:c0ab81341295c36655b5c4614d9352bd29deec74c7d75f65c82b8dd33f0f8c2d
+    trace:          sha256:c0ab81341295c36655b5c4614d9352bd29deec74c7d75f65c82b8dd33f0f8c2d
+    consistent:     yes, every event carries the run's fingerprint
+    scheme:         1
+    algorithm:      sha256
+    components:
+      sop:          sha256:720f6cb18cc5ec619ed0f92da4dbd30930c0b2cf174a4a3b0f18b0f25599431f
+      model:        sha256:fad1b415f49984cc1802629c9ff6688ab85a85ff949b5c4db49b0a5abde39b1b
+      tools:        sha256:021f9fa5a44613ec60d139d04ca046c1be21f96cc6a19f2b1d11d2238796fdba
+      policy:       sha256:a8b6b14f75fb81d9144f6182f1d94210e2e4af7afc38870b62c7632171f3ab7a
+      skills:       sha256:d46c489df163105874be323e980c7c9f9dcda8700b7ddba0e884b44cf33266e7
+      schemas:      sha256:11a3258dbc9b7351c6df986de2b7b4a96bb6c11ec14605db154082e6062f9f3d
+      workflowIr:   sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b
+      instructions: sha256:d57880944e71ac43a61c6b749e702f0067256c4ceaa14d9cb4b9691569977070
+  ```
+
+  The composite matches the one M2-T8 recorded for this agent
+  (`sha256:c0ab8134…`), and `agent_version`, the ledger fingerprint and every event agree.
+
+- `pnpm harness run show <id> --json | head -c 400` — **PASS**, exit 0, and **stdout is clean**:
+
+  ```json
+  {
+    "runId": "01a0bd00-3903-7001-9ee5-c9d68f7ecb3b",
+    "source": "storage",
+    "sourceDescription": "the Storage port",
+    "found": true,
+    "availability": {
+      "run": true,
+      "job": true,
+      "trace": true
+    },
+    "notes": [],
+    "job": {
+      "id": "01a0bd00-3903-7000-88ed-59a63cab5fb3",
+  ```
+
+- `set -a; . ./.env.local; set +a; pnpm test:integration` — **PASS**, 34 tests in 2 files, the
+  three new `run-inspector.integration.test.ts` cases included (a completed run, a failed run, and
+  Postgres-versus-in-memory agreement). This is the Supabase leg run for real, not skipped.
+- `pnpm harness run show <id> --jsonl apps/eve-fixture-agent/.harness/traces/<id>.jsonl` —
+  **PASS**, exit 0, with no Supabase read. Differences from the Supabase output, all of them
+  correct:
+
+  ```text
+  run 01a0bd00-3903-7001-9ee5-c9d68f7ecb3b
+  read from the JSONL trace /Users/.../apps/eve-fixture-agent/.harness/traces/01a0bd00-3903-7001-9ee5-c9d68f7ecb3b.jsonl
+  note: job and ledger row unavailable (trace-only source)
+
+  Job
+  ───
+    (unavailable)
+
+  Route
+  ─────
+    route:     full-agent
+    domain:    vendor-triage@1.0.0
+    job type:  vendor-triage
+    target:    (none)
+    runtime:   (none)
+    attempt:   (none)
+    fallbacks: 0 (from the trace)
+  ```
+
+  The Timeline, Calls, Errors, Cost tokens and Fingerprints sections are byte-identical to the
+  Supabase run's, and `status: completed (from the trace)` is derived from `run.completed`.
+  `run (ledger)` and `agent version` read `(none)`, which is the truth for a trace-only source.
+
+- Unknown run id: `pnpm harness run show 01a0bd00-0000-7001-9ee5-000000000000` — **PASS**,
+  `run 01a0bd00-0000-7001-9ee5-000000000000 not found` on stderr, **exit 1**.
+- `pnpm harness workflow list` — **PASS**, **exit 2**, printing
+  `` `harness workflow list` is not implemented `` and the build plan's fourteen section-10
+  targets, each marked `available now` or `not yet implemented (Mx)`.
+- No source at all (both Supabase variables unset, no `--jsonl`) — **PASS**, **exit 2**, naming
+  both options and pointing at `docs/runbooks/supabase-local.md`.
+- `pnpm supabase:stop` — exit 0. **Supabase left stopped.**
+- Configured-but-unreachable, Supabase now stopped and `.env.local` still present — **PASS**,
+  **exit 1**, one line and no stack:
+
+  ```text
+  Supabase storage is configured (SUPABASE_URL=http://127.0.0.1:54321) but unreachable: supabase storage: `getRun` failed: TypeError: fetch failed
+
+  Start it with `pnpm supabase:start`, or inspect the run's local JSONL trace with
+  `pnpm harness run show <run-id> --jsonl <path>` instead.
+
+  See docs/runbooks/supabase-local.md.
+  ```
+
+- `pnpm check` (Supabase stopped) — **PASS**, all six stages.
+  `Test Files 51 passed | 2 skipped (53)`, `Tests 876 passed | 43 skipped (933)`,
+  `check:handoff — OK`.
+
+### Decisions / deviations
+
+- **`node:util` `parseArgs` is the CLI framework**, recorded in ADR-0037 as AD-016 requires. No
+  dependency added. Probed on the installed runtime rather than recalled.
+- **The CLI entry point lives in `packages/observability`**, not a `packages/cli` the build plan's
+  section 4 layout does not name; section 10 says to build the CLI incrementally and a later ADR
+  can split it. Only `src/cli.ts` — which `src/index.ts` does not re-export — depends on
+  `@internal/storage-supabase`, so the library surface stays adapter-free and the database is still
+  reached only through the declared adapter.
+- **The JSONL reader went into `@internal/trace`, not the inspector.** The format is defined by
+  that package's sinks; a reader stating it a second time would drift. Only the run filter and the
+  source description stayed in `@internal/observability`.
+- **Turbo's output is redirected to stderr in the `harness` script.** Without `1>&2` the banner is
+  on stdout and `--json | jq` fails. `--output-logs=none` additionally silences the per-task lines.
+  This differs from `pnpm example:run`'s script, deliberately: that command's stdout is not a
+  machine-readable document.
+- **`RunInspection` has no `job.behaviorFingerprint` field**, because `Job` has none. The task
+  brief named one; the fingerprints section reports the ledger row's `behaviorFingerprint`, its
+  `agentVersion`, the composite every event carries, the `run.started` payload's `scheme`,
+  `algorithm` and eight component digests, and a `consistent` boolean with the sequences that
+  disagree.
+- **`cost.tracedCostUsd` sums the run's non-`run.*` events only.** A `run.*` event carries the
+  run's totals rather than its own usage (`TraceEventUsage`), so the first implementation summed
+  everything and reported double. A unit test caught it.
+- **The text renderer abbreviates a job's `input`** to twenty lines of at most a hundred characters
+  each, with a pointer to `--json`. The vendor-triage input is a whole SOP in one string and would
+  otherwise push every section below it off the screen. `inspectRun` itself is untouched; only the
+  view is short.
+- **`src/fixtures.ts` is excluded from `tsconfig.build.json`** alongside the tests. It builds a
+  real `createHarness()` run recorded through the real writer chain, which every test in the
+  package starts from; a hand-written `RunRecord` and event list would have tested the inspector
+  against an imagined shape rather than against what the harness writes.
+- One unrelated typecheck defect was fixed in passing: a new `trace.test.ts` case passed
+  `{ tool: … }` to `ToolExecutionError`, whose option is `toolId`. Vitest transpiles rather than
+  typechecks, so only `pnpm typecheck` caught it.
+
+### Known issues / blockers
+
+- `pnpm harness` rebuilds the package on every invocation. It is a warm turbo cache hit (about
+  10 ms) but it is not nothing, and a `node packages/observability/dist/bin/harness.js` invocation
+  skips it when the build is known current.
+- The inspector cannot show a run's **output value** in Milestone 2; nothing persists one. It says
+  so and names the `artifacts` table. M5.
+- `parseArgs` has no subcommand model. The dispatch is hand-written positional matching, which is
+  fine for one command and will not be at ten; ADR-0037 names that as the point to revisit both the
+  framework and a `packages/cli`.
+- The M2 acceptance bullet **"A trace reconstructs execution without application logs"** was
+  verified by M2-T5 and is not edited here, though the inspector is now a second and stronger
+  witness for it. Left to the milestone sweep, which owns the acceptance section.
+- `docs/development/commands.md` still contains a stale line from M0 ("There is no `pnpm
+  example:run` yet") and an `example:run` paragraph interrupting the script table. Both predate
+  this task and belong to whoever owns that file next.
+
+### Next exact step
+
+**Milestone 2 is feature-complete**: M2-T1 through M2-T11 are all `completed`. Next is the M2
+acceptance-criteria sweep and the milestone snapshot under `docs/progress/milestones/m2.md`, then
+Milestone 3.

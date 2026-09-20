@@ -591,7 +591,7 @@ from [`../contracts/errors.md`](../contracts/errors.md).
 
 ### M2-T10, Local run inspector
 
-**Status:** in_progress.
+**Status:** completed (2026-09-20).
 
 CLI:
 
@@ -609,6 +609,71 @@ Display:
 - result
 - cost
 - fingerprints
+
+**Result.** The build plan's eight display items are the eight fields of one value. `inspectRun()`
+in the new `@internal/observability` package gathers a run into a `RunInspection` — plain,
+JSON-able, in the plan's order — and `renderRunInspection()` turns that value into text, so
+`--json` and the human form are two views of one thing rather than two implementations free to
+disagree. Nothing in the inspector reads anything but the `Storage` port or a JSONL trace file: no
+log, no stdout capture, no running agent. That is what makes "a trace reconstructs execution
+without application logs" a command anyone can run rather than a claim in a document.
+
+**Partial evidence is inspectable, and says what is missing.** A run with no ledger row, a ledger
+row with no trace, and a trace-only file each produce an inspection carrying `found`, an
+`availability` triple and human-readable notes; only a run with neither a row nor a single event is
+`found: false`. The case ADR-0036's write ordering actually produces — a crash leaving a `running`
+row and no terminal event — prints the row and `no trace events for this run`. `inspectRun()` never
+throws for absence, and does propagate a `StorageError` or a `ValidationError`, because those mean
+the evidence itself is untrustworthy.
+
+The CLI is `pnpm harness run show <run-id>`, built on Node 24's built-in `node:util` `parseArgs` in
+strict mode with **no dependency added**; AD-016 required the choice be recorded, and ADR-0037 does
+that along with why the entry point lives in `packages/observability` rather than in a
+`packages/cli` the build plan's layout does not name. pnpm forwards the positional arguments with
+no `--` separator (verified empirically against a throwaway script before the real one was
+written), and turbo's build output is redirected to stderr so `--json` pipes cleanly. `--jsonl
+<path>` reads `.harness/traces/<runId>.jsonl` instead, so a run is inspectable with **no database,
+no key and no Docker** — north-star invariant 15, and the case that matters most, because the run
+whose storage write failed is the one you most want to read. Exit codes are 0, 1 (not found, or a
+configured store unreachable) and 2 (usage); an unknown subcommand prints section 10's whole target
+list marked with what is implemented.
+
+`parseTraceEvent()` moved into `@internal/core`, beside `parseJob()` and `parseRunRecord()`. The
+Supabase adapter's private `readTraceEvent` had carried a comment saying that if a second reader
+ever needed those checks they belonged in core; the inspector is that reader, so they moved, and
+the adapter's function is now the column-name mapping alone. A hand-edited row and a hand-edited
+JSONL line now fail identically. Reading a JSONL trace back is `readJsonlTraceEvents()` in
+`@internal/trace`, in the module beside the sinks that define the format, so "one canonical-JSON
+event per line" keeps exactly one owner.
+
+**Two routes to one cost.** The inspection reports the ledger's `costUsd` beside the same figure
+summed from the run's own span events, because `TraceEventUsage` promises those agree and a
+disagreement is a finding nobody would otherwise see. `run.*` events are excluded from that sum:
+they carry the run's totals, not their own usage, so including them doubled every figure — caught
+by a test, not by reading.
+
+**What the inspector cannot show is the run's output value**, and it says so rather than printing a
+blank: `HarnessRunResult.output` is returned in process and a trace payload is identity-only by
+rule (ADR-0031), so nothing durable holds it. The `artifacts` table (M2-T6) is where it belongs and
+M5 is what fills it.
+
+Verified against a real local Supabase, not only in memory: `pnpm example:run:mock` wrote run
+`01a0bd00-3903-7001-9ee5-c9d68f7ecb3b`, and `pnpm harness run show` on it printed all eight
+sections with the six-event timeline, the one model call paired to its `model.completed`,
+612/61/673 tokens, `(none)` for a cost the mock model never reported, and
+`consistent: yes, every event carries the run's fingerprint` over the eight component digests.
+`--json` piped cleanly; `--jsonl` on the same run's trace file printed the same timeline, calls,
+tokens and digests with `job and ledger row unavailable (trace-only source)`. An unknown id exits 1
+with `run <id> not found`, `pnpm harness workflow list` exits 2 with the target list, and with
+Supabase stopped the command prints `apps/example-agent/src/run.ts`'s one-line
+configured-but-unreachable message and exits 1. Tests: 52 unit cases in the new package plus 15 for
+`parseTraceEvent` and 8 for the JSONL reader, and a three-case integration leg that writes runs
+through the real harness and adapter and reads them back, which skips with a printed reason when
+the Supabase variables are absent.
+
+Recorded in
+[ADR-0037](../decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md);
+operated per [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md).
 
 ### M2-T11, Reproducible local Supabase environment
 
@@ -783,7 +848,11 @@ From the build plan.
   recorded as `aborted` with `success = null` rather than as a failure, so a cancellation is not
   filed as a defect. The stronger case is a crash: because `startRun` runs before the first trace
   event, a process that dies mid-run leaves a `running` row rather than nothing, which is asserted
-  by the "does not write the outcome when flushing the trace fails" case.
+  by the "does not write the outcome when flushing the trace fails" case; also verified through the
+  inspector (M2-T10), which prints a failed run's error twice over — from the `*.failed` events and
+  from the ledger row — and which is required never to throw for a partial record, so the
+  `running`-row-with-no-trace case renders as the row plus `no trace events for this run` rather
+  than as an error.
 - Storage failures cannot silently turn into successful runs. **verified 2026-09-19** (M2-T5,
   M2-T7): a `Storage` whose `saveJob`, `startRun` or `finishRun` throws makes `harness.run()`
   **reject** with a `StorageError` rather than return any result, asserted for all three

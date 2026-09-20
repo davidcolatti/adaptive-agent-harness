@@ -165,7 +165,7 @@ Rules, as the plan states them:
 
 ## Current state (Milestone 1, in progress)
 
-Six packages and two applications exist. Everything else in the repository layout is planned.
+Nine packages and two applications exist. Everything else in the repository layout is planned.
 
 - `packages/config` (`@internal/config`) holds the shared TypeScript config bases
   (`tsconfig.base.json`, `tsconfig.package.json`). It contains no runtime code and no `src/`
@@ -341,6 +341,22 @@ Six packages and two applications exist. Everything else in the repository layou
   register as drift in the CI job whose whole purpose is to detect drift. `biome.json` carries an
   `overrides` entry disabling the **formatter** for that one path, because the generator's output
   omits the semicolons Biome's formatter would add; linting still applies to it.
+- `packages/observability` (`@internal/observability`) was created by M2-T10 and holds the read side
+  of everything Milestone 2 built: `inspectRun()`, which gathers a run's job, route, timeline,
+  model/tool/Jev calls, errors, result, cost and fingerprints into one plain JSON `RunInspection`;
+  `renderRunInspection()`, a pure function from that value to text; `createJsonlTraceSource()`, a
+  trace-only source over a `.harness/traces/<runId>.jsonl` file; and the `harness` CLI at
+  `src/bin/harness.ts`, built on Node's `node:util` `parseArgs` with no dependency added.
+
+  It is **not** an adapter. `inspectRun()` takes the `Storage` port, so the in-memory implementation
+  and the Supabase one are equally valid sources, and `BOUNDARY_RULES.forbiddenByPackage` gives the
+  package the same bans `@internal/core` and `@internal/trace` carry. The one module that turns
+  `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` into a concrete store is `src/cli.ts`, which only
+  `src/bin/harness.ts` imports and which `src/index.ts` does not re-export, so the database is still
+  reached only through `@internal/storage-supabase` and importing the inspector never drags a
+  database client in. Recorded in
+  [ADR-0037](../decisions/0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md),
+  operated per [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md).
 - `supabase/` at the repository root is the committed local-database definition, added by M2-T11:
   `config.toml` (the CLI's 2.117.0 defaults, with `project_id = "adaptive-agent-harness"`),
   `migrations/` (five committed migrations from M2-T6, creating M2-T5's thirteen tables in
@@ -369,7 +385,7 @@ plan's milestone sections.
 | `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
 | `packages/trace` | exists (M2-T4, M2-T9): `createBufferedTraceWriter()`, `TraceSink`, the in-memory and JSONL sinks, and the redaction layer above them |
 | `packages/storage-supabase` | exists (M2-T11 generated types; M2-T5 `createSupabaseStorage()`) |
-| `packages/observability` | planned (M2) |
+| `packages/observability` | exists (M2-T10): `inspectRun()`, `renderRunInspection()`, the JSONL trace source, and the `harness` CLI |
 | `packages/decision-jev` | planned (M3) |
 | `packages/workflow` | planned (M4) |
 | `packages/replay` | planned (M6) |

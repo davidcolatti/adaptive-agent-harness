@@ -23,6 +23,7 @@ which mode it was in; see [`../runbooks/supabase-local.md`](../runbooks/supabase
 | `pnpm dev` | `turbo run dev` | Start every package's watch build (`tsc --watch`). Persistent and uncached. |
 | `pnpm format` | `biome format --write .` | Rewrite files to Biome's formatting. Use while editing; this is the fix-it counterpart of `format:check`. |
 | `pnpm format:check` | `biome format .` | Formatting check only, no writes. First stage of `pnpm check`; fails on an unformatted file. |
+| `pnpm harness` | `turbo run build --filter=@internal/observability --output-logs=none 1>&2 && node --env-file-if-exists=.env.local packages/observability/dist/bin/harness.js` | The harness CLI (M2-T10). Today it has one command, `pnpm harness run show <run-id>`, the local run inspector: it prints a run's job, route, timeline, model/tool/Jev calls, errors, result, cost and fingerprints, read from Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, or from `--jsonl <path>` with no database at all. `--json` prints the whole `RunInspection`; turbo's build output goes to stderr so that pipe is clean. Exits 1 for a run that is not found or a store that is unreachable, 2 for a usage error. See [`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md). |
 | `pnpm lint` | `biome check --formatter-enabled=false .` | Biome's linter plus the `organizeImports` assist, with formatting deliberately switched off so lint and format fail for distinct reasons. |
 | `pnpm prepare` | `husky` | Installs the git hooks. You never run this by hand: pnpm runs it automatically after `pnpm install`. |
 | `pnpm supabase:reset` | `supabase db reset` | Drop and recreate the local database, apply every migration in `supabase/migrations/`, then run `supabase/seed.sql`. The reproducibility gate: it is what proves the committed migrations create a clean database from zero. Needs the stack running. |
@@ -64,6 +65,7 @@ Each workspace package declares its own scripts, and any of them can be run in i
 | `@internal/config` | none (it ships only shared tsconfig bases, no runtime code) |
 | `@internal/storage-supabase` | `build`, `dev`, `typecheck` |
 | `@internal/trace` | `build`, `dev`, `typecheck` |
+| `@internal/observability` | `build`, `dev`, `typecheck` |
 | `@internal/example-agent` | `build`, `dev`, `info`, `typecheck` |
 
 For every package, `build` is `tsc -p tsconfig.build.json`, `dev` is the same with

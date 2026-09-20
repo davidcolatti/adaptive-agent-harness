@@ -113,6 +113,14 @@ export const BOUNDARY_RULES: BoundaryRules = {
     // When M2-T5 adds a Supabase sink, that sink belongs in
     // `@internal/storage-supabase`, which is already a declared adapter.
     "@internal/trace": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
+    // `@internal/observability` (M2-T10) is the run inspector and the CLI that
+    // fronts it. It is **not** an adapter: `inspectRun()` reads the `Storage`
+    // port, so it carries the same bans core does. It does depend on
+    // `@internal/storage-supabase`, which is a workspace package rather than an
+    // adapter-only third-party surface, and only from its `bin` entry point —
+    // that is how the CLI reaches a real database without becoming the second
+    // place in the repository that talks to one. ADR-0037 records it.
+    "@internal/observability": ["eve", "@supabase/*", "ai", "@ai-sdk/*", "workflow", "@vercel/*"],
   },
 };
 

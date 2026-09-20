@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Build configuration: emits dist/ and deliberately does NOT enable the
+  // "@internal/source" condition, so a package compiles against its
+  // dependencies' built .d.ts files. That is why turbo's `build` task depends
+  // on `^build`.
+  "extends": "@internal/config/tsconfig.package.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  // `fixtures.ts` builds a real recorded run for the co-located tests. It is
+  // excluded for the same reason the tests are: it is not part of the package.
+  "exclude": ["src/**/*.test.ts", "src/fixtures.ts"]
+}

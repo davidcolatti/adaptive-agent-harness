@@ -1,7 +1,9 @@
-import type { SerializedHarnessError } from "./errors.js";
+import type { SerializedHarnessError, ValidationIssue } from "./errors.js";
 import { ValidationError } from "./errors.js";
-import { newTraceEventId, type RunId, type TraceEventId } from "./ids.js";
-import type { JsonObject } from "./json.js";
+import { deepFreeze } from "./freeze.js";
+import { throwIfIssues } from "./identifiers.js";
+import { newTraceEventId, parseEntityId, type RunId, type TraceEventId } from "./ids.js";
+import { isJsonObject, isPlainObject, type JsonObject } from "./json.js";
 
 /**
  * The trace contract (M2-T3) and the run-scoped recorder that mints its events
@@ -581,4 +583,233 @@ function elapsed(startedAt: number, endTimestamp: string): number | null {
   }
 
   return endedAt - startedAt;
+}
+
+/** The fourteen fields a {@link TraceEvent} has, and the only ones accepted. */
+const TRACE_EVENT_FIELDS = [
+  "id",
+  "runId",
+  "attempt",
+  "sequence",
+  "timestamp",
+  "type",
+  "parentId",
+  "node",
+  "version",
+  "behaviorFingerprint",
+  "payload",
+  "usage",
+  "latencyMs",
+  "error",
+] as const;
+
+/** The seven optional numeric fields {@link TraceEventUsage} may carry. */
+const TRACE_EVENT_USAGE_FIELDS = [
+  "modelCalls",
+  "toolCalls",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "costUsd",
+] as const;
+
+function unknownKeyIssues(
+  record: { readonly [key: string]: unknown },
+  allowed: readonly string[],
+  path: readonly (string | number)[],
+): ValidationIssue[] {
+  return Object.keys(record)
+    .filter((key) => !allowed.includes(key))
+    .map((key) => ({ path: [...path, key], message: "unknown field" }));
+}
+
+/** Re-path a thrown `ValidationError`'s issues, the way `parseJob` does. */
+function thrownIssues(check: () => void, path: readonly (string | number)[]): ValidationIssue[] {
+  try {
+    check();
+    return [];
+  } catch (error) {
+    if (!(error instanceof ValidationError)) {
+      throw error;
+    }
+
+    return error.issues.map((issue) => ({ path: [...path], message: issue.message }));
+  }
+}
+
+function usageIssues(value: unknown, path: readonly (string | number)[]): ValidationIssue[] {
+  if (!isPlainObject(value)) {
+    return [{ path: [...path], message: "expected a usage object or null" }];
+  }
+
+  const issues: ValidationIssue[] = [...unknownKeyIssues(value, TRACE_EVENT_USAGE_FIELDS, path)];
+
+  for (const field of TRACE_EVENT_USAGE_FIELDS) {
+    const held = value[field];
+
+    // Absent is not zero (see {@link TraceEventUsage}), so `undefined` passes
+    // and only a present non-number fails.
+    if (held !== undefined && (typeof held !== "number" || !Number.isFinite(held))) {
+      issues.push({ path: [...path, field], message: "expected a finite number" });
+    }
+  }
+
+  return issues;
+}
+
+function readUsage(value: { readonly [key: string]: unknown }): TraceEventUsage {
+  const usage: { -readonly [TField in keyof TraceEventUsage]: TraceEventUsage[TField] } = {};
+
+  for (const field of TRACE_EVENT_USAGE_FIELDS) {
+    const held = value[field];
+
+    if (typeof held === "number") {
+      usage[field] = held;
+    }
+  }
+
+  return usage;
+}
+
+/**
+ * Turn an untrusted value into a {@link TraceEvent}, or throw explaining why it
+ * is not one.
+ *
+ * The same read boundary `parseJob()` is for jobs and `parseRunRecord()` is for
+ * ledger rows, and it exists for the same reason: an event coming back out of a
+ * database row, a JSONL line or frozen replay evidence is an `unknown` claiming
+ * to be a trace event, and asserting the claim is not checking it. Nothing
+ * *writes* through here — {@link TraceRecorder.record} is the only minter — so
+ * this is purely the direction an inspector (M2-T10), a replay harness (M6) and
+ * a storage adapter read in.
+ *
+ * Every problem is reported at once, each with the path to the field that
+ * caused it, and an unknown field is an error rather than something to drop: an
+ * event this version does not understand was not written by this version.
+ *
+ * **`version` is read, not asserted.** Any integer of at least 1 is accepted
+ * and returned as written, because a row produced by an older schema must read
+ * back saying which schema it was; rejecting it here would make the field
+ * pointless. The cast narrows to the current literal because that is the only
+ * version that exists; a second version is a contract change that gives this a
+ * real branch.
+ *
+ * The returned event is deep-frozen, because a trace is append-only and an
+ * event read back is as immutable as the run it describes.
+ *
+ * @throws {ValidationError} listing every field that failed.
+ */
+export function parseTraceEvent(
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): TraceEvent {
+  if (!isPlainObject(value)) {
+    throw new ValidationError("parseTraceEvent: value is not a trace event", {
+      issues: [{ path: [...path], message: "expected a trace event object" }],
+    });
+  }
+
+  const issues: ValidationIssue[] = [...unknownKeyIssues(value, TRACE_EVENT_FIELDS, path)];
+
+  issues.push(
+    ...thrownIssues(() => {
+      parseEntityId("trace-event", value.id);
+    }, [...path, "id"]),
+    ...thrownIssues(() => {
+      parseEntityId("run", value.runId);
+    }, [...path, "runId"]),
+  );
+
+  if (!Number.isInteger(value.attempt) || (value.attempt as number) < 1) {
+    issues.push({ path: [...path, "attempt"], message: "expected an integer >= 1" });
+  }
+
+  if (!Number.isInteger(value.sequence) || (value.sequence as number) < 0) {
+    issues.push({ path: [...path, "sequence"], message: "expected an integer >= 0" });
+  }
+
+  if (
+    typeof value.timestamp !== "string" ||
+    value.timestamp === "" ||
+    !Number.isFinite(Date.parse(value.timestamp))
+  ) {
+    issues.push({ path: [...path, "timestamp"], message: "expected an ISO 8601 timestamp" });
+  }
+
+  if (!isTraceEventType(value.type)) {
+    issues.push({
+      path: [...path, "type"],
+      message: `expected one of ${TRACE_EVENT_TYPES.join(", ")}`,
+    });
+  }
+
+  if (value.parentId !== null) {
+    issues.push(
+      ...thrownIssues(() => {
+        parseEntityId("trace-event", value.parentId);
+      }, [...path, "parentId"]),
+    );
+  }
+
+  if (value.node !== null && (typeof value.node !== "string" || value.node === "")) {
+    issues.push({ path: [...path, "node"], message: "expected a non-empty string or null" });
+  }
+
+  if (!Number.isInteger(value.version) || (value.version as number) < 1) {
+    issues.push({ path: [...path, "version"], message: "expected an integer >= 1" });
+  }
+
+  if (
+    value.behaviorFingerprint !== null &&
+    (typeof value.behaviorFingerprint !== "string" || value.behaviorFingerprint === "")
+  ) {
+    issues.push({
+      path: [...path, "behaviorFingerprint"],
+      message: "expected a non-empty string or null",
+    });
+  }
+
+  if (!isJsonObject(value.payload)) {
+    issues.push({ path: [...path, "payload"], message: "expected a JSON object" });
+  }
+
+  if (value.usage !== null) {
+    issues.push(...usageIssues(value.usage, [...path, "usage"]));
+  }
+
+  if (
+    value.latencyMs !== null &&
+    (!Number.isInteger(value.latencyMs) || (value.latencyMs as number) < 0)
+  ) {
+    issues.push({ path: [...path, "latencyMs"], message: "expected an integer >= 0 or null" });
+  }
+
+  // As in `parseRunRecord`: the error is checked for being a JSON object and
+  // nothing more. Its shape is `SerializedHarnessError`, which ADR-0026 defines
+  // as a whitelist produced by `serializeError`, and re-deriving that whitelist
+  // here would be a second copy of it that drifts.
+  if (value.error !== null && !isJsonObject(value.error)) {
+    issues.push({ path: [...path, "error"], message: "expected a JSON object or null" });
+  }
+
+  throwIfIssues("parseTraceEvent: value is not a trace event", issues);
+
+  return deepFreeze({
+    id: parseEntityId("trace-event", value.id),
+    runId: parseEntityId("run", value.runId),
+    attempt: value.attempt as number,
+    sequence: value.sequence as number,
+    timestamp: value.timestamp as string,
+    type: value.type as TraceEventType,
+    parentId: value.parentId === null ? null : parseEntityId("trace-event", value.parentId),
+    node: value.node as string | null,
+    version: value.version as TraceEventVersion,
+    behaviorFingerprint: value.behaviorFingerprint as string | null,
+    payload: value.payload as JsonObject,
+    usage:
+      value.usage === null ? null : readUsage(value.usage as { readonly [key: string]: unknown }),
+    latencyMs: value.latencyMs as number | null,
+    error: value.error as SerializedHarnessError | null,
+  });
 }

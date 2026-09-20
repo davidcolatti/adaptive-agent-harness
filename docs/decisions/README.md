@@ -87,6 +87,7 @@ and related ADRs that motivated it.
 | [0034](0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md) | The behavior fingerprint is component-wise, hashes content not source, and is supplied by the domain | accepted |
 | [0035](0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md) | Redaction is a `TraceWriter` decorator placed before buffering | accepted |
 | [0036](0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md) | `Storage` is a core port over a Supabase schema, and `runs` is the ledger | accepted |
+| [0037](0037-the-run-inspector-is-a-library-over-the-storage-port-with-a-parseargs-cli.md) | The run inspector is a library over the `Storage` port, with a `parseArgs` CLI | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -240,3 +241,27 @@ is implemented in `packages/core/src/storage.ts` and `harness.ts`,
 `packages/storage-supabase/src/supabase-storage.ts`, `packages/trace/src/storage-sink.ts` and
 `fan-out-sink.ts`, `packages/testing/src/in-memory-storage.ts` and `supabase/migrations/`, and
 documented in `docs/contracts/storage.md`.
+
+Entry 0037 records M2-T10, the local run inspector, and with it the first command of the CLI the
+build plan's section 10 calls the initial control plane. The inspector is split in two on purpose:
+`inspectRun()` gathers a run into a plain JSON `RunInspection` whose fields are the build plan's
+display list in its order, and `renderRunInspection()` turns that value into text, so `--json` and
+the human form are two views of **one** value rather than two implementations free to drift. It
+reads the `Storage` port and a JSONL trace file and **nothing else**, which is what makes Milestone
+2's "a trace reconstructs execution without application logs" a demonstrable claim rather than an
+assertion; and it never throws for a run that is merely partial, which is what makes "a failed run
+remains inspectable" true of the case ADR-0036's write ordering actually produces — a crashed run
+with a `running` row and no terminal event. `parseTraceEvent()` moves into `@internal/core` beside
+`parseJob()` and `parseRunRecord()`, so a stored row and a hand-edited JSONL line now fail
+identically, and the Supabase adapter's private copy of those checks is reduced to a column-name
+mapping. Reading a JSONL trace back lives in `@internal/trace`, beside the sinks that define the
+format, so the line format keeps one owner. The CLI framework is Node's built-in `node:util`
+`parseArgs` in strict mode — no dependency added, recorded because AD-016 requires an unprescribed
+internal choice to be recorded — and the entry point lives in `packages/observability` rather than
+in a `packages/cli` the build plan's layout does not name; a later ADR splits it when there is more
+than one command. Only `src/cli.ts`, which the library surface does not export, turns the two
+Supabase variables into a store, so the database is still reached solely through the declared
+adapter. What the inspector cannot show in Milestone 2 is the run's **output value**, and it says so
+rather than printing a blank: nothing persists one, and the `artifacts` table is where M5 will put
+it. Implemented in `packages/observability/src/`, `packages/core/src/trace.ts` and
+`packages/trace/src/jsonl-source.ts`, and operated per `docs/runbooks/inspecting-a-run.md`.

@@ -35,6 +35,9 @@ export {
 export { createFanOutTraceSink } from "./fan-out-sink.js";
 export type { JsonlDirectoryTraceSink } from "./jsonl-sink.js";
 export { createJsonlDirectoryTraceSink, createJsonlFileTraceSink } from "./jsonl-sink.js";
+// Reading a JSONL trace back (M2-T10). The inverse of the sinks above, and in
+// this package for the same reason they are: the line format has one owner.
+export { readJsonlTraceEvents } from "./jsonl-source.js";
 export type {
   CreateRedactingTraceWriterOptions,
   RedactingTraceWriter,

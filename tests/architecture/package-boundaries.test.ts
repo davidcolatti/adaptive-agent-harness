@@ -82,6 +82,11 @@ describe("workspace dependency boundaries", () => {
       // ADR-0028 records why that makes it an `apps/*` domain consumer.
       "@internal/eve-fixture-agent",
       "@internal/example-agent",
+      // The local run inspector and the `harness` CLI (M2-T10). A non-adapter
+      // reading the `Storage` port, so it carries core's bans; it reaches a
+      // real database only by depending on `@internal/storage-supabase`, from
+      // its `bin` entry point alone. ADR-0037.
+      "@internal/observability",
       "@internal/runtime-ai-sdk",
       "@internal/runtime-eve",
       // The Supabase storage adapter (M2-T11). It holds only the generated

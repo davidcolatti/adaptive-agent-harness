@@ -107,7 +107,15 @@ One query-friendly row per run (M2-T7). The build plan's list is here in full,
 in real columns rather than a payload, because the point of the ledger is that
 cost, latency, success and lineage are answerable by `select` and `group by`
 without opening a JSON document. `parseRunRecord()` is the strict read boundary,
-the same thing `parseJob()` is for jobs.
+the same thing `parseJob()` is for jobs and `parseTraceEvent()` is for events.
+
+The port's first read-only consumer is the run inspector,
+`inspectRun()` in `@internal/observability` (M2-T10): it calls `getRun()`,
+`getJob()` and pages `getTrace()` to completion, and nothing else. It takes the
+port rather than an adapter, so it reads the in-memory implementation and the
+Supabase one identically, and
+[`../runbooks/inspecting-a-run.md`](../runbooks/inspecting-a-run.md) is how to
+run it.
 
 | Field | Column | Meaning and who fills it |
 |---|---|---|

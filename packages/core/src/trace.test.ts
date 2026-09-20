@@ -6,6 +6,7 @@ import {
   createNoopTraceWriter,
   createTraceRecorder,
   isTraceEventType,
+  parseTraceEvent,
   TRACE_EVENT_TYPES,
   TRACE_EVENT_VERSION,
   type TraceClock,
@@ -449,5 +450,152 @@ describe("createTraceRecorder: flush", () => {
     });
 
     await expect(recorder.flush()).rejects.toThrow("the sink is gone");
+  });
+});
+
+describe("parseTraceEvent", () => {
+  /** A real recorded event, so the round trip starts from what the harness writes. */
+  async function recordOne(
+    input: Parameters<ReturnType<typeof createTraceRecorder>["record"]>[0] = {
+      type: "run.started",
+      payload: { jobId: "j" },
+    },
+  ): Promise<TraceEvent> {
+    const recorder = createTraceRecorder({
+      runId: RUN_ID,
+      writer: createNoopTraceWriter(),
+      behaviorFingerprint: "sha256:abc",
+    });
+
+    return await recorder.record(input);
+  }
+
+  it("round-trips a recorded event through JSON unchanged", async () => {
+    const recorded = await recordOne();
+
+    const parsed = parseTraceEvent(JSON.parse(JSON.stringify(recorded)));
+
+    expect(parsed).toEqual(recorded);
+  });
+
+  it("round-trips an event carrying usage, latency and an error", async () => {
+    const recorder = createTraceRecorder({ runId: RUN_ID, writer: createNoopTraceWriter() });
+    const started = await recorder.span({ type: "model.started" });
+    const recorded = await started.end({
+      type: "model.failed",
+      payload: { modelId: "harness-fixture" },
+      usage: { modelCalls: 1, inputTokens: 12, outputTokens: 3, costUsd: 0.0004 },
+      latencyMs: 41,
+      error: serializeError(new ToolExecutionError("nope", { toolId: "echo" })),
+    });
+
+    const parsed = parseTraceEvent(JSON.parse(JSON.stringify(recorded)));
+
+    expect(parsed).toEqual(recorded);
+    expect(parsed.usage).toEqual({
+      modelCalls: 1,
+      inputTokens: 12,
+      outputTokens: 3,
+      costUsd: 0.0004,
+    });
+    expect(parsed.error?.code).toBe("TOOL_EXECUTION");
+  });
+
+  it("returns a deep-frozen event", async () => {
+    const parsed = parseTraceEvent(JSON.parse(JSON.stringify(await recordOne())));
+
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed.payload)).toBe(true);
+  });
+
+  it("rejects a type outside the closed taxonomy", async () => {
+    const event = { ...JSON.parse(JSON.stringify(await recordOne())), type: "eve.turn.started" };
+
+    expect(() => parseTraceEvent(event)).toThrow(ValidationError);
+    expect(() => parseTraceEvent(event)).toThrow(/is not a trace event/);
+  });
+
+  it.each([-1, 1.5, "0", null])("rejects sequence %p", async (sequence) => {
+    const event = { ...JSON.parse(JSON.stringify(await recordOne())), sequence };
+
+    expect(() => parseTraceEvent(event)).toThrow(ValidationError);
+  });
+
+  it("rejects an unknown field rather than dropping it", async () => {
+    const event = { ...JSON.parse(JSON.stringify(await recordOne())), spanId: "sp_1" };
+
+    try {
+      parseTraceEvent(event);
+      expect.unreachable("expected parseTraceEvent to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues).toContainEqual({
+        path: ["spanId"],
+        message: "unknown field",
+      });
+    }
+  });
+
+  it("reports every failing field at once, each with its path", async () => {
+    const event = {
+      ...JSON.parse(JSON.stringify(await recordOne())),
+      type: "not.a.type",
+      sequence: -3,
+      payload: "text",
+    };
+
+    try {
+      parseTraceEvent(event);
+      expect.unreachable("expected parseTraceEvent to throw");
+    } catch (error) {
+      const paths = (error as ValidationError).issues.map((issue) => issue.path.join("."));
+
+      expect(paths).toEqual(expect.arrayContaining(["type", "sequence", "payload"]));
+    }
+  });
+
+  it("rejects a value that is not an object at all", () => {
+    expect(() => parseTraceEvent("run.started")).toThrow(ValidationError);
+    expect(() => parseTraceEvent(null)).toThrow(ValidationError);
+  });
+
+  it("prefixes issue paths with the caller's path", async () => {
+    const event = { ...JSON.parse(JSON.stringify(await recordOne())), sequence: -1 };
+
+    try {
+      parseTraceEvent(event, ["events", 3]);
+      expect.unreachable("expected parseTraceEvent to throw");
+    } catch (error) {
+      expect((error as ValidationError).issues).toContainEqual({
+        path: ["events", 3, "sequence"],
+        message: "expected an integer >= 0",
+      });
+    }
+  });
+
+  it("reads a version it does not know rather than asserting the current one", async () => {
+    const event = { ...JSON.parse(JSON.stringify(await recordOne())), version: 2 };
+
+    expect(parseTraceEvent(event).version).toBe(2);
+    expect(TRACE_EVENT_VERSION).toBe(1);
+  });
+
+  it("rejects a usage object with an unknown key or a non-numeric value", async () => {
+    const base = JSON.parse(JSON.stringify(await recordOne())) as JsonObject;
+
+    expect(() => parseTraceEvent({ ...base, usage: { totalTokens: 4 } })).toThrow(ValidationError);
+    expect(() => parseTraceEvent({ ...base, usage: { inputTokens: "4" } })).toThrow(
+      ValidationError,
+    );
+  });
+
+  it("accepts a null parentId, node, usage, latency and error", async () => {
+    const parsed = parseTraceEvent(JSON.parse(JSON.stringify(await recordOne())));
+
+    expect(parsed.parentId).toBeNull();
+    expect(parsed.node).toBeNull();
+    expect(parsed.usage).toBeNull();
+    expect(parsed.latencyMs).toBeNull();
+    expect(parsed.error).toBeNull();
   });
 });

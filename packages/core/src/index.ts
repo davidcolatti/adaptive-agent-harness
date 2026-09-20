@@ -261,6 +261,10 @@ export {
   createNoopTraceWriter,
   createTraceRecorder,
   isTraceEventType,
+  // The read boundary for a stored, replayed or JSONL-sourced event (M2-T10),
+  // beside `parseJob` and `parseRunRecord`. A recorder is the only minter; this
+  // is the only way back in.
+  parseTraceEvent,
   TRACE_EVENT_TYPES,
   TRACE_EVENT_VERSION,
 } from "./trace.js";

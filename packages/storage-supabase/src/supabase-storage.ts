@@ -1,7 +1,6 @@
 import {
   DEFAULT_RUN_PAGE_SIZE,
   DEFAULT_TRACE_PAGE_SIZE,
-  isTraceEventType,
   type Job,
   type JobId,
   type JsonObject,
@@ -9,6 +8,7 @@ import {
   parseEntityId,
   parseJob,
   parseRunRecord,
+  parseTraceEvent,
   type RunFilter,
   type RunFinish,
   type RunId,
@@ -17,13 +17,10 @@ import {
   type RunRecord,
   type RunStart,
   resolvePageLimit,
-  type SerializedHarnessError,
   type Storage,
   StorageError,
-  type TRACE_EVENT_VERSION,
   type TraceCursor,
   type TraceEvent,
-  type TraceEventUsage,
   type TracePage,
   ValidationError,
 } from "@internal/core";
@@ -54,8 +51,9 @@ import type { Database, Json } from "./database.types.js";
  *   `runtime_metadata`, because the two identifying strings are grouped and
  *   filtered on and the adapter's free-form detail is not.
  *
- * Every read goes back through `parseJob()` / `parseRunRecord()` / this file's
- * `readTraceEvent`. A row is untrusted input even when this adapter wrote it:
+ * Every read goes back through `parseJob()` / `parseRunRecord()` /
+ * `parseTraceEvent()`, all three from `@internal/core`. A row is untrusted
+ * input even when this adapter wrote it:
  * the schema can be migrated, a row can be edited by hand, and "the database
  * gave it to me" is not a proof of shape.
  *
@@ -194,51 +192,36 @@ function readRunRecord(row: RunRow): RunRecord {
 /**
  * Turn a trace row back into a {@link TraceEvent}, or throw.
  *
- * There is no `parseTraceEvent()` in `@internal/core` to call: M2-T3 defined
- * the event as something a `TraceRecorder` mints rather than something read
- * back, so this adapter is the first code that has to turn a stored row into
- * one. The checks here are the ones a row can actually fail — an id that is not
- * a UUIDv7, a type outside the closed taxonomy, a payload that is not an object
- * — rather than a second copy of the whole schema. If a second reader ever
- * needs this, it belongs in core beside `parseJob`.
+ * Only the column-name mapping lives here; the checking is
+ * `parseTraceEvent()` in `@internal/core` (M2-T10), beside `parseJob()` and
+ * `parseRunRecord()`. When this adapter was written it was the first code that
+ * had to read an event back, so the checks were local and this comment said
+ * that if a second reader ever needed them they belonged in core. The run
+ * inspector is that second reader, so they moved, and a row read here and a
+ * JSONL line read by the inspector now fail in exactly the same way.
+ *
+ * A row is untrusted input even though this adapter wrote it: the schema can be
+ * migrated and a row can be edited by hand.
  */
 function readTraceEvent(row: TraceEventRow): TraceEvent {
-  if (!isTraceEventType(row.type)) {
-    throw new ValidationError(
-      `supabase storage: trace event \`${row.id}\` has type \`${row.type}\`, which is not in the taxonomy`,
-      { issues: [{ path: ["type"], message: "expected a member of TRACE_EVENT_TYPES" }] },
-    );
-  }
-
-  const payload = readJsonObject(row.payload);
-
-  if (payload === null) {
-    throw new ValidationError(
-      `supabase storage: trace event \`${row.id}\` has a payload that is not a JSON object`,
-      { issues: [{ path: ["payload"], message: "expected a JSON object" }] },
-    );
-  }
-
-  return Object.freeze({
-    id: parseEntityId("trace-event", row.id),
-    runId: parseEntityId("run", row.run_id),
+  return parseTraceEvent({
+    id: row.id,
+    runId: row.run_id,
     attempt: row.attempt,
     sequence: row.sequence,
     timestamp: isoTimestamp(row.occurred_at),
     type: row.type,
-    parentId: row.parent_id === null ? null : parseEntityId("trace-event", row.parent_id),
+    parentId: row.parent_id,
     node: row.node,
     // The stored version, not `TRACE_EVENT_VERSION`: a row written by an older
     // version of the schema must read back saying so, which is the entire point
-    // of the field. The cast narrows to the current literal type because that
-    // is the only version that exists; a second version is a contract change
-    // that gives this a real branch.
-    version: row.version as typeof TRACE_EVENT_VERSION,
+    // of the field. `parseTraceEvent` accepts any integer >= 1 for that reason.
+    version: row.version,
     behaviorFingerprint: row.behavior_fingerprint,
-    payload,
-    usage: readJsonObject(row.usage) as TraceEventUsage | null,
+    payload: row.payload,
+    usage: readJsonObject(row.usage),
     latencyMs: row.latency_ms,
-    error: row.error as SerializedHarnessError | null,
+    error: row.error,
   });
 }
 

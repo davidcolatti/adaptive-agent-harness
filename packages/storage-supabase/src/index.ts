@@ -1,19 +1,25 @@
-// The public surface of `@internal/storage-supabase`.
+// The public surface of `@internal/storage-supabase`: the Supabase `Storage`
+// adapter (M2-T5, M2-T7) and the generated database types (M2-T11).
 //
-// M2-T11 created this package to hold one thing: the TypeScript types generated
-// from the local Supabase database by `pnpm supabase:types`. There is no adapter
-// here yet. **M2-T5 adds it** — the `Storage` port, the `trace_events` sink that
-// sits behind `createBufferedTraceWriter()`, and the decision about whether this
-// package declares `@supabase/supabase-js`. That dependency is deliberately not
-// declared yet, because nothing here calls Supabase at runtime.
+// This package is a declared adapter in `tests/architecture/boundaries.ts`,
+// which makes it the only workspace package permitted to depend on
+// `@supabase/*`. No Supabase concept leaves it: `createSupabaseStorage()`
+// returns the `Storage` port from `@internal/core`, and a `PostgrestError`
+// becomes a `StorageError` before it crosses the boundary (AGENTS.md, "No
+// direct database access outside `packages/storage-supabase`").
 //
-// This package is a declared adapter in `tests/architecture/boundaries.ts`, which
-// makes it the only workspace package permitted to depend on `@supabase/*`. No
-// Supabase concept may leak past it into `@internal/core` (AGENTS.md, "No direct
-// database access outside `packages/storage-supabase`").
+// `SupabaseClient` is re-exported as a **type only**, because
+// `CreateSupabaseStorageOptions.client` names it and a caller supplying one has
+// to be able to say so. Nothing in the package exposes a value from
+// `@supabase/*`.
 //
 // `./database.types.js` is generated and never hand-edited (AGENTS.md rule 12).
 // Regenerate it with `pnpm supabase:reset && pnpm supabase:types`; the
 // `supabase-types` CI job fails if the committed file drifts from what the
 // committed migrations produce.
-export type { Database } from "./database.types.js";
+export type { Database, Json, Tables, TablesInsert, TablesUpdate } from "./database.types.js";
+export type {
+  CreateSupabaseStorageOptions,
+  SupabaseStorage,
+} from "./supabase-storage.js";
+export { createSupabaseStorage } from "./supabase-storage.js";

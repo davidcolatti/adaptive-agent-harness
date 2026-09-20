@@ -50,19 +50,47 @@ be reset.
 | --- | --- |
 | `agentRuntime` | Required. The [`AgentRuntime`](agent-runtime.md) every run goes through. |
 | `trace` | The `TraceWriter` run events are drained to. Defaults to `createNoopTraceWriter()`; `createBufferedTraceWriter()` in `@internal/trace` is the real one. |
+| `storage` | The [`Storage`](storage.md) a run's job and ledger row are written through (M2-T5, M2-T7). Optional; a harness without one behaves exactly as it did before. |
+| `target` | Which application or agent this harness executes, recorded on every run row, e.g. `@internal/example-agent`. |
 | `clock` | The time source for trace timestamps. Defaults to the system clock. |
 
 `createHarness` throws a `ValidationError` immediately if `agentRuntime` does
 not implement `run`, rather than failing on the first run.
 
-### `storage` is deliberately absent
+### `storage`, and why it is optional
 
 The build plan's target API writes `createHarness({ agentRuntime, storage })`.
-**M1 omits the option.** M2 is the milestone that defines the `Storage`
-contract, the run ledger, trace persistence and the Supabase adapter behind it;
-declaring a placeholder type now would publish a guess as a contract and force
-M2 to break it. Adding an optional option later is not a breaking change, and
-until then a run leaves its record through `trace`.
+M1 deliberately omitted the option rather than publishing a guess as a contract;
+M2-T5 defines the [`Storage`](storage.md) port and this is where it attaches.
+
+It stays **optional**, and a harness without one behaves exactly as it did
+before: a full ordered trace through `trace`, and no database. That is what
+keeps `pnpm example:run:mock` working on a machine with no Docker, which is
+north-star invariant 15.
+
+When it is present, a run saves its job and creates its ledger row **before**
+the first trace event is recorded, and writes its outcome **after** the trace is
+flushed. See "What it does, in order" below, and `storage.md` for why that
+ordering is the contract rather than an implementation detail.
+
+Persisting trace *events* does not go through this option. That is a
+`TraceSink` over the same `Storage` (`createStorageTraceSink()` in
+`@internal/trace`), so the events keep the buffered writer's ordering, batching
+and retry guarantees instead of acquiring a second set.
+
+### `target`
+
+A behavior fingerprint describes a **domain**, so one domain run against a live
+agent and against a credential-free mock produces the same fingerprint.
+`target` is what tells the ledger which of them actually executed, closing the
+open question [ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md)
+recorded.
+
+It is on the harness rather than on a run because it identifies the deployment
+rather than the work: one harness is constructed against one agent and runs many
+jobs through it, so stating it per run would be the same string repeated with an
+opportunity to get it wrong. A caller that genuinely switches targets constructs
+a second harness, which is what `apps/example-agent/src/run.ts` does.
 
 ### `Clock`
 
@@ -117,13 +145,17 @@ metadata a runtime reads.
    This is the second point at which `run()` **throws** rather than returning a
    result, for the same reason as step 1: the run has not started, so there is
    nothing to report a failure against.
-5. **Build the [`ExecutionContext`](execution-context.md)** from the job, the
+5. **Save the job and open the run's ledger row**, when a `storage` is given:
+   `saveJob()` then `startRun()`, **before the first trace event exists**
+   (M2-T5, M2-T7). A failure here comes straight out of `run()`; nothing has
+   executed, so there is no result to report. See "Storage ordering" below.
+6. **Build the [`ExecutionContext`](execution-context.md)** from the job, the
    trace writer and the signal. It deliberately does not name a runtime; see
    "Which runtime the context reports" below.
-6. **Emit `run.started`**, then run, then emit exactly one terminal event and
-   `flush()`.
-7. **Call `agentRuntime.run(job, context)`** inside a `try`/`catch`.
-8. **Validate the output** when the execution completed.
+7. **Emit `run.started`**, then run, then emit exactly one terminal event,
+   `flush()`, and finally `finishRun()` when a `storage` is given.
+8. **Call `agentRuntime.run(job, context)`** inside a `try`/`catch`.
+9. **Validate the output** when the execution completed.
 
 ### The effective job is the job
 
@@ -298,6 +330,35 @@ digest is ever substituted**. A descriptor that cannot be gathered throws out of
 [ADR-0034](../decisions/0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md)
 the decision.
 
+### Storage ordering
+
+With a `storage`, both halves of the ordering are load-bearing and neither is an
+implementation detail.
+
+**The job and the run row come before the first trace event.** A trace event
+whose run has no row would be evidence of an execution the ledger denies
+happened. A process that dies mid-run therefore leaves a `running` row rather
+than nothing at all, which is what makes "a failed run remains inspectable" true
+of a crash and not only of a tidy failure.
+
+**The outcome comes after the flush.** The run row is the *claim* that a run
+reached an outcome and the trace is the *evidence* for it. Writing the claim
+first and then failing to write the evidence would leave a `completed` row
+nobody can verify; failing in the other order leaves a `running` row beside a
+complete trace, which is visibly incomplete rather than quietly wrong.
+
+**Every storage failure propagates.** `saveJob`, `startRun` and `finishRun` all
+throw out of `run()` as a `StorageError` rather than becoming a result. The
+harness wraps anything an implementation throws that is not already one, with
+the cause preserved, for the same reason it already contains a runtime adapter
+that throws instead of returning a failure: a defect in an implementation must
+not become a defect in the harness.
+
+What the ledger row records is in [`storage.md`](storage.md). `target` and the
+behavior fingerprint are written at `startRun`; the usage, the latency, the
+outcome and the runtime that actually ran are written at `finishRun`, which is
+why `startRun` records `HARNESS_RUNTIME_INFO` and `finishRun` overwrites it.
+
 ### A flush failure is a failed call, not a failed run
 
 `flush()` is awaited once, after the terminal event, and **its failure is not
@@ -327,9 +388,11 @@ scripted runtime, trace writer and clock inline instead. Do not add
 
 - **M1-T6** supplies `EveAgentRuntime` as the `agentRuntime`, and
   `apps/example-agent/src/run.ts` plus `pnpm example:run` call this API.
-- **M2** adds the `storage` option and makes budgets enforced rather than
-  declarative. The sortable ID scheme landed in M2-T1, the trace taxonomy in
-  M2-T3, and the behavior fingerprint in M2-T8.
+- **Budgets are still declarative**, not enforced. Enforcement has no owner yet;
+  today a budget is metadata a runtime reads. Everything else M2 owed this file
+  has landed: the sortable ID scheme (M2-T1), the trace taxonomy (M2-T3), the
+  behavior fingerprint (M2-T8), and the `storage` and `target` options with the
+  run ledger behind them (M2-T5, M2-T7).
 - **Retries** do not exist. `attempt` is always `1`; retry policy has no owner
   yet.
 - **The execution router** (build plan section 2, "workflow match / no match")

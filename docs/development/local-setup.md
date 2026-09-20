@@ -110,6 +110,11 @@ commented out for exactly that reason. It records:
   never exposed to a client or an agent tool).
 
 Copy `.env.example` to `.env` and fill values in when the milestone that introduces them starts.
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are what `createSupabaseStorage()` reads (M2-T5),
+and what `pnpm example:run:mock` checks before deciding whether to record a run row. Both or
+neither: one without the other counts as not configured. `SUPABASE_ANON_KEY` is optional and only
+the row-level-security cases in the schema integration suite use it.
+
 Local Supabase values go in `.env.local` instead, which the runbook generates for you. Neither
 file is ever committed.
 
@@ -127,6 +132,11 @@ Exactly one command needs a credential:
 | --- | --- |
 | `pnpm example:run` | `AI_GATEWAY_API_KEY` **or** `VERCEL_OIDC_TOKEN`. It exits 1 with a message naming `.env.example` when neither is set. |
 | `pnpm example:run:mock` | none. Same harness path, scripted model. |
+
+Neither example command needs Supabase. With `.env.local` present and holding the two Supabase
+variables, both additionally write a durable run row and trace; without it they write only the
+JSONL trace and say so. The `start` script loads the file with Node 24's
+`--env-file-if-exists=../../.env.local`, so nothing has to be exported by hand.
 | `pnpm --filter @internal/example-agent run dev` | a credential, because eve's terminal UI reaches a real model. |
 
 `eve link` writes a Gateway credential into `.env.local` for you if the project is linked to a

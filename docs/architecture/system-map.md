@@ -16,6 +16,8 @@ related:
   - docs/architecture/runtime.md
   - docs/decisions/0028-eve-agent-runtime-is-a-url-only-client-that-observes-the-eve-event-stream.md
   - docs/decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md
+  - docs/decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md
+  - docs/contracts/storage.md
   - docs/runbooks/supabase-local.md
 implementation:
   - apps/eve-fixture-agent
@@ -26,7 +28,9 @@ implementation:
   - packages/runtime-eve
   - packages/runtime-ai-sdk
   - packages/storage-supabase
+  - packages/trace
   - supabase
+  - supabase/migrations
   - tests/architecture/boundaries.ts
 ---
 
@@ -218,8 +222,18 @@ Six packages and two applications exist. Everything else in the repository layou
   - **`createHarness()`** (M1-T4): the public entry point, and the single choke point where a
     run's input is validated before execution and a runtime's claimed output is re-validated
     before success. It emits `run.started` plus one terminal event per run, holds no state
-    between runs, and omits the build plan's `storage` option until M2 defines that contract.
-    Documented in [`../contracts/harness.md`](../contracts/harness.md).
+    between runs. M2-T5 added the build plan's `storage` option and a `target`, so a run now also
+    saves its job and opens its ledger row **before** the first trace event and writes its outcome
+    **after** the trace is flushed; every storage failure leaves `run()` as a `StorageError`.
+    Documented in [`../contracts/harness.md`](../contracts/harness.md) and
+    [`../contracts/storage.md`](../contracts/storage.md).
+  - The **`Storage` port** (M2-T5) and the **outcome ledger row** (M2-T7), in
+    `packages/core/src/storage.ts`: eight methods, `RunRecord` with every column the build plan
+    names, and `parseRunRecord()` as the strict read boundary. Declared in core, which depends on
+    nothing, because the dependency rule forbids core from importing Supabase; implemented by
+    `@internal/storage-supabase` and by `createInMemoryStorage()` in `@internal/testing`, with one
+    contract suite proving the two agree
+    ([ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md)).
   - The **capability registry** (M1-T9): `CapabilityRegistry`, `CapabilityManifest` and the five
     kinds build plan section 5 fixes, with registration validating duplicate IDs, a fixed kind per
     ID, and schema references that must already be registered so the manifest is closed. The
@@ -307,12 +321,14 @@ Six packages and two applications exist. Everything else in the repository layou
 
   It authors two tools: `echo_fixture`, which the fixture jobs grant, and `forbidden_tool`, which
   they deliberately do not.
-- `packages/storage-supabase` (`@internal/storage-supabase`) was created by M2-T11 and holds
-  exactly one thing: `src/database.types.ts`, the TypeScript types generated from the local
-  Supabase database. **There is no adapter in it yet.** M2-T5 adds the `Storage` port and the
-  Supabase `TraceSink` that sits behind `createBufferedTraceWriter()`, and decides then whether the
-  package declares `@supabase/supabase-js`; nothing here calls Supabase at runtime, so that
-  dependency is deliberately not installed.
+- `packages/storage-supabase` (`@internal/storage-supabase`) was created by M2-T11 to hold
+  `src/database.types.ts`, the TypeScript types generated from the local Supabase database, and
+  filled by M2-T5 with `createSupabaseStorage()`, the `Storage` implementation. It declares
+  `@supabase/supabase-js@2.116.0` as an exact pin with an assertion test in the ADR-0024 style, and
+  `@internal/trace`, because it is the last code before persistence and redacts what it writes —
+  including the run row's `error`, which no writer chain reaches. Nothing Supabase-shaped leaves
+  it: the port's types go in and out, and every `PostgrestError` becomes a `StorageError` carrying
+  `code`, `hint` and `details` and never a key.
 
   It was already a declared adapter in `BOUNDARY_RULES.adapterPackages` before it existed, which is
   why M2-T11 changed nothing in `tests/architecture/boundaries.ts`: the boundary was reserved ahead
@@ -327,9 +343,10 @@ Six packages and two applications exist. Everything else in the repository layou
   omits the semicolons Biome's formatter would add; linting still applies to it.
 - `supabase/` at the repository root is the committed local-database definition, added by M2-T11:
   `config.toml` (the CLI's 2.117.0 defaults, with `project_id = "adaptive-agent-harness"`),
-  `migrations/` (empty of migrations until M2-T6, with a `README.md` explaining that), `seed.sql`
-  (empty until there is a schema to seed), and the CLI's own `.gitignore` for `.temp` and
-  `.branches`. The pinned CLI (`supabase@2.117.0`, a root dev dependency) is driven only through
+  `migrations/` (five committed migrations from M2-T6, creating M2-T5's thirteen tables in
+  dependency order, plus a `README.md`), `seed.sql` (deliberately still empty: `saveJob` upserts
+  the domain row, so no seed has to be kept in step with the domains an application defines), and
+  the CLI's own `.gitignore` for `.temp` and `.branches`. The pinned CLI (`supabase@2.117.0`, a root dev dependency) is driven only through
   the four `pnpm supabase:*` scripts, `supabase db reset` is the reproducibility gate, and the
   `supabase-types` CI job fails on generated-type drift. Decided in
   [ADR-0033](../decisions/0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md),
@@ -351,7 +368,7 @@ plan's milestone sections.
 | `apps/example-agent` | exists (M1-T2 eve project, M1-T3 domain, M1-T9 capabilities, M1-T6 `src/run.ts`; runs through `createHarness()` with either runtime) |
 | `apps/eve-fixture-agent` | exists (M1-T6, credential-free `mockModel` fixture for the contract tests and `example:run:mock`) |
 | `packages/trace` | exists (M2-T4, M2-T9): `createBufferedTraceWriter()`, `TraceSink`, the in-memory and JSONL sinks, and the redaction layer above them |
-| `packages/storage-supabase` | exists (M2-T11, the generated `Database` type only); the `Storage` adapter and the Supabase `TraceSink` are M2-T5 |
+| `packages/storage-supabase` | exists (M2-T11 generated types; M2-T5 `createSupabaseStorage()`) |
 | `packages/observability` | planned (M2) |
 | `packages/decision-jev` | planned (M3) |
 | `packages/workflow` | planned (M4) |
@@ -398,8 +415,13 @@ still calls nothing. The source files in the workspace packages are:
 - `packages/trace/src/index.ts`, `buffered-trace-writer.ts`, `sink.ts`, `jsonl-sink.ts` and their
   co-located `*.test.ts` files (M2-T4): the buffered, order-preserving `TraceWriter`, the
   `TraceSink` interface beneath it, and the in-memory and JSONL sinks. `node:fs/promises` and
-  `node:path` only; no third-party dependency. M2-T5's Supabase sink is another `TraceSink`, and
-  belongs in `packages/storage-supabase` rather than here.
+  `node:path` only; no third-party dependency.
+- `packages/trace/src/storage-sink.ts` and `fan-out-sink.ts` with their co-located tests (M2-T5):
+  `createStorageTraceSink({ storage })`, which drains a run's trace into the `Storage` **port**
+  rather than into Supabase, so the in-memory implementation works behind it too; and
+  `createFanOutTraceSink([...])`, which puts several sinks behind one buffered writer so the JSONL
+  file and the database see the same events from one buffer and one flush. Still no third-party
+  dependency: `Storage` is a core type.
 - `packages/trace/src/redaction.ts`, `secret-patterns.ts`, `redacting-trace-writer.ts` and their
   two co-located `*.test.ts` files (M2-T9): the pure redactor over the JSON value model, the
   documented default secret-pattern set, and the `TraceWriter` decorator that applies it. The
@@ -408,8 +430,16 @@ still calls nothing. The source files in the workspace packages are:
   ([ADR-0035](../decisions/0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md),
   [`../contracts/redaction.md`](../contracts/redaction.md)). No third-party dependency here either:
   the redactor uses `@internal/core` types and the JavaScript standard library only.
-- `packages/storage-supabase/src/index.ts` (one re-export of the generated `Database` type) and
-  `src/database.types.ts` (generated by `pnpm supabase:types`, committed, never hand-edited)
+- `packages/core/src/storage.ts` and `storage.test.ts` (M2-T5, M2-T7): the `Storage` port,
+  `RunRecord`, the cursor types and `parseRunRecord()`
+- `packages/storage-supabase/src/index.ts`, `supabase-storage.ts`, `index.test.ts` (the dependency
+  pin), `storage.contract.test.ts` (the port's contract suite, both implementations) and
+  `supabase-schema.integration.test.ts` (the thirteen tables, RLS, `uuid` ordering, the taxonomy
+  check constraint); plus `src/database.types.ts` (generated by `pnpm supabase:types`, committed,
+  never hand-edited)
+- `packages/testing/src/in-memory-storage.ts` and its test (M2-T5): the second implementation of
+  the port, which runs the same contract suite
+- `supabase/migrations/*.sql` (M2-T6): five committed migrations creating M2-T5's thirteen tables
 - `packages/testing/src/index.ts`
 - `packages/testing/src/clock.ts`
 - `packages/testing/src/clock.test.ts`
@@ -496,6 +526,13 @@ lives in ADR-0024.
 The build plan's repository layout lists further documents under `docs/architecture/`:
 `runtime.md`, `workflow-ir.md`, `compiler.md`, `learning-loop.md`, `tracing.md`, `evals.md`,
 `storage.md` and `security.md`. **None of them exist yet, and none should be created yet.**
+
+M2-T5 deliberately did not create `docs/architecture/storage.md`: what the storage layer is and how
+it behaves is a *contract*, and it is written down in
+[`../contracts/storage.md`](../contracts/storage.md) with the decisions in
+[ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md).
+A second document restating either would be the third copy of the same facts. An architecture
+document earns its place when there is a *system* to describe rather than one port and one adapter.
 
 Each is written by the milestone that first implements its topic, describing what the code
 actually does, not preemptively as an empty placeholder. An empty or speculative architecture

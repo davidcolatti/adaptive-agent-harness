@@ -8,12 +8,13 @@
     "build": "tsc -p tsconfig.build.json && eve build",
     "dev": "eve dev",
     "info": "eve info",
-    "start": "node dist/src/run.js",
+    "start": "node --env-file-if-exists=../../.env.local dist/src/run.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@internal/core": "workspace:*",
     "@internal/runtime-eve": "workspace:*",
+    "@internal/storage-supabase": "workspace:*",
     "@internal/trace": "workspace:*",
     "ai": "7.0.107",
     "eve": "0.63.0",

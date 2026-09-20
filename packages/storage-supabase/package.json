@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Supabase storage adapter. Holds the generated database types; the Storage adapter lands in M2-T5.",
+  "description": "Supabase storage adapter: createSupabaseStorage() implements the Storage port (M2-T5, M2-T7), plus the generated database types (M2-T11).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -22,10 +22,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@internal/core": "workspace:*"
+    "@internal/core": "workspace:*",
+    "@internal/trace": "workspace:*",
+    "@supabase/supabase-js": "2.116.0"
   },
   "devDependencies": {
     "@internal/config": "workspace:*",
+    "@internal/testing": "workspace:*",
     "vitest": "5.0.1"
   }
 }

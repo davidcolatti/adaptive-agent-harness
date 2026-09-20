@@ -93,10 +93,89 @@ pnpm exec supabase status -o env \
 `.env.local` is ignored by both the root `.gitignore` and `supabase/.gitignore`. Confirm with
 `git check-ignore -v .env.local` if you are unsure.
 
+`SUPABASE_ANON_KEY` is optional: only the row-level-security cases in
+`supabase-schema.integration.test.ts` use it, and they skip without it. `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are the two that matter, and everything that reads them treats "one of
+them" as not configured rather than as a half-working setup.
+
 **`>` overwrites the file.** `eve link` also writes an AI Gateway credential into `.env.local`, so
 if you have linked a Vercel project, append with `>>` instead and remove the previous Supabase
 block by hand, rather than clobbering the Gateway key. `SUPABASE_SERVICE_ROLE_KEY` is server-side
 only: it bypasses row-level security and must never reach a client or an agent tool.
+
+## Routine: run the storage tests against a real database
+
+The `Storage` contract suite and the schema integration suite both **skip with a printed reason**
+when Supabase is not configured, so `pnpm check` passes with no Docker. To actually run them:
+
+```bash
+pnpm supabase:start
+pnpm supabase:reset
+# capture the environment as above, into .env.local
+set -a; . ./.env.local; set +a
+pnpm test:contract          # the Storage contract suite, both implementations
+pnpm test:integration       # the thirteen tables, RLS, uuid ordering, the type check constraint
+```
+
+A skip is never silent: each suite prints why it skipped and how to configure it. If you expected
+the Supabase leg to run and it did not, the two variables are not in the environment — `set -a`
+before sourcing is what exports them.
+
+## Routine: record an example run in Supabase
+
+`apps/example-agent`'s `start` script loads `../../.env.local` with Node 24's
+`--env-file-if-exists`, so once the file exists the example records to Supabase with no extra
+flags:
+
+```bash
+pnpm example:run:mock
+```
+
+It prints the trace file path, and then the run row's location and id.
+
+### Once `.env.local` exists, the example run requires Supabase to be up
+
+This is the part that surprises people, so it is stated plainly. There are **three** cases, not
+two:
+
+| `.env.local` | Supabase | Result |
+| --- | --- | --- |
+| absent, or missing either variable | irrelevant | exit 0, JSONL trace only, a stderr line saying so |
+| present with both variables | running | exit 0, JSONL trace **and** a durable run row and trace |
+| present with both variables | stopped | **exit 1**, one stderr line, no run |
+
+The third case is deliberate, not a regression. Storage was configured, so a run that storage never
+recorded is a failed run: falling back to a JSONL-only "success" is exactly what Milestone 2's
+"storage failures cannot silently turn into successful runs" forbids. The failure is detected by a
+one-request reachability check **before** the eve dev server starts, so nothing is compiled or
+booted for a run that cannot be recorded.
+
+It looks like this, and there is no stack trace:
+
+```text
+Supabase storage is configured (SUPABASE_URL=http://127.0.0.1:54321) but unreachable:
+supabase storage: `listRuns` failed: TypeError: fetch failed
+
+Start it with `pnpm supabase:start`, or remove SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY (or `.env.local`) to run JSONL-only.
+```
+
+The two ways out are the two the message names: start the stack, or take the variables out of the
+environment. Moving the file aside (`mv .env.local .env.local.bak`) is the quickest form of the
+second. A URL that answers but rejects the key fails here too, which is the point of making the
+check a real port call rather than a ping.
+
+**`pnpm check` and CI are unaffected.** Neither has a `.env.local`, and nothing exports the two
+variables for them, so `pnpm example:run:mock` stays on the JSONL-only path there and the storage
+test suites skip with a printed reason. The `supabase-types` CI job is the only thing in CI that
+needs a database, and it starts its own.
+
+Read a run back:
+
+```bash
+docker exec -i supabase_db_adaptive-agent-harness psql -U postgres -d postgres \
+  -c "select id, status, target, agent_version, cost_usd, latency_ms from runs order by id desc limit 5;"
+```
 
 ## When something goes wrong
 

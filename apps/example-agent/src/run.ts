@@ -1,13 +1,17 @@
 import { existsSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHarness, type HarnessRunResult } from "@internal/core";
+import { createHarness, type HarnessRunResult, type Storage, StorageError } from "@internal/core";
 import { EveAgentRuntime } from "@internal/runtime-eve";
 import { type EveDevServer, startEveDevServer } from "@internal/runtime-eve/testing";
+import { createSupabaseStorage } from "@internal/storage-supabase";
 import {
   createBufferedTraceWriter,
+  createFanOutTraceSink,
   createJsonlDirectoryTraceSink,
   createRedactingTraceWriter,
+  createStorageTraceSink,
+  type TraceSink,
 } from "@internal/trace";
 import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/index.js";
 
@@ -20,11 +24,31 @@ import { PROCUREMENT_SOP, type VendorTriageInput, vendorTriage } from "./domain/
  *
  * 1. start an `eve` server for an authored agent;
  * 2. build an `EveAgentRuntime` pointed at it;
- * 3. `createHarness({ agentRuntime, trace })`, where `trace` is the redacting
- *    writer (M2-T9) over the buffered writer draining into a JSONL file per run
- *    (M2-T4);
+ * 3. `createHarness({ agentRuntime, trace, storage, target })`, where `trace` is
+ *    the redacting writer (M2-T9) over one buffered writer (M2-T4) draining
+ *    into every sink, and `storage` is the Supabase run ledger (M2-T5/M2-T7)
+ *    when it is configured;
  * 4. `harness.run({ domain: vendorTriage, input })`;
- * 5. print the result and the trace path, and stop the server.
+ * 5. print the result, the trace path and where the run row went, then stop the
+ *    server.
+ *
+ * ## Two modes of durability
+ *
+ * With `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set, a run leaves a
+ * ledger row and an ordered trace in Supabase **and** a JSONL file beside the
+ * agent. With either missing it leaves the JSONL file and says so on stderr.
+ * The credential-free path is not a degraded mode to be tolerated: it is what
+ * makes the whole harness path demonstrable on a machine with no Docker, which
+ * is north-star invariant 15.
+ *
+ * **Configured and unreachable is a third case, and it is a failure.** Once
+ * `.env.local` holds the two variables, this command requires Supabase to be
+ * running: it checks reachability before starting the eve server, prints one
+ * line saying so, and exits 1. It does **not** fall back to JSONL, because
+ * storage was asked for and a run storage never recorded is not a success
+ * (Milestone 2: "storage failures cannot silently turn into successful runs").
+ * `pnpm check` and CI have no `.env.local`, so they stay on the JSONL-only
+ * path.
  *
  * **Nothing here touches the `eve` runtime directly.** The agent under
  * `agent/` is authored for eve and this file calls the harness API, which is
@@ -51,8 +75,31 @@ interface RunSummary {
   readonly host: string;
   /** The JSONL file this run's ordered trace was written to (M2-T4). */
   readonly tracePath: string;
+  /**
+   * Where the durable run row and trace went (M2-T5), or `null` when the run
+   * was JSONL-only.
+   *
+   * The Supabase **URL**, never a key: this value is printed and piped.
+   */
+  readonly storage: string | null;
   readonly result: HarnessRunResult<unknown>;
 }
+
+/**
+ * The two variables that decide whether this run is recorded in Supabase.
+ *
+ * Both or neither. A URL with no key cannot authenticate and a key with no URL
+ * has nowhere to go, so treating "one of them" as configured would produce a
+ * failure at the first query rather than a clear statement up front.
+ *
+ * They are read from the environment, and `--env-file-if-exists=.env.local`
+ * in this package's `start` script is what normally puts them there (Node 24).
+ * `.env.local` is git-ignored and is what
+ * `pnpm exec supabase status -o env …` writes; see
+ * `docs/runbooks/supabase-local.md`. **No key value is ever printed**, here or
+ * anywhere else.
+ */
+const SUPABASE_VARIABLES = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
 
 /**
  * Where a run's trace lands: `<app root>/.harness/traces/<runId>.jsonl`.
@@ -61,8 +108,8 @@ interface RunSummary {
  * exercised are in one place, and under `.harness/`, which `.gitignore`
  * excludes. The run id is minted inside `harness.run()`, so the file cannot be
  * named up front; `createJsonlDirectoryTraceSink` names it from each event's
- * own `runId` instead. Until M2-T5 puts trace events in Supabase, this file is
- * the durable trace.
+ * own `runId` instead. It is written whether or not Supabase is configured, so
+ * there is always a local trace to read.
  */
 const TRACES_DIRNAME = join(".harness", "traces");
 
@@ -135,6 +182,98 @@ function presentCredentials(): readonly string[] {
   return GATEWAY_CREDENTIALS.filter((name) => (process.env[name] ?? "") !== "");
 }
 
+/**
+ * The Supabase storage for this run, or `null` when it is not configured.
+ *
+ * **Credential-free stays the default.** `pnpm example:run:mock` must exit 0
+ * with no database at all (north-star invariant 15, and it is what makes the
+ * harness path demonstrable on any machine), so an absent variable is a mode,
+ * not an error. What it must never be is silent: the run says on stderr which
+ * mode it is in, so "where did my run row go?" is answered by the output rather
+ * than by reading this file.
+ */
+function resolveStorage(): Storage | null {
+  const url = process.env.SUPABASE_URL ?? "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+  if (url === "" || serviceRoleKey === "") {
+    const missing = SUPABASE_VARIABLES.filter((name) => (process.env[name] ?? "") === "");
+
+    process.stderr.write(
+      [
+        `No Supabase storage: ${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not set.`,
+        "This run's only durable record is its JSONL trace. To record it in Supabase,",
+        "see docs/runbooks/supabase-local.md.",
+        "",
+      ].join("\n"),
+    );
+
+    return null;
+  }
+
+  return createSupabaseStorage({ url, serviceRoleKey });
+}
+
+/**
+ * Report a storage failure as one readable line, and never as a stack trace.
+ *
+ * A stack here is noise: the interesting fact is not which frame threw, it is
+ * that storage was **configured and unreachable**, and the two ways out are a
+ * one-line instruction each. The stack still exists on the error for a caller
+ * that wants it; this is the presentation layer deciding not to print it.
+ *
+ * The `SUPABASE_URL` is included because "which database?" is the first
+ * question a reader asks and a machine can have more than one local stack. The
+ * key never is.
+ */
+function reportStorageFailure(error: StorageError): void {
+  const url = process.env.SUPABASE_URL ?? "(unset)";
+
+  process.stderr.write(
+    [
+      "",
+      `Supabase storage is configured (SUPABASE_URL=${url}) but unreachable: ${error.message}`,
+      "",
+      "Start it with `pnpm supabase:start`, or remove SUPABASE_URL and",
+      "SUPABASE_SERVICE_ROLE_KEY (or `.env.local`) to run JSONL-only.",
+      "",
+      "This run is **not** falling back to a JSONL-only trace. Storage was asked for, so a",
+      "run that storage never recorded is not a run to report as anything but a failure",
+      "(Milestone 2: storage failures cannot silently turn into successful runs).",
+      "",
+      "See docs/runbooks/supabase-local.md.",
+      "",
+    ].join("\n"),
+  );
+}
+
+/**
+ * Check that configured storage is actually reachable, before anything
+ * expensive happens.
+ *
+ * It runs **before** the eve dev server starts, because compiling and booting
+ * an agent takes seconds and then throwing it away over a database that was
+ * never up is a bad trade. It is one request: `listRuns` with a limit of 1,
+ * which is a real call through the port rather than a bespoke health check, so
+ * it exercises the same URL, the same key and the same PostgREST surface the
+ * run itself will use. A URL that answers but rejects the key fails here too,
+ * which is the point.
+ *
+ * It returns the `StorageError` rather than printing, so the one place that
+ * formats a storage failure is {@link reportStorageFailure}.
+ */
+async function checkStorageReachable(storage: Storage): Promise<StorageError | null> {
+  try {
+    await storage.listRuns({}, { limit: 1 });
+
+    return null;
+  } catch (error) {
+    return error instanceof StorageError
+      ? error
+      : new StorageError("the storage preflight failed", { cause: error });
+  }
+}
+
 function credentialEnv(): Record<string, string> {
   const env: Record<string, string> = {};
 
@@ -166,6 +305,34 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  // Storage first, and its reachability before the eve server. Construction
+  // itself can throw a `ValidationError` for a malformed URL or key; a
+  // `StorageError` from the preflight means configured-but-unreachable, which
+  // is a failure and not a reason to quietly write JSONL instead.
+  let storage: Storage | null;
+
+  try {
+    storage = resolveStorage();
+  } catch (error) {
+    if (error instanceof StorageError) {
+      reportStorageFailure(error);
+
+      return 1;
+    }
+
+    throw error;
+  }
+
+  if (storage !== null) {
+    const unreachable = await checkStorageReachable(storage);
+
+    if (unreachable !== null) {
+      reportStorageFailure(unreachable);
+
+      return 1;
+    }
+  }
+
   process.stderr.write(`Starting an eve dev server for ${target.agent}...\n`);
 
   let server: EveDevServer | undefined;
@@ -178,6 +345,16 @@ async function main(): Promise<number> {
     // returns, and lets a storage failure out rather than reporting a run whose
     // trace was never written as `completed`.
     const traces = createJsonlDirectoryTraceSink(join(target.appRoot, TRACES_DIRNAME));
+
+    // One buffered, order-preserving writer over every sink (M2-T5). The JSONL
+    // file stays even when Supabase is configured, so the local trace is always
+    // there to read, and both sinks see the same events in the same order
+    // because they are behind one writer rather than two.
+    const sinks: TraceSink[] = [traces];
+
+    if (storage !== null) {
+      sinks.push(createStorageTraceSink({ storage }));
+    }
 
     const harness = createHarness({
       agentRuntime: new EveAgentRuntime({
@@ -192,21 +369,57 @@ async function main(): Promise<number> {
       // policy applies; adapter payloads are identity-only today, so a healthy run
       // produces a trace with no redaction token in it at all.
       trace: createRedactingTraceWriter({
-        writer: createBufferedTraceWriter({ sink: traces }),
+        writer: createBufferedTraceWriter({ sink: createFanOutTraceSink(sinks) }),
       }),
+      // The run ledger (M2-T7). Absent when Supabase is not configured, which
+      // leaves the harness behaving exactly as it did before M2-T5.
+      ...(storage === null ? {} : { storage }),
+      // Which agent actually ran, recorded on the run row. A behavior
+      // fingerprint describes the *domain*, and this file runs one domain
+      // against two different agents, so without this the ledger could not tell
+      // a mock run from a live one (ADR-0034's open question).
+      target: target.agent,
     });
 
-    const result = await harness.run({ domain: vendorTriage, input: INPUT });
+    // A storage failure during the run reaches here as a `StorageError`
+    // (M2-T5/M2-T7). It is reported as one line and a non-zero exit, **not**
+    // downgraded to a JSONL-only success: storage was configured, so a run it
+    // never recorded is a failed run. Every other error keeps its previous
+    // behaviour and propagates with its stack, because an unexpected defect is
+    // exactly the case where a stack is worth having.
+    let result: HarnessRunResult<unknown>;
+
+    try {
+      result = await harness.run({ domain: vendorTriage, input: INPUT });
+    } catch (error) {
+      if (error instanceof StorageError) {
+        reportStorageFailure(error);
+
+        return 1;
+      }
+
+      throw error;
+    }
+
     const summary: RunSummary = {
       target: name,
       agent: target.agent,
       host: server.host,
       tracePath: traces.pathFor(result.runId),
+      // The URL only. The service-role key is never printed.
+      storage: storage === null ? null : (process.env.SUPABASE_URL ?? null),
       result,
     };
 
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     process.stderr.write(`Trace written to ${summary.tracePath}\n`);
+
+    if (summary.storage !== null) {
+      process.stderr.write(
+        `Run row written to ${summary.storage} as runs.id = ${result.runId}\n` +
+          `Trace also written to ${summary.storage} as trace_events where run_id = ${result.runId}\n`,
+      );
+    }
 
     // A failed or aborted run is a non-zero exit, so the command can gate CI.
     return result.status === "completed" ? 0 : 1;

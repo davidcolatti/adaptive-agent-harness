@@ -12,6 +12,16 @@ import { isEntityId, newJobId, newRunId } from "./ids.js";
 import type { Job } from "./job.js";
 import { parseJob } from "./job.js";
 import type { Schema, SchemaResult } from "./schema.js";
+import type {
+  RunFinish,
+  RunPage,
+  RunRecord,
+  RunStart,
+  RunStatus,
+  Storage,
+  TracePage,
+} from "./storage.js";
+import { parseRunRecord } from "./storage.js";
 import { TRACE_EVENT_VERSION, type TraceEvent, type TraceWriter } from "./trace.js";
 
 /**
@@ -756,6 +766,441 @@ describe("harness.run: behavior fingerprint", () => {
     // a run anyone could later compare, so it is refused rather than written
     // with a `null` fingerprint.
     expect(trace.events).toEqual([]);
+  });
+});
+
+/**
+ * A {@link Storage} that records the order it was called in.
+ *
+ * A recorder rather than a working store, because what this block is about is
+ * **ordering and failure propagation**: that the job and the ledger row exist
+ * before the first trace event, that the outcome is written after the flush,
+ * and that a failure at any of those points comes out of `run()` instead of
+ * becoming a result. Whether a store can read back what it wrote is
+ * `storage.contract.test.ts`'s question, asked of both real implementations.
+ *
+ * It is local to this file for the reason the note at the top of the file
+ * gives: `@internal/testing` depends on `@internal/core`, so importing
+ * `createInMemoryStorage()` here would make the workspace graph cyclic.
+ */
+interface RecordingStorage extends Storage {
+  /** Every call, in order, as `"saveJob"`, `"startRun"`, and so on. */
+  readonly calls: readonly string[];
+  /** The `RunStart` inputs, so a test can read what was written. */
+  readonly starts: readonly RunStart[];
+  /** The `RunFinish` inputs. */
+  readonly finishes: readonly RunFinish[];
+}
+
+interface RecordingStorageOptions {
+  /** Throw from this operation. */
+  readonly failOn?: string;
+  /** What to throw. Defaults to a `StorageError`. */
+  readonly failWith?: unknown;
+}
+
+function createRecordingStorage(options: RecordingStorageOptions = {}): RecordingStorage {
+  const calls: string[] = [];
+  const starts: RunStart[] = [];
+  const finishes: RunFinish[] = [];
+
+  function enter(operation: string): void {
+    calls.push(operation);
+
+    if (options.failOn === operation) {
+      throw options.failWith ?? new StorageError(`storage: \`${operation}\` failed on purpose`);
+    }
+  }
+
+  function record(input: RunStart, status: RunStatus): RunRecord {
+    return parseRunRecord({
+      runId: input.runId,
+      jobId: input.jobId,
+      attempt: input.attempt,
+      domain: { id: input.domain.id, version: input.domain.version },
+      jobType: input.jobType,
+      status,
+      success: status === "completed",
+      qualityScore: null,
+      costUsd: null,
+      latencyMs: null,
+      modelCalls: 0,
+      toolCalls: 0,
+      jevCalls: 0,
+      fallbackCount: 0,
+      humanReview: null,
+      workflowVersionId: input.workflowVersionId,
+      agentVersion: input.agentVersion,
+      behaviorFingerprint: input.behaviorFingerprint,
+      runtime: {
+        name: input.runtime.name,
+        version: input.runtime.version,
+        metadata: input.runtime.metadata,
+      },
+      target: input.target,
+      startedAt: input.startedAt,
+      finishedAt: null,
+      error: null,
+    });
+  }
+
+  return {
+    calls,
+    starts,
+    finishes,
+    saveJob(): Promise<void> {
+      enter("saveJob");
+      return Promise.resolve();
+    },
+    startRun(input: RunStart): Promise<RunRecord> {
+      enter("startRun");
+      starts.push(input);
+      return Promise.resolve(record(input, "running"));
+    },
+    finishRun(input: RunFinish): Promise<RunRecord> {
+      enter("finishRun");
+      finishes.push(input);
+
+      const start = starts.at(-1);
+
+      if (start === undefined) {
+        throw new StorageError("storage: `finishRun` without a start");
+      }
+
+      return Promise.resolve(record(start, input.status));
+    },
+    getRun(): Promise<RunRecord | null> {
+      enter("getRun");
+      return Promise.resolve(null);
+    },
+    getJob(): Promise<Job<unknown, unknown> | null> {
+      enter("getJob");
+      return Promise.resolve(null);
+    },
+    listRuns(): Promise<RunPage> {
+      enter("listRuns");
+      return Promise.resolve({ runs: [], nextCursor: null });
+    },
+    appendTraceEvents(): Promise<void> {
+      enter("appendTraceEvents");
+      return Promise.resolve();
+    },
+    getTrace(): Promise<TracePage> {
+      enter("getTrace");
+      return Promise.resolve({ events: [], nextCursor: null });
+    },
+  };
+}
+
+describe("harness.run: storage", () => {
+  it("behaves exactly as before when no storage is given", async () => {
+    // North-star invariant 15: local development stays a first-class path. A
+    // harness with no database still produces a complete ordered trace.
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const trace = createLocalTraceWriter();
+    const harness = createHarness({ agentRuntime, trace });
+
+    const result = await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+
+    expect(result.status).toBe("completed");
+    expect(trace.types()).toEqual(["run.started", "run.completed"]);
+  });
+
+  it("saves the job and opens the run row before the first trace event", async () => {
+    const order: string[] = [];
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage();
+    // A writer that notes when it was first appended to, relative to storage.
+    const trace: TraceWriter = {
+      append(event: TraceEvent): Promise<void> {
+        order.push(`append:${event.type}`);
+        return Promise.resolve();
+      },
+      flush(): Promise<void> {
+        order.push("flush");
+        return Promise.resolve();
+      },
+    };
+    const wrapped: Storage = {
+      ...storage,
+      saveJob(job) {
+        order.push("saveJob");
+        return storage.saveJob(job);
+      },
+      startRun(input) {
+        order.push("startRun");
+        return storage.startRun(input);
+      },
+      finishRun(input) {
+        order.push("finishRun");
+        return storage.finishRun(input);
+      },
+    };
+    const harness = createHarness({ agentRuntime, trace, storage: wrapped });
+
+    await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+
+    // The ordering is the contract: a trace event whose run has no row would be
+    // evidence of an execution the ledger denies happened, and the outcome is
+    // written only once the evidence for it is durable.
+    expect(order).toEqual([
+      "saveJob",
+      "startRun",
+      "append:run.started",
+      "append:run.completed",
+      "flush",
+      "finishRun",
+    ]);
+  });
+
+  it("records the run's identity, behavior and target on the ledger row", async () => {
+    const behavior: BehaviorDescriptor = {
+      instructions: "Triage the vendor.\n",
+      sop: "1. Check the evidence.\n",
+      skills: [],
+      tools: [],
+      model: { model: "test/model" },
+      schemas: [],
+      workflowIr: null,
+      policy: {},
+    };
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage();
+    const harness = createHarness({
+      agentRuntime,
+      storage,
+      target: "@internal/example-agent",
+    });
+
+    const result = await harness.run({
+      domain: defineDomain<TriageInput, TriageOutput>({
+        id: "triage",
+        version: "1.0.0",
+        inputSchema,
+        outputSchema,
+        createJob: (input) => ({
+          jobType: "triage",
+          objective: `Triage ${input.vendorName}.`,
+          input,
+          contracts: {
+            inputSchema: "triage.input@1.0.0",
+            outputSchema: "triage.output@1.0.0",
+            sop: "triage-sop",
+          },
+        }),
+        behavior,
+      }),
+      input: { vendorName: "Northwind" },
+    });
+
+    const start = storage.starts[0];
+
+    expect(start?.runId).toBe(result.runId);
+    expect(start?.jobId).toBe(result.jobId);
+    expect(start?.attempt).toBe(1);
+    expect(start?.jobType).toBe("triage");
+    expect(start?.target).toBe("@internal/example-agent");
+    expect(start?.behaviorFingerprint).toBe(createBehaviorFingerprint(behavior).fingerprint);
+    // The behavior fingerprint *is* the agent version (M2-T7): a hand-written
+    // version string is the one that stops tracking reality silently.
+    expect(start?.agentVersion).toBe(start?.behaviorFingerprint);
+    // The adapter has not spoken at `startRun` time, so the honest value is the
+    // harness saying so; `finishRun` corrects it.
+    expect(start?.runtime).toEqual(HARNESS_RUNTIME_INFO);
+    expect(start?.workflowVersionId).toBeNull();
+  });
+
+  it("records `null` for a target nobody named", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage();
+
+    await createHarness({ agentRuntime, storage }).run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+    });
+
+    expect(storage.starts[0]?.target).toBeNull();
+  });
+
+  it("writes the outcome, the usage and the runtime that actually ran", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const clock = clockAt("2026-09-19T12:00:00.000Z");
+    const storage = createRecordingStorage();
+    const harness = createHarness({ agentRuntime, storage, clock });
+
+    await harness.run({ domain: triage, input: { vendorName: "Northwind" } });
+
+    const finish = storage.finishes[0];
+
+    expect(finish?.status).toBe("completed");
+    expect(finish?.success).toBe(true);
+    expect(finish?.modelCalls).toBe(USAGE.modelCalls);
+    expect(finish?.toolCalls).toBe(USAGE.toolCalls);
+    expect(finish?.costUsd).toBe(USAGE.costUsd);
+    expect(finish?.error).toBeNull();
+    // Real zeros: a run today makes no Jev calls (M3) and takes no fallback (M5).
+    expect(finish?.jevCalls).toBe(0);
+    expect(finish?.fallbackCount).toBe(0);
+    // The adapter's own identity, not the placeholder `startRun` wrote.
+    expect(finish?.runtime).toEqual(RUNTIME);
+  });
+
+  it("keeps a failed run inspectable: a `failed` row carrying the error", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: {
+        status: "failed",
+        error: { name: "AgentExecutionError", code: "AGENT_EXECUTION", message: "nope" },
+        usage: USAGE,
+        runtime: RUNTIME,
+      },
+    });
+    const storage = createRecordingStorage();
+
+    const result = await createHarness({ agentRuntime, storage }).run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+    });
+
+    expect(result.status).toBe("failed");
+    // The row exists, says `failed`, and carries the same error the trace's
+    // `run.failed` event does.
+    expect(storage.finishes[0]?.status).toBe("failed");
+    expect(storage.finishes[0]?.success).toBe(false);
+    expect(storage.finishes[0]?.error?.code).toBe("AGENT_EXECUTION");
+  });
+
+  it("records an aborted run as aborted with a null success", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage();
+
+    const result = await createHarness({ agentRuntime, storage }).run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+      signal: controller.signal,
+    });
+
+    expect(result.status).toBe("aborted");
+    expect(storage.finishes[0]?.status).toBe("aborted");
+    // `false` would file a cancellation as a defect (ADR-0031).
+    expect(storage.finishes[0]?.success).toBeNull();
+  });
+
+  it.each(["saveJob", "startRun", "finishRun"])(
+    "lets a `%s` failure out of run() instead of returning a result",
+    async (failOn) => {
+      // Milestone 2's "storage failures cannot silently turn into successful
+      // runs", enforced rather than intended: a run whose record was not
+      // written is not a run anyone can inspect, evaluate or replay.
+      const agentRuntime = createLocalAgentRuntime({
+        result: completedWith({ category: "bookkeeping" }),
+      });
+      const storage = createRecordingStorage({ failOn });
+
+      await expect(
+        createHarness({ agentRuntime, storage }).run({
+          domain: triage,
+          input: { vendorName: "Northwind" },
+        }),
+      ).rejects.toBeInstanceOf(StorageError);
+    },
+  );
+
+  it("wraps a non-StorageError from an implementation, preserving the cause", async () => {
+    // The port says every implementation rejects with `StorageError`. This does
+    // not trust that, for the same reason a runtime adapter that throws is
+    // already contained: a defect in an implementation must not become a defect
+    // in the harness.
+    const cause = new TypeError("a driver threw something else");
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage({ failOn: "startRun", failWith: cause });
+
+    const error = await createHarness({ agentRuntime, storage })
+      .run({ domain: triage, input: { vendorName: "Northwind" } })
+      .then(
+        () => undefined,
+        (thrown: unknown) => thrown,
+      );
+
+    expect(error).toBeInstanceOf(StorageError);
+    expect((error as StorageError).cause).toBe(cause);
+    expect((error as StorageError).details?.operation).toBe("startRun");
+  });
+
+  it("does not call the runtime at all when opening the run row fails", async () => {
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage({ failOn: "startRun" });
+
+    await expect(
+      createHarness({ agentRuntime, storage }).run({
+        domain: triage,
+        input: { vendorName: "Northwind" },
+      }),
+    ).rejects.toBeInstanceOf(StorageError);
+
+    // Nothing executed, so nothing was spent and there is no result to report.
+    expect(agentRuntime.calls).toEqual([]);
+  });
+
+  it("still writes the run row when the runtime itself fails", async () => {
+    const agentRuntime: AgentRuntime = {
+      // `_TInput` is unused: this fake rejects before it looks at the job.
+      run<_TInput, TOutput>(): Promise<AgentExecution<TOutput>> {
+        return Promise.reject(new Error("the adapter threw"));
+      },
+    };
+    const storage = createRecordingStorage();
+
+    const result = await createHarness({ agentRuntime, storage }).run({
+      domain: triage,
+      input: { vendorName: "Northwind" },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(storage.calls).toEqual(["saveJob", "startRun", "finishRun"]);
+    expect(storage.finishes[0]?.status).toBe("failed");
+  });
+
+  it("does not write the outcome when flushing the trace fails", async () => {
+    // The ledger row is the claim and the trace is the evidence. Writing a
+    // `completed` row whose trace was never persisted would leave a claim
+    // nobody can check; leaving a `running` row beside a broken flush is
+    // visibly incomplete instead.
+    const agentRuntime = createLocalAgentRuntime({
+      result: completedWith({ category: "bookkeeping" }),
+    });
+    const storage = createRecordingStorage();
+    const trace: TraceWriter = {
+      append: () => Promise.resolve(),
+      flush: () => Promise.reject(new StorageError("the sink is down")),
+    };
+
+    await expect(
+      createHarness({ agentRuntime, trace, storage }).run({
+        domain: triage,
+        input: { vendorName: "Northwind" },
+      }),
+    ).rejects.toBeInstanceOf(StorageError);
+
+    expect(storage.calls).toEqual(["saveJob", "startRun"]);
+    expect(storage.finishes).toEqual([]);
   });
 });
 

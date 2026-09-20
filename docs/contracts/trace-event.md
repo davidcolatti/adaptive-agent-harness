@@ -154,10 +154,13 @@ makes a stored trace auditable rather than merely informative.
 ### `attempt` is a number
 
 `ExecutionContext.attempt` is an ordinal and so is this. ADR-0030 defined an
-`AttemptId` brand and deliberately gave it no field; **where an attempt becomes
-a row with an id of its own is M2-T5's decision** (the run ledger). Putting a
-foreign key on this type before the table exists would be a guess. The ordinal
-is what "retrying creates a new attempt, not duplicate events" needs today.
+`AttemptId` brand and deliberately gave it no field, and **M2-T5 decided there
+is no attempts table**: an attempt is an ordinal on the run row and on this
+event, and `runs` is unique on `(job_id, attempt)`, which is what makes
+"retrying creates a new attempt, not duplicate events" a database rule rather
+than a convention. The milestone that introduces retries decides whether an
+attempt ever becomes a row of its own. See
+[ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md).
 
 ### The payload is identity-only
 
@@ -230,8 +233,11 @@ interface TraceSink {
 `TraceWriter` is the build plan's M2-T4 interface, unchanged. `TraceSink` is the
 harness-owned split underneath it: a writer owns buffering, ordering and failure
 semantics; a sink owns one storage medium and knows nothing about buffering.
-That is what lets one buffered writer serve a JSONL file today and M2-T5's
-Supabase table next, without either reimplementing the ordering guarantee.
+That is what lets one buffered writer serve the JSONL file and the Supabase
+`trace_events` table at once, without either reimplementing the ordering
+guarantee. `createStorageTraceSink({ storage })` and
+`createFanOutTraceSink([...])` in `@internal/trace` are what M2-T5 added; see
+[Persistence](#persistence) below.
 
 A sink implementation must write the batch in order, resolve only when the
 events are durable, reject on failure rather than swallowing, and tolerate being
@@ -275,8 +281,9 @@ produces the same line and a trace file is diffable and hashable.
 The directory sink exists because a run id is minted *inside* `harness.run()`,
 so a caller cannot name the file before the run starts; a sink sees the `runId`
 on every event it is handed. `pnpm example:run:mock` uses it, writing
-`apps/<agent>/.harness/traces/<runId>.jsonl` and printing the path. Until M2-T5,
-that file is the durable trace.
+`apps/<agent>/.harness/traces/<runId>.jsonl` and printing the path. It is
+written whether or not Supabase is configured, so there is always a local trace
+to read.
 
 ## Redaction
 
@@ -315,6 +322,43 @@ token at all. A verified `pnpm example:run:mock` writes the same six events with
 the same payload keys as before redaction was wired, and no `[REDACTED` anywhere
 in the file.
 
+## Persistence
+
+Events are stored in the `trace_events` table, one row per event, written
+through the [`Storage`](./storage.md) port by
+`createStorageTraceSink({ storage })` — a `TraceSink`, so it sits behind the
+same buffered writer and inherits its ordering, batching and retry behaviour
+rather than acquiring its own. `createFanOutTraceSink([jsonl, supabase])` puts
+several sinks behind one buffer, which is how the example writes both from one
+flush.
+
+The column mapping is one-to-one except where noted:
+
+| Field | Column | Note |
+|---|---|---|
+| `id` | `id` | `uuid`, harness-minted. `order by id` is creation order. |
+| `runId` | `run_id` | Foreign key to `runs`, `on delete cascade`. |
+| `attempt` | `attempt` | |
+| `sequence` | `sequence` | |
+| `timestamp` | **`occurred_at`** | Renamed: `timestamp` is a Postgres type name. |
+| `type` | `type` | `text` with a `check` constraint restating the closed taxonomy. |
+| `parentId` | `parent_id` | Self-referencing foreign key, so a dangling span pointer cannot be stored. |
+| `node` | `node` | Null until M4. |
+| `version` | `version` | The stored value is read back, not `TRACE_EVENT_VERSION`. |
+| `behaviorFingerprint` | `behavior_fingerprint` | |
+| `payload` | `payload jsonb` | |
+| `usage` | `usage jsonb` | |
+| `latencyMs` | `latency_ms` | |
+| `error` | `error jsonb` | |
+
+**`(run_id, sequence)` is unique**, and appending a batch is idempotent on it:
+the adapter upserts with `ON CONFLICT … DO NOTHING`, so the buffered writer's
+retry of a failed batch writes its rows once. The **first** write of a position
+wins, because a trace is append-only and a later write of the same position is a
+retry of the same event rather than a correction of it. That unique constraint's
+own index is also the index every trace read uses, so no second index on those
+two columns exists.
+
 ## How a run reads
 
 The mock example, end to end:
@@ -335,9 +379,10 @@ trace events, are in [`../architecture/runtime.md`](../architecture/runtime.md).
 
 ## Open for later milestones
 
-- **M2-T5** persists events (the `trace_events` table) and decides when an
-  attempt becomes a row with an `AttemptId`. It adds a Supabase `TraceSink`; the
-  writer does not change.
+- **M2-T5 is done**: events are persisted to `trace_events` through a
+  `TraceSink` over the `Storage` port, and the writer did not change. There is
+  no attempts table; see "`attempt` is a number" above and
+  [`storage.md`](./storage.md).
 - **M2-T8** is done: `createHarness()` resolves the domain's behavior source
   before `run.started` and passes the composite to the recorder, so every event
   of a run carries one `sha256:` value, and `run.started`'s payload carries the
@@ -346,7 +391,8 @@ trace events, are in [`../architecture/runtime.md`](../architecture/runtime.md).
 - **M2-T9** is done: redaction runs in a `TraceWriter` decorator above the
   buffer, covers a serialized error's `details`, and is documented in
   [`redaction.md`](./redaction.md).
-- **M2-T10**, the run inspector, is the first reader of a stored trace; today a
-  JSONL file and `jq` are the inspector.
+- **M2-T10**, the run inspector, is the first reader of a stored trace. It has
+  what it needs in `Storage.getRun`, `getJob` and `getTrace`; the JSONL file
+  remains as a second source for a run recorded with no database.
 - **M3** produces `decision.*`, **M4** produces `node.*`, `fallback.*` and the
   first non-`null` `node`, and **M6** produces `eval.completed`.

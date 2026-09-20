@@ -86,6 +86,7 @@ and related ADRs that motivated it.
 | [0033](0033-supabase-cli-as-a-pinned-dev-dependency-with-reset-as-the-reproducibility-gate.md) | The Supabase CLI is a pinned dev dependency, and `db reset` is the reproducibility gate | accepted |
 | [0034](0034-behavior-fingerprint-is-component-wise-and-supplied-by-the-domain.md) | The behavior fingerprint is component-wise, hashes content not source, and is supplied by the domain | accepted |
 | [0035](0035-redaction-is-a-trace-writer-decorator-placed-before-buffering.md) | Redaction is a `TraceWriter` decorator placed before buffering | accepted |
+| [0036](0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md) | `Storage` is a core port over a Supabase schema, and `runs` is the ledger | accepted |
 
 Entries 0001-0017 were recorded during Milestone 0 (M0-T8) from the build plan's architectural
 decisions (AD-001 through AD-016) and pre-M0 owner-decided product constraints, dated 2026-09-19
@@ -217,3 +218,25 @@ writes is high entropy on purpose and such a rule would redact the trace's own s
 implemented in `packages/trace/src/redaction.ts`, `secret-patterns.ts` and
 `redacting-trace-writer.ts`, wired in `apps/example-agent/src/run.ts`, and documented in
 `docs/contracts/redaction.md`.
+
+Entry 0036 records M2-T5, M2-T6 and M2-T7 together, because the schema, the migrations and the
+outcome ledger are one design rather than three. `Storage` is declared in `@internal/core`, which
+depends on nothing, and implemented twice — by `@internal/storage-supabase` over
+`@supabase/supabase-js` and by `createInMemoryStorage()` in `@internal/testing` — with one contract
+suite proving the two agree. Two acceptance criteria turn out to be properties of **ordering**
+rather than of anyone remembering to write a row: the job and the run row are saved before the first
+trace event, so a crash leaves an inspectable `running` row, and the outcome is written after the
+trace is flushed, so a `completed` row never outlives the evidence for it; every storage failure
+propagates out of `harness.run()` instead of becoming a result. `runs` is the ledger with every
+column the build plan names, `agent_version` holds the behavior fingerprint because a
+hand-maintained version string goes stale silently, and a new `target` column records which agent
+actually executed, closing ADR-0034's open question. There is **no attempts table**: an attempt is
+an ordinal, and `unique (job_id, attempt)` is what makes "retrying creates a new attempt" a database
+rule. Trace inserts are idempotent on `(run_id, sequence)`, so the buffered writer's retry cannot
+duplicate a run's narrative. Row-level security is enabled on all thirteen tables with no policies,
+and ADR-0030's open caveat is closed by measurement: `uuid` comparison on the pinned Postgres 17.6
+is unsigned bytewise and therefore equals the textual order, so `order by id` is creation order. It
+is implemented in `packages/core/src/storage.ts` and `harness.ts`,
+`packages/storage-supabase/src/supabase-storage.ts`, `packages/trace/src/storage-sink.ts` and
+`fan-out-sink.ts`, `packages/testing/src/in-memory-storage.ts` and `supabase/migrations/`, and
+documented in `docs/contracts/storage.md`.

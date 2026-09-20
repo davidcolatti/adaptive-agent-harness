@@ -5320,3 +5320,447 @@ All recorded in **ADR-0034**. The ones that are choices rather than restatements
 M2-T5's Supabase schema should persist `behavior_fingerprint` per trace event and carry the
 component digests plus **which target ran** on the run row, which is the one open question this
 task recorded rather than answered.
+
+## 2026-09-19 23:05 — M2-T5, M2-T6, M2-T7 — Storage port, Supabase schema and migrations, outcome ledger
+
+**Status:** started
+**Actor/session:** coding agent (Claude Opus 5, 1M context), delegated by the Fable orchestrator
+**Commit:** not committed
+
+### Goal
+
+Give the harness durable persistence: a `Storage` port in `@internal/core` that `createHarness()`
+talks to, the thirteen-table Supabase schema behind it as committed SQL migrations, and the
+outcome ledger as one query-friendly row per run. Three build-plan tasks, done together because
+they are one storage design: the port's shape, the tables it writes and the ledger columns are not
+separable decisions.
+
+### Implementation references
+
+- **package/version:** `@supabase/supabase-js@2.116.0`, installed into
+  `packages/storage-supabase` only, pinned exact (no range). Published 2026-09-07, twelve days
+  before this install, so pnpm's release-age gate did not trigger: `pnpm install` reported
+  `Lockfile passes supply-chain policies` and **`pnpm-workspace.yaml` is unchanged**, with no
+  `minimumReleaseAgeExclude` entry needed. It pulls eight transitive `@supabase/*` packages
+  (`auth-js`, `postgrest-js`, `realtime-js`, `storage-js`, `functions-js`, `node-fetch`,
+  `phoenix`, `gotrue-js`), all at 2.116.0 except `node-fetch@2.6.15` and `phoenix@0.4.5`.
+  The CLI stays at the separately pinned `supabase@2.117.0` (ADR-0033); the two are unrelated
+  packages that happen to share a version series.
+- **installed docs read:**
+  `node_modules/.pnpm/@supabase+supabase-js@2.116.0/node_modules/@supabase/supabase-js/AGENTS.md`
+  (which states that `src/` is the canonical version-pinned reference and every public method
+  carries TSDoc), `README.md` (`createClient`, custom `fetch`, tracing subpath), and
+  `migrations/README.md`.
+- **public types/exports inspected:**
+  - `@supabase/supabase-js` `src/index.ts`: `createClient<Database, SchemaNameOrClientOptions,
+    SchemaName>(url, key, options?)`, and the re-exported `PostgrestError` class and
+    `PostgrestSingleResponse`/`PostgrestResponse` types.
+  - `src/SupabaseClient.ts`: `from<TableName extends string & keyof Schema['Tables']>(relation)`
+    returning a typed `PostgrestQueryBuilder`; `schema()`; the `Database['__InternalSupabase']`
+    `PostgrestVersion` inference.
+  - `src/lib/types.ts` and `src/lib/constants.ts`: `SupabaseClientOptions`, `DEFAULT_DB_OPTIONS`
+    (`schema: 'public'`), `DEFAULT_AUTH_OPTIONS` (`autoRefreshToken`, `persistSession`,
+    `detectSessionInUrl` all default **true**, which is a browser default and wrong for a
+    server-side service-role client).
+  - `@supabase/postgrest-js@2.116.0` `src/PostgrestError.ts`: the failure shape is
+    `{ message, details, hint, code }` on an `Error` subclass, and its own TSDoc says to branch on
+    `code` rather than on `message` text and that `hint` carries the actionable fix.
+  - `src/types/types.ts`: `PostgrestResponseSuccess<T>` / `PostgrestResponseFailure` —
+    `{ data, error, count, status, statusText }`, never a throw. Every call site must read `error`.
+  - `src/PostgrestQueryBuilder.ts`: `insert(values, { count?, defaultToNull? })` and
+    `upsert(values, { onConflict?, ignoreDuplicates?, count?, defaultToNull? })`.
+    `ignoreDuplicates: true` sends `Prefer: resolution=ignore-duplicates`, which PostgREST turns
+    into `ON CONFLICT … DO NOTHING`; `onConflict` sets the `on_conflict` query parameter and must
+    name UNIQUE column(s). This is the documented mechanism the idempotent trace insert uses.
+  - `src/PostgrestTransformBuilder.ts`: `order(column, { ascending, nullsFirst, referencedTable })`,
+    `limit(rows)`, `range(from, to)` (0-based, inclusive), `single()`, `maybeSingle()`.
+- **official docs/repos/examples read:**
+  - <https://supabase.com/docs/guides/database/postgres/row-level-security> — a new table in
+    `public` starts with privileges granted to `anon`/`authenticated` and **RLS not enabled**; once
+    RLS is enabled with no policies, "no data is accessible through the API when using a
+    publishable key"; a secret key "authorizes access through the `service_role` Postgres role,
+    which has the `bypassrls` attribute", and bypasses RLS only when the request carries no user
+    access token.
+  - <https://supabase.com/docs/guides/api/api-keys> — the documented server-side pattern is
+    `createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!)`, passed "only in
+    code that never reaches a user's device". It documents no `auth` options for that pattern;
+    disabling `autoRefreshToken`/`persistSession`/`detectSessionInUrl` is therefore a
+    harness-owned choice, taken because the installed defaults are all `true` and are browser
+    behaviours (a refresh timer and `localStorage`) that a server process must not start.
+  - <https://supabase.com/docs/reference/javascript/initializing> — the `createClient` option list.
+- **`uuid` column ordering (ADR-0030's open caveat), verified rather than assumed:** neither
+  <https://www.postgresql.org/docs/17/datatype-uuid.html> nor
+  <https://www.postgresql.org/docs/18/functions-uuid.html> states how `uuid` values compare; the
+  first says only that a `uuid` is "a 128-bit quantity" and the second only that `uuidv7()`
+  generates a "version 7 (time-ordered) UUID". The property was therefore **measured** against the
+  running local Postgres 17.6, with the cases that would distinguish unsigned bytewise comparison
+  from a signed or textual one (variant nibbles `8`/`9`/`a`/`b`, and a byte crossing `0x80`):
+
+  ```sql
+  select (array_agg(id::text order by id) = array_agg(id::text order by id::text)) from t;
+  -- t
+  ```
+
+  `uuid` ordering equals lowercase textual ordering, so `order by id` on a UUIDv7 column is
+  creation order and the caveat is closed.
+- **selected documented pattern:** one `SupabaseClient<Database>` per `createSupabaseStorage()`,
+  built with `createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false,
+  persistSession: false, detectSessionInUrl: false } })`; every call reads `{ data, error }` and
+  maps a `PostgrestError` onto `StorageError` with `details` carrying `code`/`hint`/`message` and
+  never a key; `appendTraceEvents` uses
+  `upsert(rows, { onConflict: "run_id,sequence", ignoreDuplicates: true })` so a re-sent batch
+  creates no duplicate rows; reads use `order()` plus keyset ranges rather than offsets.
+- **not documented, therefore harness-owned:** the `Storage` port itself, the thirteen-table
+  schema, the ledger columns, the cursor shapes, and the decision to enable RLS with no policies on
+  every table. Recorded in ADR-0036.
+
+### Work completed
+
+Nothing yet; this entry is the pre-implementation checkpoint AD-011 and the source-of-truth
+protocol require.
+
+### Files changed
+
+- `packages/storage-supabase/package.json`, `pnpm-lock.yaml` (the pinned dependency only).
+
+### Verification
+
+- `npm view @supabase/supabase-js version` — 2.116.0, PASS (matches the version pinned).
+- `pnpm --filter @internal/storage-supabase add @supabase/supabase-js@2.116.0` — PASS,
+  `Lockfile passes supply-chain policies`, `pnpm-workspace.yaml` unchanged.
+- `pnpm supabase:start` — PASS (exit 0).
+- `uuid` ordering query above — PASS (`t`).
+
+### Decisions / deviations
+
+Recorded in the completion entry and in ADR-0036.
+
+### Known issues / blockers
+
+None.
+
+### Next exact step
+
+Write the five migrations, then the `Storage` port, the in-memory implementation, the Supabase
+adapter, the storage trace sink and the harness wiring.
+
+## 2026-09-19 23:40 — M2-T5, M2-T6, M2-T7 — Storage port, Supabase schema and migrations, outcome ledger
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, 1M context), delegated by the Fable orchestrator
+**Commit:** not committed
+
+### Goal
+
+As the `started` entry above. Three build-plan tasks done together because the port's shape, the
+tables it writes and the ledger's columns are one design rather than three.
+
+### Implementation references
+
+As recorded in the `started` entry above (`@supabase/supabase-js@2.116.0`, its installed `src/`,
+the PostgREST error and upsert semantics, the Supabase RLS and API-key docs, and the two Postgres
+`uuid` pages that turn out **not** to state the property that had to be checked).
+
+### Work completed
+
+- **The `Storage` port** (`packages/core/src/storage.ts`, new). Eight async methods, `RunRecord`
+  with every column M2-T7's list names, `RunStart`/`RunFinish`/`RunFilter`/`RunListCursor`/
+  `TraceCursor` and the two page types, `RUN_STATUSES` as a closed set, `resolvePageLimit()`, and
+  `parseRunRecord()` as the strict read boundary in the `parseJob` style. Re-exported by name from
+  `packages/core/src/index.ts`.
+- **Harness wiring** (`packages/core/src/harness.ts`). `CreateHarnessOptions.storage?: Storage` and
+  `CreateHarnessOptions.target?: string`. `saveJob` + `startRun` run after the job and fingerprint
+  exist and **before** `run.started` is recorded; `finishRun` runs in `finish()` **after** the trace
+  flush. A private `callStorage()` guarantees anything an implementation throws reaches the caller
+  as a `StorageError` with the cause preserved. A harness with no `storage` is unchanged.
+- **The Supabase adapter** (`packages/storage-supabase/src/supabase-storage.ts`, new).
+  `createSupabaseStorage({ url, serviceRoleKey, policy?, client? })`, typed with the generated
+  `Database`. Every `PostgrestError` becomes a `StorageError` carrying `code`, `hint` and `details`
+  and never a key, a URL or a row. `readTraceEvent()` is the row-to-event boundary, since M2-T3
+  defined events as something a recorder mints rather than something read back.
+- **The in-memory implementation** (`packages/testing/src/in-memory-storage.ts`, new). A real
+  implementation of the port, not a stub: it keys events on `(runId, sequence)` for the same reason
+  the database has a constraint on it, and puts everything through `parseJob`/`parseRunRecord` so a
+  test passing against it is testing the same contract a row has to satisfy.
+- **The storage sink and the fan-out sink** (`packages/trace/src/storage-sink.ts`,
+  `fan-out-sink.ts`, both new). `createStorageTraceSink({ storage })` takes the **port**, so the
+  in-memory implementation works behind it; `createFanOutTraceSink([...])` puts the JSONL file and
+  the database behind one buffered writer, one order and one flush.
+- **Five migrations** (`supabase/migrations/`), creating M2-T5's thirteen tables in dependency
+  order. The regenerated `packages/storage-supabase/src/database.types.ts` went from 49 to 694
+  lines.
+- **The example app** (`apps/example-agent/src/run.ts`). Uses storage when `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` are both set, and says on stderr which mode it is in either way. Its
+  `start` script gained `--env-file-if-exists=../../.env.local` (Node 24, verified in
+  `node --help`), so no variable has to be exported by hand.
+- **Docs**: new `docs/contracts/storage.md` and ADR-0036; updated `docs/contracts/README.md`,
+  `harness.md`, `trace-event.md`, `docs/decisions/README.md`, `docs/architecture/system-map.md`,
+  `docs/runbooks/supabase-local.md`, `docs/development/local-setup.md` and `commands.md`,
+  `supabase/migrations/README.md`, `.env.example`, and the M2-T5/T6/T7 subsections plus all six
+  outstanding acceptance criteria in the M2 status file.
+
+### Files changed
+
+New: `packages/core/src/storage.ts`, `storage.test.ts`;
+`packages/storage-supabase/src/supabase-storage.ts`, `index.test.ts`,
+`storage.contract.test.ts`, `supabase-schema.integration.test.ts`;
+`packages/trace/src/storage-sink.ts`, `storage-sink.test.ts`, `fan-out-sink.ts`,
+`fan-out-sink.test.ts`;
+`packages/testing/src/in-memory-storage.ts`, `in-memory-storage.test.ts`;
+`supabase/migrations/20260920030254_domains_and_jobs.sql`,
+`20260920030256_workflow_registry_tables.sql`, `20260920030258_runs_outcome_ledger.sql`,
+`20260920030300_trace_events_and_artifacts.sql`, `20260920030301_later_milestone_tables.sql`;
+`docs/contracts/storage.md`;
+`docs/decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md`.
+
+Changed: `packages/core/src/harness.ts`, `harness.test.ts`, `index.ts`;
+`packages/trace/src/index.ts`; `packages/testing/src/index.ts`;
+`packages/storage-supabase/src/index.ts`, `package.json`;
+`packages/storage-supabase/src/database.types.ts` (regenerated, never hand-edited);
+`apps/example-agent/src/run.ts`, `package.json`; `pnpm-lock.yaml`;
+`supabase/migrations/README.md`; `.env.example`; `docs/contracts/README.md`, `harness.md`,
+`trace-event.md`; `docs/decisions/README.md`; `docs/architecture/system-map.md`;
+`docs/runbooks/supabase-local.md`; `docs/development/local-setup.md`, `commands.md`;
+`docs/milestones/m2-job-trace-supabase-and-run-ledger.md`.
+
+**Unchanged on purpose:** `tests/architecture/boundaries.ts` and
+`tests/architecture/package-boundaries.test.ts`. `@internal/storage-supabase` was already a
+declared adapter and already listed in the workspace-discovery assertion, and `@supabase/*` was
+already adapter-only. `apps/example-agent` depending on the adapter *package* is not the same as
+depending on `@supabase/*`. `supabase/seed.sql` is also unchanged: `saveJob` upserts the domain
+row, so no seed has to be kept in step with the domains an application defines.
+
+### Verification
+
+Against a running local Supabase (`pnpm supabase:start`, exit 0):
+
+- `pnpm supabase:reset` — **PASS**. Applied all five migrations from an empty database, then
+  `seed.sql`, exit 0.
+- `pnpm supabase:types` twice, byte-compared between — **PASS**. The two generations are identical
+  (`diff -q`, exit 0).
+- The `uuid` ordering query (the ADR-0030 caveat) — **PASS**:
+  `select (array_agg(id::text order by id) = array_agg(id::text order by id::text)) from t;`
+  returns `t` for nine values chosen to cross the `0x80` byte boundary and to span the four
+  variant nibbles `8`/`9`/`a`/`b`. `uuid` comparison is unsigned bytewise and equals the lowercase
+  textual order, so `order by id` is creation order.
+- Row-level security, read from the catalog — **PASS**. All thirteen `public` tables report
+  `relrowsecurity = t` and `0` policies.
+- `pnpm vitest run --project contract packages/storage-supabase` — **PASS**, 45 tests in 1 file.
+  Verbose output confirms the Supabase leg **ran** rather than skipping: 22 cases under
+  `Storage contract: in-memory (@internal/testing)` and the same 22 under
+  `Supabase leg > Storage contract: supabase (@internal/storage-supabase)`, plus one construction
+  case. Among them: the durable run row and ordered trace, the idempotent re-insert (twice, and a
+  re-sent position keeping the first payload), the failed and aborted runs, the rejected duplicate
+  attempt, and "reconstructs a whole execution from storage alone".
+- `pnpm vitest run --project integration` — **PASS**, 31 tests. The thirteen tables exposed to the
+  service role; thirteen anon reads returning `[]` plus a refused anon insert (`42501`); the
+  `uuid` ordering against ten real rows; the taxonomy check constraint refusing `run.exploded`
+  (`23514`) and accepting all 25 valid types; and a trace event for a non-existent run refused
+  (`23503`).
+- `pnpm typecheck` — **PASS**, 8 packages.
+- `pnpm test` (all four projects) — **PASS**, 855 tests across 47 files, up from 691/40.
+- `pnpm example:run:mock` with both variables set — **PASS**, exit 0, `completed`, printing
+  `Run row written to http://127.0.0.1:54321 as runs.id = 01a0bcd7-1256-7001-b00d-60e9296aa3d0`.
+  Queried back: one `runs` row with `status = completed`, `success = t`, `attempt = 1`,
+  `model_calls = 1`, `tool_calls = 0`, `jev_calls = 0`, `fallback_count = 0`, `latency_ms = 173`,
+  `runtime_name = eve`, `runtime_version = 0.63.0`, `runtime_metadata` carrying the eve session and
+  turn ids, `agent_version = sha256:c0ab81341295c366…`, `target = @internal/eve-fixture-agent`, and
+  `error` null; `select count(*) from trace_events where run_id = …` returns **6**, sequences 0–5,
+  `run.started`, `agent.started`, `model.started`, `model.completed`, `agent.completed`,
+  `run.completed`, with `parent_id` set on the four non-`run.*` events.
+- `pnpm example:run:mock` with the two variables unset, Supabase still up — **PASS**, exit 0. It
+  printed `No Supabase storage: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are not set.`,
+  `"storage": null` in the summary, and wrote only the JSONL trace.
+
+After `pnpm supabase:stop` (exit 0):
+
+- `pnpm example:run:mock` with no `.env.local` — **PASS**, exit 0, JSONL only.
+- `pnpm example:run:mock` with `.env.local` still present and the database **down** — **exit 1**,
+  and that is correct rather than a failure of this task: it stops with
+  `StorageError: supabase storage: \`saveJob\` failed: TypeError: fetch failed` instead of
+  reporting a run nothing recorded. That is "storage failures cannot silently turn into successful
+  runs" observed end to end rather than only in a unit test.
+- `pnpm format:check` — **PASS**. `pnpm lint` — **PASS**. `pnpm check` — **PASS** (all six stages;
+  `check:handoff — OK`). With Supabase stopped, `pnpm test` reports
+  `Test Files 46 passed | 1 skipped (47)` and `Tests 801 passed | 40 skipped (855)`, and both
+  Supabase suites print why they skipped.
+
+### Decisions / deviations
+
+Full reasoning in ADR-0036. The ones worth reading here:
+
+- **The three tasks were done as one.** The port's shape, the schema and the ledger columns are not
+  separable decisions, and splitting them would have meant deciding the same things three times.
+- **No attempts table**, as the recommendation anticipated. An attempt is an ordinal on the run row
+  and on each trace event, `unique (job_id, attempt)` is the rule, and ADR-0030's `AttemptId` brand
+  stays unused until the milestone that introduces retries.
+- **`target` is on `CreateHarnessOptions`, not on `HarnessRunInput`.** It identifies the deployment
+  rather than the work: one harness is built against one agent and runs many jobs through it, so
+  per-run would be the same string repeated with a chance to get it wrong.
+- **`@internal/storage-supabase` depends on `@internal/trace`.** The dependency diagram already
+  puts storage under trace. It is needed because the adapter redacts the **run row's `error` and
+  `runtime.metadata`**, which no writer chain reaches: ADR-0026 says a serialized error's `details`
+  is not a redaction boundary, so redacting the trace's copy of a value while leaving the ledger's
+  copy alone would be an inconsistency with a secret in it. The storage sink also applies
+  `redactEvents` as ADR-0035's belt and braces; redaction is idempotent, so the second pass changes
+  nothing when the first ran, which `storage-sink.test.ts` asserts.
+- **No second index on `(run_id, sequence)`.** The task's phrasing asked for a unique constraint
+  *and* an index; the constraint's own btree index is exactly the index every trace read uses, so a
+  second one would be byte-for-byte redundant. Recorded in the migration and the ADR.
+- **The trace event type is a `check` constraint, not a Postgres enum**, so adding a type does not
+  churn a type object that `database.types.ts` and everything downstream depend on. It renders as
+  `string` and still refuses a value outside the taxonomy, which the integration suite proves.
+- **The Supabase leg of the storage suite is a `contract` test, not an `integration` one.** Its
+  purpose is proving two implementations of one port agree, which is the `contract` project's
+  definition and would be meaningless against one of them. Schema facts — thirteen tables, RLS,
+  `uuid` ordering, the check constraint — went to `supabase-schema.integration.test.ts` instead.
+  Precedent: `eve-agent-runtime.contract.test.ts` already starts a real `eve dev` server.
+- **`domains.organization_id` exists, defaulting to `local`,** so AD-008's outermost learning scope
+  is a `where` rather than a future migration. No organizations table and no tenancy model.
+- **The service-role client disables `autoRefreshToken`, `persistSession` and
+  `detectSessionInUrl`,** all of which the installed package defaults to `true`. The official docs
+  show the server-side pattern without them and document no `auth` options for it, so this is a
+  harness-owned choice: they are browser behaviours (a refresh timer that keeps a Node process
+  alive, storage a server has no business having, a URL fragment that does not exist).
+- **`createFanOutTraceSink()` is a small addition that was not asked for.** The example wants both
+  the JSONL file and the database, and two `TraceWriter`s would each buffer separately, so a crash
+  between their flushes would leave two traces that disagree. One writer over several sinks keeps
+  one buffer, one order and one flush. Its failure semantics are in the ADR.
+- **A job is deliberately not redacted.** Its `input` is the work itself, and a harness that stored
+  a redacted job could not replay one.
+- **The example run prints the Supabase URL, never a key**, and no key value appears in any file,
+  document, WORKLOG entry or commit message, per ADR-0033's unconditional rule.
+
+### Known issues / blockers
+
+- **There is no cross-call transaction.** PostgREST is request-per-call, so `saveJob` + `startRun`
+  is two requests and a failure between them leaves a job row with no run. That is a visible,
+  recoverable state — a job nothing references — rather than a corrupt one, and the run itself
+  fails loudly. A future need for atomicity means a Postgres function called over RPC, not a second
+  driver.
+- **`listRuns` cannot filter by organization.** `organization_id` is on `domains` and the filter
+  would need a join; adding it before a second organization exists would be designing for a case
+  that does not.
+- **The CLI's migration timestamps are second-resolution.** Five migrations created in a loop
+  collided and sorted by name, which put `runs` ahead of the `workflow_versions` it references.
+  They were recreated one per second and `supabase/migrations/README.md` now warns about it, but
+  the next person creating several at once has to check the resulting order.
+- **A fan-out retry can duplicate lines in the local JSONL file.** The fan-out sink fails the write
+  when any sink failed, so the buffered writer retries the batch to every sink; the Supabase sink is
+  idempotent and the JSONL sink appends. The durable store stays exact; the convenience file may
+  repeat itself after a transient database failure.
+- **The `supabase-types` CI job has still never run.** It was added by M2-T11 and there has been no
+  CI run since; this task is the first that would actually give it something to diff.
+- `pnpm example:run` against a live Gateway model remains unverified: no credential.
+
+### Next exact step
+
+**M2-T10, the local run inspector** (`pnpm harness run show <run-id>`), which is the last open task
+in this milestone. Everything it needs is already on the port: `Storage.getRun()` gives the job
+reference, the route-relevant columns, the cost, the timings and the fingerprints;
+`Storage.getJob()` gives the job through `parseJob()`; and `Storage.getTrace()` gives the ordered
+timeline with its model, tool and (from M3) decision events, parent links, usage and errors. The
+one design question it has to answer is whether it also reads the JSONL file, which is the only
+record a run made with no database leaves.
+
+## 2026-09-19 23:58 — M2-T5, M2-T7 — Addendum: a configured-but-unreachable Supabase must fail readably
+
+**Status:** completed
+**Actor/session:** coding agent (Claude Opus 5, 1M context), on review feedback from the orchestrator
+**Commit:** not committed
+
+### Goal
+
+Fix the *presentation* of a failure the previous entry verified was correct. With `.env.local`
+present and Supabase stopped, `pnpm example:run:mock` exited 1 — which is right — but did it by
+letting an uncaught `StorageError` reach the top level, printing a stack trace, and only after
+paying for an `eve dev` server it then threw away. The behaviour stays; the noise goes.
+
+It also corrects an ambiguity in the previous entry's verification list. Both cases were run and
+both were recorded there, but the summary read as though "exit 0 after `pnpm supabase:stop`" held
+unconditionally. It does not: that run had `.env.local` moved aside
+(`mv .env.local .env.local.bak`). With the file present and the database down the run exits 1, and
+that is the intended behaviour rather than a defect.
+
+### Work completed
+
+- `apps/example-agent/src/run.ts`: a `reportStorageFailure()` that prints **one** stderr block with
+  the `SUPABASE_URL` (never the key), the underlying message, and the two ways out; no stack. It is
+  called from three places: a `StorageError` thrown while constructing the storage, the new
+  preflight, and a `StorageError` out of `harness.run()`. Each returns exit 1. **Every other error
+  keeps its previous behaviour** and propagates with its stack, because an unexpected defect is
+  exactly the case where a stack is worth having.
+- **A reachability preflight was added** (the orchestrator left it optional; it is worth it). It
+  runs **before** `startEveDevServer`, so a database that was never up costs one HTTP request
+  rather than a compile and a boot. It is `storage.listRuns({}, { limit: 1 })` — a real call
+  through the **port**, not a bespoke health check or a reach into the adapter's client — so it
+  exercises the same URL, the same key and the same PostgREST surface the run will use, and a URL
+  that answers but rejects the key fails here too. It fails with the same message shape, because
+  the formatting lives in one function.
+- **No silent fallback.** When storage is configured and unreachable the run stops; it never
+  downgrades to a JSONL-only success. The message says so explicitly, so nobody has to infer it.
+- `docs/runbooks/supabase-local.md`: a new "Once `.env.local` exists, the example run requires
+  Supabase to be up" section with the three-case table, the verbatim failure output, the two ways
+  out, and a note that `pnpm check` and CI have no `.env.local` and stay JSONL-only.
+- The file header comment in `run.ts` gained the same three-case statement.
+
+### Files changed
+
+- `apps/example-agent/src/run.ts`
+- `docs/runbooks/supabase-local.md`
+- `docs/progress/WORKLOG.md` (this entry)
+
+### Verification
+
+- **(a) Supabase stopped, `.env.local` present** — exit 1, and the eve server is never started
+  (no `Starting an eve dev server...` line). Output, verbatim and complete:
+
+  ```text
+  Supabase storage is configured (SUPABASE_URL=http://127.0.0.1:54321) but unreachable: supabase storage: `listRuns` failed: TypeError: fetch failed
+
+  Start it with `pnpm supabase:start`, or remove SUPABASE_URL and
+  SUPABASE_SERVICE_ROLE_KEY (or `.env.local`) to run JSONL-only.
+
+  This run is **not** falling back to a JSONL-only trace. Storage was asked for, so a
+  run that storage never recorded is not a run to report as anything but a failure
+  (Milestone 2: storage failures cannot silently turn into successful runs).
+
+  See docs/runbooks/supabase-local.md.
+  ```
+
+  No stack trace. PASS.
+- **(b) `.env.local` moved aside, Supabase still stopped** — exit 0. Printed
+  `No Supabase storage: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are not set.`,
+  `"storage": null`, `"status": "completed"`, and a JSONL trace path. PASS.
+- **(c) Supabase started, `.env.local` restored** — exit 0, `"storage": "http://127.0.0.1:54321"`,
+  `"status": "completed"`, and both
+  `Run row written to http://127.0.0.1:54321 as runs.id = 01a0bce9-d971-7001-98b0-11640be5c902`
+  and the matching `trace_events` line. Queried back: the `runs` row is
+  `completed / success = t / target = @internal/eve-fixture-agent / model_calls = 1 /
+  latency_ms = 167`, and `trace_events` has **6** rows for that run. PASS.
+- `pnpm supabase:stop` — exit 0. Supabase left stopped, `.env.local` left in place.
+- `pnpm check` — **PASS**, all six stages, `Tests 801 passed | 40 skipped (855)`,
+  `check:handoff — OK`.
+
+### Decisions / deviations
+
+- **The preflight is a port call, not a ping.** `listRuns({}, { limit: 1 })` costs one indexed
+  query against an empty-or-small table and proves the whole path: DNS, the port, PostgREST, the
+  key and the schema cache. A `HEAD` to the URL would pass against a stack whose database is not
+  ready and against a wrong key.
+- **The preflight runs before the eve server, not inside the `try` that owns it.** That is the
+  entire reason for adding it: the failure now costs one request instead of a compile and a boot.
+- **Only `StorageError` is caught.** A `ValidationError` from a malformed URL, and anything else,
+  still propagates with its stack. Catching more would hide defects behind a friendly message.
+
+### Known issues / blockers
+
+- **`pnpm example:run` (the live target) shares this path**, so a developer with `.env.local` and a
+  stopped database now sees this message before the credential check has any effect. That ordering
+  is deliberate — the cheaper check runs first — but it means the two failure messages can be met
+  in either order depending on what is missing.
+- The rest of the previous entry's known issues are unchanged.
+
+### Next exact step
+
+Unchanged: **M2-T10, the local run inspector**.

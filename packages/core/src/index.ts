@@ -215,6 +215,32 @@ export type {
 } from "./schema.js";
 export { assertIsSchema, isSchema, validateWith } from "./schema.js";
 
+// The `Storage` port (M2-T5) and the outcome ledger row (M2-T7; ADR-0036).
+// Declared here, implemented by `@internal/storage-supabase` and by
+// `createInMemoryStorage()` in `@internal/testing`, because "core cannot import
+// Supabase" (build plan section 4).
+export type {
+  RunFilter,
+  RunFinish,
+  RunListCursor,
+  RunPage,
+  RunRecord,
+  RunStart,
+  RunStatus,
+  Storage,
+  TraceCursor,
+  TracePage,
+} from "./storage.js";
+export {
+  DEFAULT_RUN_PAGE_SIZE,
+  DEFAULT_TRACE_PAGE_SIZE,
+  isRunStatus,
+  MAX_PAGE_SIZE,
+  parseRunRecord,
+  RUN_STATUSES,
+  resolvePageLimit,
+} from "./storage.js";
+
 // The trace contract (M2-T3) and the run-scoped recorder that owns a run's
 // event order (M2-T3/M2-T4; ADR-0031). `TraceWriter` is the interface M2-T4
 // states verbatim; the buffered implementation lives in `@internal/trace`.

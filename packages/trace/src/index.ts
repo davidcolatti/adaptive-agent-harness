@@ -29,6 +29,10 @@ export {
   createBufferedTraceWriter,
   DEFAULT_MAX_BUFFERED_EVENTS,
 } from "./buffered-trace-writer.js";
+// One buffered writer over several sinks (M2-T5): the JSONL file beside the
+// agent and the Supabase `trace_events` table see the same events in the same
+// order, because there is still one buffer and one flush.
+export { createFanOutTraceSink } from "./fan-out-sink.js";
 export type { JsonlDirectoryTraceSink } from "./jsonl-sink.js";
 export { createJsonlDirectoryTraceSink, createJsonlFileTraceSink } from "./jsonl-sink.js";
 export type {
@@ -62,3 +66,7 @@ export type { SecretPatternRule } from "./secret-patterns.js";
 export { DEFAULT_SECRET_PATTERN_RULES } from "./secret-patterns.js";
 export type { InMemoryTraceSink, TraceSink } from "./sink.js";
 export { createInMemoryTraceSink } from "./sink.js";
+// The sink that drains a run's trace into a `Storage` (M2-T5; ADR-0036). It
+// takes the port, not Supabase, so the in-memory implementation works too.
+export type { CreateStorageTraceSinkOptions } from "./storage-sink.js";
+export { createStorageTraceSink } from "./storage-sink.js";

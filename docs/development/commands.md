@@ -15,6 +15,11 @@ Listed in the order they appear in `package.json`.
 | `pnpm check:handoff` | `node scripts/verify-handoff.ts` | Verify `docs/context/current-state.md` and `docs/progress/WORKLOG.md` are present and internally consistent (completed entries have verification results; referenced ADRs exist). Runs as the last stage of `pnpm check`. |
 | `pnpm example:run` | `turbo run build --filter=@internal/example-agent && pnpm --filter @internal/example-agent run start` | Run the vendor-triage example end to end through the harness API against `apps/example-agent`. **Needs an AI Gateway credential** (`AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`); it exits 1 with a message naming `.env.example` when neither is set. Prints the `HarnessRunResult` as JSON and exits non-zero unless the run completed. |
 | `pnpm example:run:mock` | the same, with `--mock` | The same path against `apps/eve-fixture-agent`, whose model is eve's `mockModel`. **No credential.** Real eve server, real durable session, real domain and schema; only the model is scripted. This is the one to run to check the harness path still works. |
+
+Both example commands load `.env.local` through Node 24's `--env-file-if-exists`, so a run is
+recorded in Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are both in it, and
+writes only its JSONL trace otherwise. Either way it exits 0 on a completed run and says on stderr
+which mode it was in; see [`../runbooks/supabase-local.md`](../runbooks/supabase-local.md).
 | `pnpm dev` | `turbo run dev` | Start every package's watch build (`tsc --watch`). Persistent and uncached. |
 | `pnpm format` | `biome format --write .` | Rewrite files to Biome's formatting. Use while editing; this is the fix-it counterpart of `format:check`. |
 | `pnpm format:check` | `biome format .` | Formatting check only, no writes. First stage of `pnpm check`; fails on an unformatted file. |
@@ -112,6 +117,11 @@ select one with `vitest run --project <name>`.
 | --- | --- | --- |
 | `*.test.ts` | `unit` | The default layer. No live model calls: fake agent runtime, fake decision engine, fake tools, in-memory registries. |
 | `*.integration.test.ts` | `integration` | May use a local Supabase. Still avoids live model calls unless explicitly tagged. |
+
+The `Storage` contract suite and the schema integration suite both **skip with a printed reason**
+when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are not set, so `pnpm check` passes on a
+machine with no Docker. The runbook's "run the storage tests against a real database" section is
+how to actually run them.
 | `*.contract.test.ts` | `contract` | Validates adapter compatibility for `AgentRuntime`, `DecisionEngine`, `Storage`, `WorkflowExecutor` and `SourceControlPublisher`. Every implementation of a port runs the same contract suite. |
 | `*.replay.test.ts` | `replay` | Historical / frozen evidence, replayed without re-research. |
 

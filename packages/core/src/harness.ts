@@ -16,14 +16,16 @@ import type { DomainDefinition } from "./domain.js";
 import {
   AgentExecutionError,
   type SerializedHarnessError,
+  StorageError,
   serializeError,
   ValidationError,
 } from "./errors.js";
 import { deepFreeze } from "./freeze.js";
-import { type JobId, newRunId, type RunId } from "./ids.js";
+import { type JobId, newRunId, type RunId, type WorkflowVersionId } from "./ids.js";
 import type { Job } from "./job.js";
 import type { JsonObject } from "./json.js";
 import { validateWith } from "./schema.js";
+import type { RunStatus, Storage } from "./storage.js";
 import {
   createNoopTraceWriter,
   createTraceRecorder,
@@ -75,19 +77,53 @@ const SYSTEM_CLOCK: Clock = {
 /**
  * What {@link createHarness} accepts.
  *
- * **`storage` is deliberately absent.** The build plan's target API names it,
- * and M2 is the milestone that defines the `Storage` contract (the run ledger,
- * the trace persistence and the Supabase adapter behind it). Declaring a
- * placeholder type here would publish a guess as a contract and force M2 to
- * break it; omitting the option is honest, and adding an optional field later
- * is not a breaking change. Until then a run leaves its record through
- * {@link CreateHarnessOptions.trace}.
+ * `storage` completes the build plan's target API,
+ * `createHarness({ agentRuntime, storage })`. M1 deliberately omitted it rather
+ * than publishing a guess as a contract; M2-T5 defines the {@link Storage} port
+ * and this is where it attaches.
  */
 export interface CreateHarnessOptions {
   /** The runtime every run is executed through. */
   readonly agentRuntime: AgentRuntime;
   /** Where run trace events go. Defaults to a no-op writer. */
   readonly trace?: TraceWriter;
+  /**
+   * Durable storage for jobs and the run ledger (M2-T5, M2-T7).
+   *
+   * **Optional, and a harness without one behaves exactly as it did before.**
+   * Local development stays a first-class path (north-star invariant 15): a run
+   * with no storage still produces a full ordered trace through
+   * {@link CreateHarnessOptions.trace}, which is what `pnpm example:run:mock`
+   * relies on to work with no database at all.
+   *
+   * When present, every run saves its job and creates its ledger row **before**
+   * the first trace event, and writes its outcome after the trace is flushed.
+   * A storage failure comes out of `run()` as a {@link StorageError} rather
+   * than being swallowed; see {@link Harness.run}.
+   *
+   * Persisting trace *events* is not done here. That is a `TraceSink` over the
+   * same `Storage` (`createStorageTraceSink()` in `@internal/trace`), so the
+   * events go through the buffered, order-preserving, redacting writer chain
+   * instead of a second path with its own ordering rules.
+   */
+  readonly storage?: Storage;
+  /**
+   * Which application or agent this harness executes, recorded on every run
+   * row, e.g. `@internal/eve-fixture-agent`.
+   *
+   * **On the harness rather than on a run**, because it identifies the
+   * deployment rather than the work: one harness is constructed against one
+   * agent and runs many jobs through it, so stating it per run would be the
+   * same string repeated with an opportunity to get it wrong. A caller that
+   * genuinely switches targets constructs a second harness, which is what
+   * `apps/example-agent/src/run.ts` does.
+   *
+   * It exists because a behavior fingerprint describes a *domain*: the same
+   * domain run against a mock agent and a live one shares a fingerprint, and
+   * without this the ledger could not tell them apart (ADR-0034's open
+   * question).
+   */
+  readonly target?: string;
   /** The time source used for trace timestamps. Defaults to the system clock. */
   readonly clock?: Clock;
 }
@@ -194,6 +230,14 @@ export interface Harness {
    * {@link HarnessRunResult}: both of these happen while a run is still being
    * prepared, so there is no run to report a failure against and nothing has
    * been spent.
+   *
+   * @throws {StorageError} if the trace writer's flush fails, or if any
+   * {@link Storage} call fails. **A storage failure is never turned into a
+   * result**, successful or otherwise: a run whose job, ledger row or trace was
+   * not written is not a run anyone can inspect, evaluate or replay, so
+   * reporting it as `completed` would put a false record into the dataset the
+   * whole milestone exists to make trustworthy. This is Milestone 2's "storage
+   * failures cannot silently turn into successful runs".
    */
   run<TInput, TOutput>(input: HarnessRunInput<TInput, TOutput>): Promise<HarnessRunResult<TOutput>>;
 }
@@ -255,6 +299,40 @@ function mergeMetadata(base: JsonObject, override: JsonObject | undefined): Json
 }
 
 /**
+ * Run one {@link Storage} call, guaranteeing that whatever it throws reaches
+ * the caller as a {@link StorageError} with the cause preserved.
+ *
+ * The port says every implementation rejects with `StorageError`. This does not
+ * trust that, for the same reason `run()` already contains a runtime adapter
+ * that throws instead of returning a failure: a defect in an implementation
+ * must not become a defect in the harness, and a caller that catches
+ * `StorageError` should not also have to catch whatever a driver felt like
+ * raising. An implementation that already obeys the contract passes through
+ * unchanged, so the guard costs nothing when it is not needed.
+ *
+ * It deliberately does **not** catch and continue. The failure propagates; that
+ * is the point.
+ */
+async function callStorage<TResult>(
+  operation: string,
+  runId: RunId,
+  call: () => Promise<TResult>,
+): Promise<TResult> {
+  try {
+    return await call();
+  } catch (cause) {
+    if (cause instanceof StorageError) {
+      throw cause;
+    }
+
+    throw new StorageError(`storage: \`${operation}\` failed`, {
+      cause,
+      details: { operation, runId },
+    });
+  }
+}
+
+/**
  * Create a {@link Harness}.
  *
  * ```ts
@@ -271,9 +349,10 @@ function mergeMetadata(base: JsonObject, override: JsonObject | undefined): Json
  * to be reset.
  */
 export function createHarness(options: CreateHarnessOptions): Harness {
-  const { agentRuntime } = options;
+  const { agentRuntime, storage } = options;
   const trace = options.trace ?? createNoopTraceWriter();
   const clock = options.clock ?? SYSTEM_CLOCK;
+  const target = options.target ?? null;
 
   if (typeof agentRuntime?.run !== "function") {
     throw new ValidationError("createHarness: `agentRuntime` must implement `run(job, context)`", {
@@ -333,6 +412,46 @@ export function createHarness(options: CreateHarnessOptions): Harness {
     //    succeed (ADR-0031, M2-T3's reason for leaving the field `null`).
     const behavior = await resolveBehaviorFingerprint(domain.behavior);
 
+    const startedAtInstant = clock.now();
+    const startedAt = startedAtInstant.getTime();
+
+    // 5. Persist the job and open the run's ledger row, **before the first
+    //    trace event exists** (M2-T5/M2-T7). The order is the contract: a
+    //    trace event whose run has no row would be evidence of an execution
+    //    the ledger denies happened, and a process that dies mid-run then
+    //    leaves a `running` row rather than nothing at all, which is what
+    //    "a failed run remains inspectable" needs.
+    //
+    //    A failure here comes straight out of `run()`. Nothing has executed,
+    //    so there is no result to report and no usage to account for; the one
+    //    wrong answer would be to carry on and return `completed` for a run
+    //    that was never recorded.
+    if (storage !== undefined) {
+      await callStorage("saveJob", runId, () => storage.saveJob(effectiveJob));
+      await callStorage("startRun", runId, () =>
+        storage.startRun({
+          runId,
+          jobId: effectiveJob.id,
+          attempt,
+          domain: effectiveJob.domain,
+          jobType: effectiveJob.jobType,
+          behaviorFingerprint: behavior?.fingerprint ?? null,
+          // The behavior fingerprint *is* the agent version (M2-T7). A
+          // hand-maintained version string is the one that stops tracking
+          // reality without anyone noticing.
+          agentVersion: behavior?.fingerprint ?? null,
+          // M4 supplies one; a run that executes the full agent has none, and
+          // that is the honest value rather than a missing one.
+          workflowVersionId: null satisfies WorkflowVersionId | null,
+          target,
+          // The adapter has not spoken yet, so this is the harness saying so.
+          // `finishRun` overwrites it with whichever runtime actually ran.
+          runtime: HARNESS_RUNTIME_INFO,
+          startedAt: startedAtInstant.toISOString(),
+        }),
+      );
+    }
+
     // The run's single sequence owner (M2-T3/M2-T4, ADR-0031). The harness's
     // `run.*` events and the adapter's `agent.*`/`model.*`/`tool.*` events go
     // through this one recorder, which is why a run now has one total order
@@ -377,8 +496,6 @@ export function createHarness(options: CreateHarnessOptions): Harness {
       behaviorFingerprint: behavior,
     } as const;
 
-    const startedAt = clock.now().getTime();
-
     await emit(RUN_EVENTS.started, {
       jobId: effectiveJob.id,
       domain: effectiveJob.domain.id,
@@ -406,18 +523,54 @@ export function createHarness(options: CreateHarnessOptions): Harness {
      * criterion: a run whose trace was not persisted is not a run anyone can
      * inspect, evaluate or replay, so reporting it as `completed` would be a
      * false record (ADR-0031).
+     *
+     * **The ledger is written after the flush, for the same reason.** The run
+     * row is the claim that a run reached this outcome, and the trace is the
+     * evidence for it; writing the claim first and then failing to write the
+     * evidence would leave a `completed` row no one can verify. Failing in the
+     * other order leaves a `running` row beside a complete trace, which is
+     * visibly incomplete rather than quietly wrong. A `finishRun` failure also
+     * propagates, so the run is never reported as completed.
      */
     const finish = async <TResult extends HarnessRunResult<TOutput>>(
       type: TraceEventType,
       payload: JsonObject,
       result: TResult,
     ): Promise<TResult> => {
+      const finishedAt = clock.now();
+
       await emit(type, payload, {
         usage: traceUsage(result.usage),
-        latencyMs: Math.max(0, clock.now().getTime() - startedAt),
+        latencyMs: Math.max(0, finishedAt.getTime() - startedAt),
         error: result.status === "failed" ? result.error : null,
       });
       await recorder.flush();
+
+      if (storage !== undefined) {
+        await callStorage("finishRun", runId, () =>
+          storage.finishRun({
+            runId,
+            status: result.status satisfies Exclude<RunStatus, "running">,
+            // `null` for an aborted run: a run nobody finished has no success
+            // value, and `false` would file a cancellation as a defect.
+            success: result.status === "aborted" ? null : result.status === "completed",
+            costUsd: result.usage.costUsd ?? null,
+            latencyMs: Math.max(0, finishedAt.getTime() - startedAt),
+            modelCalls: result.usage.modelCalls,
+            toolCalls: result.usage.toolCalls,
+            // Real zeros, not placeholders: a run today makes no Jev calls
+            // (M3) and takes no fallback (M5).
+            jevCalls: 0,
+            fallbackCount: 0,
+            // Now the adapter has spoken, so the row gets the runtime that
+            // actually ran rather than the harness placeholder `startRun` wrote.
+            runtime: result.runtime,
+            finishedAt: finishedAt.toISOString(),
+            error: result.status === "failed" ? result.error : null,
+          }),
+        );
+      }
+
       return result;
     };
 

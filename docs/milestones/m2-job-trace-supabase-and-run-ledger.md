@@ -294,7 +294,49 @@ Use a buffered writer locally but preserve event order.
 
 ### M2-T5, Supabase schema
 
-**Status:** in_progress.
+**Status:** completed (2026-09-19).
+
+**Result.** The schema exists, and so does the thing that writes it: a `Storage` **port** in
+`@internal/core` (`packages/core/src/storage.ts`), because the dependency rule forbids core from
+importing Supabase. Eight methods — `saveJob`, `startRun`, `finishRun`, `getRun`, `getJob`,
+`listRuns`, `appendTraceEvents`, `getTrace` — each `async`, each rejecting with `StorageError`
+(cause preserved) on a store failure and `ValidationError` on a caller error, plus `RunRecord` and
+`parseRunRecord()` as the strict read boundary in the `parseJob` style. It is implemented **twice**:
+`createSupabaseStorage()` in `@internal/storage-supabase`, and `createInMemoryStorage()` in
+`@internal/testing`. Both run one `storage.contract.test.ts` suite, which is what makes them
+interchangeable in fact rather than by assertion (build plan section 8).
+
+Thirteen tables, exactly the list below. Stable metadata in columns, versioned payloads in `jsonb`.
+Every id column is `uuid` with **no database default**, because ids are harness-minted UUIDv7
+(ADR-0030) and a database-generated id would be a second, conflicting identity. **ADR-0030's open
+caveat is closed by measurement**: neither the Postgres 17 nor the 18 documentation states how
+`uuid` values compare, so it was tested against the running Postgres 17.6 with the cases that
+distinguish unsigned bytewise comparison from a signed one, and
+`array_agg(id::text order by id) = array_agg(id::text order by id::text)` returned true. `order by
+id` is creation order; `supabase-schema.integration.test.ts` keeps checking it against real rows.
+
+The nine later-milestone tables get their **minimal keyed shape only** — identity, the foreign keys
+that fix how they relate, a timestamp, one `payload jsonb`, and a comment naming the milestone that
+fills them. Their columns are not invented. **Row-level security is enabled on all thirteen with no
+policies**: the harness connects as `service_role`, which holds `bypassrls`, and the integration
+suite proves with a real anon client that `anon` reads nothing from any of them and cannot insert.
+
+`@supabase/supabase-js@2.116.0` is an exact pin in `packages/storage-supabase` only, with an
+assertion test in the ADR-0024 style; pnpm's release-age gate did not trigger and
+`pnpm-workspace.yaml` is unchanged. The package also depends on `@internal/trace`, which the
+dependency diagram already allows (storage sits under trace), because it is the last code before
+persistence and redacts what it writes. Trace events reach the database through a `TraceSink`,
+`createStorageTraceSink({ storage })`, so they keep the buffered writer's ordering, batching and
+retry guarantees rather than acquiring a second set; `createFanOutTraceSink()` puts the JSONL file
+and the database behind one buffer and one flush.
+
+`tests/architecture/boundaries.ts` needed **no change**: `@internal/storage-supabase` was already a
+declared adapter and `@supabase/*` already adapter-only. `apps/example-agent` depending on the
+adapter *package* is not the same as depending on `@supabase/*`, which stays adapter-only for
+applications.
+
+Recorded in [ADR-0036](../decisions/0036-storage-is-a-core-port-over-a-supabase-schema-with-runs-as-the-ledger.md)
+and documented in [`../contracts/storage.md`](../contracts/storage.md).
 
 Initial tables:
 
@@ -319,7 +361,27 @@ metadata in columns and versioned payloads in JSONB.
 
 ### M2-T6, Migrations
 
-**Status:** in_progress.
+**Status:** completed (2026-09-19).
+
+**Result.** Five migrations under `supabase/migrations/`, created with the pinned CLI
+(`pnpm exec supabase migration new`) and applied in filename order:
+`domains_and_jobs`, `workflow_registry_tables`, `runs_outcome_ledger`,
+`trace_events_and_artifacts`, `later_milestone_tables`. The order is load-bearing, because `runs`
+carries a `workflow_version_id` foreign key and every table references `domains`. One thing worth
+knowing for the next schema change: the CLI's timestamps are **second-resolution**, so five
+migrations created in a loop collided and then sorted by name instead, which put `runs` before the
+workflow tables it references. They were recreated one per second; `supabase/migrations/README.md`
+now says so.
+
+`pnpm supabase:reset` applies all five from an empty database and exits 0, which is the "migrations
+can create a clean database from zero" criterion run rather than asserted. `pnpm supabase:types`
+regenerated `packages/storage-supabase/src/database.types.ts` (694 lines, up from 49), and two
+consecutive generations are byte-identical.
+
+`supabase/seed.sql` is deliberately **still empty**. `Storage.saveJob()` upserts the domain row a
+job belongs to, so no seed has to be kept in step with the domains an application defines; a seed
+that did would go stale and make `db reset` fail for a reason unrelated to the schema it is meant to
+be testing.
 
 All schema changes are SQL migrations committed to Git.
 
@@ -327,7 +389,41 @@ Never mutate production-like schema manually from the dashboard without generati
 
 ### M2-T7, Outcome ledger
 
-**Status:** in_progress.
+**Status:** completed (2026-09-19).
+
+**Result.** `runs` is the ledger, one query-friendly row per run, with every column the list below
+names as a real column rather than a field in a payload. `Storage.startRun()` opens it in `running`
+state and `finishRun()` writes the outcome.
+
+Four decisions inside it. **`agent_version` holds the composite behavior fingerprint** (M2-T8),
+because the build plan asks for an "agent version" and a hand-maintained version string is exactly
+the value that stops tracking reality without anyone noticing; `behavior_fingerprint` carries the
+same value in its own column so a later redefinition of `agent_version` cannot silently change what
+the fingerprint column means. **A new `target` column records which application or agent actually
+executed**, which closes the open question ADR-0034 recorded: a fingerprint describes a *domain*, so
+the example's mock run and its live run share one and nothing else distinguished them. It comes from
+`CreateHarnessOptions.target`, on the harness rather than on a run, because it identifies the
+deployment rather than the work. **There is no attempts table**: an attempt is an ordinal on the run
+row and on each trace event, and `unique (job_id, attempt)` is what makes "retrying creates a new
+attempt" a database rule rather than a convention. **`success` is `null` for an aborted run**, not
+`false`; `jev_calls` and `fallback_count` are real zeros because a run today makes no Jev calls and
+takes no fallback; `quality_score`, `human_review` and `workflow_version_id` are null, because "not
+evaluated", "not reviewed" and "no compiled workflow" are not zero.
+
+The harness wiring is where the two failure criteria are actually enforced, and both are properties
+of **ordering**. `saveJob` and `startRun` run **before** the first trace event, so a trace can never
+exist for a run the ledger denies happened and a process that dies mid-run leaves an inspectable
+`running` row. `finishRun` runs **after** the trace flush, so a `completed` row never outlives the
+evidence for it. Every storage failure leaves `harness.run()` as a `StorageError`, and the harness
+wraps anything an implementation throws that is not already one, preserving the cause.
+
+Indexes (AD-016): `runs (domain_id, job_type, started_at desc)` is AD-008's learning scope,
+`runs (status, started_at desc)` answers "what is running / what failed", `runs (job_id, attempt)`
+lists the attempts of one job, and `domains (organization_id, id)` carries AD-008's outermost scope,
+which is why `domains.organization_id` exists at all (defaulting to `local`; no tenancy model is
+designed). Paging is keyset, never offset: `listRuns` is newest-first with a `RunId` cursor and
+`getTrace` ascending with a `sequence` cursor, because `limit`/`offset` over an append-only ledger
+silently skips or repeats rows.
 
 One query-friendly row per run:
 
@@ -627,9 +723,36 @@ into committed source.
 
 From the build plan.
 
-- Every example execution has a durable run row and ordered trace. **not yet verified**
-- A trace reconstructs execution without application logs. **not yet verified**
-- Retrying creates a new attempt, not duplicate events. **not yet verified**
+- Every example execution has a durable run row and ordered trace. **verified 2026-09-19**
+  (M2-T5, M2-T7): `pnpm example:run:mock` with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set
+  exited 0 and printed where the row went. Querying it back:
+  `runs` has one row for `01a0bcd7-1256-7001-b00d-60e9296aa3d0` with `status = completed`,
+  `success = t`, `attempt = 1`, `domain_id = vendor-triage`, `job_type = vendor-triage`,
+  `model_calls = 1`, `tool_calls = 0`, `jev_calls = 0`, `fallback_count = 0`, `latency_ms = 173`,
+  `runtime_name = eve`, `runtime_version = 0.63.0`,
+  `agent_version = sha256:c0ab81341295c366…`, `target = @internal/eve-fixture-agent`, and both
+  `started_at` and `finished_at` set; `select count(*) from trace_events where run_id = …` returns
+  **6**, sequences 0 to 5, types `run.started`, `agent.started`, `model.started`,
+  `model.completed`, `agent.completed`, `run.completed`, with `parent_id` set on the four
+  non-`run.*` events. The run's job row is there too, with the full effective job in `job jsonb`.
+- A trace reconstructs execution without application logs. **verified 2026-09-19** (M2-T5): the
+  contract suite's "reconstructs a whole execution from storage alone" case, run against Supabase,
+  starts from a run id and nothing else: `getRun()` returns the ledger row (status, target,
+  behavior fingerprint, usage, timings), `getJob(run.jobId)` returns the job through `parseJob()`
+  with its objective, input, contracts, budget and permissions intact, and `getTrace(runId)`
+  returns the events in `sequence` order with their parent links, usage and latencies. No log file,
+  no stdout and no second source is consulted. The same case passes against the in-memory
+  implementation, which is what proves it is a property of the port rather than of one adapter.
+- Retrying creates a new attempt, not duplicate events. **verified 2026-09-19** (M2-T5, M2-T7):
+  two halves, both asserted against Supabase and against the in-memory implementation. On the
+  ledger, `startRun` for a second run of `(job_id, attempt = 1)` is **rejected** with a
+  `StorageError` (the `unique (job_id, attempt)` constraint), while `attempt = 2` of the same job
+  is accepted as a separate run row and `listRuns({ jobId })` then returns both. On the trace,
+  sending the identical batch twice leaves two rows, not four, and re-sending a different event at
+  an already-written `(run_id, sequence)` leaves the **first** payload, because a trace is
+  append-only and the adapter upserts with `ON CONFLICT (run_id, sequence) DO NOTHING`. That is
+  exactly what the buffered writer does after a sink rejection, so the retry path is the one under
+  test.
 - Seeded secrets never appear in stored trace payloads. **verified (M2-T9)**: a real
   `createHarness()` run whose job input carries seeded fake credentials (an AWS access key id, an
   `sk-` API key, a GitHub token, a Supabase secret key, a Vercel AI Gateway key and a bearer
@@ -646,9 +769,31 @@ From the build plan.
   `agent/instructions.md` moved a `pnpm example:run:mock` trace's fingerprint from
   `sha256:c0ab8134…` to `sha256:c9b02cd6…` with only the `instructions` component changed. A
   reordered or CRLF-converted descriptor does not move it.
-- Migrations can create a clean database from zero. **not yet verified**
-- A failed run remains inspectable. **not yet verified**
-- Storage failures cannot silently turn into successful runs. **not yet verified**
+- Migrations can create a clean database from zero. **verified 2026-09-19** (M2-T6):
+  `pnpm supabase:reset` drops and recreates the database and applies all five committed migrations
+  in order, exit 0, printing `Applying migration 20260920030254_domains_and_jobs.sql` through
+  `20260920030301_later_milestone_tables.sql`. The thirteen tables then exist and are reachable
+  through PostgREST, asserted table by table in `supabase-schema.integration.test.ts`, and
+  `pnpm supabase:types` regenerates the committed types with two consecutive generations
+  byte-identical.
+- A failed run remains inspectable. **verified 2026-09-19** (M2-T5, M2-T7): a harness run against
+  a runtime that throws produces a `failed` result **and** a `failed` ledger row carrying the
+  serialized error, with the storage calls in order `saveJob`, `startRun`, `finishRun`
+  (`packages/core/src/harness.test.ts`). Read back from Supabase, the row has `status = failed`,
+  `success = f` and `error.code = AGENT_EXECUTION`, beside its ordered trace. An **aborted** run is
+  recorded as `aborted` with `success = null` rather than as a failure, so a cancellation is not
+  filed as a defect. The stronger case is a crash: because `startRun` runs before the first trace
+  event, a process that dies mid-run leaves a `running` row rather than nothing, which is asserted
+  by the "does not write the outcome when flushing the trace fails" case.
+- Storage failures cannot silently turn into successful runs. **verified 2026-09-19** (M2-T5,
+  M2-T7): a `Storage` whose `saveJob`, `startRun` or `finishRun` throws makes `harness.run()`
+  **reject** with a `StorageError` rather than return any result, asserted for all three
+  (`packages/core/src/harness.test.ts`). A `startRun` failure also means the agent runtime is never
+  called at all, so nothing is spent on a run that cannot be recorded. A trace-flush failure leaves
+  the ledger row `running` and no `finishRun` is attempted, so a `completed` row never outlives the
+  evidence for it. And an implementation that throws something that is **not** a `StorageError` is
+  wrapped into one with the cause preserved, so a defect in an adapter cannot become a defect in
+  the harness.
 - `pnpm supabase:reset` recreates the database from committed migrations and seed. **verified
   2026-09-19** (M2-T11): exit 0 from an empty database, applying zero migrations and
   `supabase/seed.sql`. Re-verified on a second consecutive reset.
